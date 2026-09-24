@@ -116,9 +116,28 @@ function usageHalves(text: string): { advertised: string[]; planned: string[] } 
 
 /** The fenced block under README's `## Architecture`, split the same way. */
 function readmeHalves(text: string): { advertised: string[]; planned: string[] } {
-  const section = text.slice(text.indexOf("\n## Architecture"));
-  const open = section.indexOf("```");
-  const block = section.slice(open + 3, section.indexOf("```", open + 3));
+  // The command block is the first *plain* fence under `## Architecture`: the
+  // diagrams above it are ```mermaid fences, and reading one of those as the
+  // block would find no commands at all — which is how this was found.
+  const lines = text.slice(text.indexOf("\n## Architecture")).split("\n");
+  // Walk the fences in pairs, so a closing ``` is never taken for an opening one.
+  let inside: string | undefined;
+  let from = -1;
+  let to = -1;
+  for (const [i, line] of lines.entries()) {
+    if (!line.startsWith("```")) continue;
+    if (inside === undefined) {
+      inside = line.slice(3).trim();
+      if (inside === "") from = i;
+    } else {
+      if (from !== -1) {
+        to = i;
+        break;
+      }
+      inside = undefined;
+    }
+  }
+  const block = from === -1 || to === -1 ? "" : lines.slice(from + 1, to).join("\n");
 
   const advertised: string[] = [];
   const planned: string[] = [];
@@ -306,6 +325,24 @@ describe("the parsers themselves, on source they must read and source they must 
     const flattened = usageHalves(synthetic.replace(NOT_BUILT, "Also"));
     expect(flattened.advertised).toContain("widget tarnish");
     expect(flattened.planned).toEqual([]);
+  });
+
+  test("a diagram fence above the block is stepped over, and nothing in it is a command", () => {
+    const synthetic = [
+      "# x",
+      "",
+      "## Architecture",
+      "",
+      "```mermaid",
+      "flowchart LR",
+      "ohmyagi insidediagram",
+      "```",
+      "",
+      "```",
+      "ohmyagi frobnicate        do the thing",
+      "```",
+    ].join("\n");
+    expect(readmeHalves(synthetic).advertised).toEqual(["frobnicate"]);
   });
 
   test("a README line marked not built is read as planned, and an unmarked one is not", () => {
