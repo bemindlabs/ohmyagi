@@ -1,0 +1,262 @@
+<div align="center">
+
+<img src="docs/assets/logo.png" alt="Oh My AGI logo — a glowing amber droplet on a navy tile" width="96">
+
+# om-agi
+
+### Oh My AGI — a CLI that builds AGI agents you actually own
+
+*Capability that stays with the person, not the organization.*
+
+[![Status](https://img.shields.io/badge/status-v0.3.0-green)](.scrum/backlog.md)
+[![Runtime](https://img.shields.io/badge/runtime-Bun-black?logo=bun)](.scrum/decisions.md#d-004)
+[![Protocol](https://img.shields.io/badge/agent--to--agent-A2A%201.0.0-blue)](.scrum/decisions.md#d-016)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](#license)
+[![Decisions](https://img.shields.io/badge/decisions-D--001%20→%20D--058-informational)](.scrum/decisions.md)
+
+<img src="docs/assets/hero.jpg" alt="An agent of light standing on a terminal, tied to a git branch, a local server and a padlock" width="720">
+
+</div>
+
+---
+
+> **v0.3.0.** The full MVP is met (since v0.1.0): identity, isolation, a git repository per
+> agent, the observer, recall, and autonomy with a kill switch — see [Roadmap](#roadmap) for
+> what each one was measured by. It is a 0.x: file formats and flags may still change, and
+> anything below marked `not built yet` describes what om-agi is *designed* to do, not what it
+> does today.
+
+## What it is
+
+`om-agi` is a command-line tool that creates **AGI agents** — as many as you want — where every agent:
+
+- **has an identity of its own** (a *soul*: name, role, boundaries, things it must never do, voice)
+- **remembers what you *do***, not just what you type — recorded as it happens, with your
+  consent, because a vendor deletes its own transcripts after a few weeks
+- **runs on its own** and can act without being told every time
+- **talks to other agents** over the open [A2A 1.0.0](https://a2a-protocol.org) protocol
+- **lives in its own git repository** — `git clone` *is* the migration path
+- **keeps working when a vendor disappears** — every capability has a local path
+
+## Quickstart
+
+Needs [Bun](https://bun.sh) ≥ 1.4 and, for the local path, [Ollama](https://ollama.com) with a model pulled.
+
+```bash
+bun install && bun run build          # → dist/ohmyagi, one self-contained binary
+./dist/ohmyagi doctor                  # what this machine can reach
+
+ohmyagi new keeper --subject me        # an agent: its own git repository, soul included
+$EDITOR keeper/soul/role.md keeper/soul/person.md
+ohmyagi soul check keeper --subject me
+
+ohmyagi turn keeper --subject me --backend ollama --model <model> \
+  --prompt "Who are you, and are you a human?"
+```
+
+Or let it ask: **`ohmyagi setup`** checks the machine, creates an agent, writes the soul from your answers, and
+runs a first turn — one question at a time, raising no autonomy and enabling nothing.
+
+**macOS:** `bun run build:macos` cross-compiles both architectures from any machine; on a Mac,
+`packaging/macos/build-pkg.sh` turns them into `dist/ohmyagi-<version>.pkg` — one universal binary in
+`/usr/local/bin`, then Terminal opens with `ohmyagi setup`. Signing and notarization are read from the environment
+(see the script's header).
+
+From there: `ohmyagi soul apply` puts the identity into every AI CLI you use (a diff first; `--apply` to write),
+`ohmyagi memory index` gives the agent recall over its `memory/`, `ohmyagi autonomy show` is what it may do on its
+own, `ohmyagi stop` is the brake, and `ohmyagi erase` takes a subject back out. `ohmyagi help` lists all of it.
+
+## Why
+
+The goal, in one sentence from the owner:
+
+> *"When I'm no longer part of any organization, there is still a version of me — an AGI agent — that can help with the work."*
+
+Most agent products get this backwards: your memory, your persona and your automations
+live in *their* cloud, under *their* login, and vanish the day you stop paying or the day
+they pivot. om-agi is built so that the agent belongs to the person it was made for.
+
+## How it's different
+
+| | om-agi |
+|---|---|
+| **vs. hosted agents (e.g. Grok Bot)** | Same idea — persistent memory, autonomy, its own runtime. The difference is *whose* cloud. Here: yours, or none. If the vendor shuts down, nothing happens. |
+| **vs. [BWOC](https://github.com/bemindlabs/BWOC-Framework)** | BWOC is a framework and philosophy for building coding agents. om-agi is a standalone CLI for personal agents that *outlive the framework* — and speaks A2A so it can still talk to BWOC agents. |
+| **vs. fleet orchestrators (e.g. Ostraka)** | Those run many agents under a shared gate. om-agi makes each agent stand on its own; orchestration is somebody else's job. |
+| **vs. knowledge graphs / second brains** | Those *see* your history. om-agi *acts* on it — and it records what you actually did at the moment you did it, which the session transcripts stop being able to tell you after a few weeks (measured: seven for claude, eleven days for grok). |
+
+## Six things it will never trade for speed
+
+| # | Principle | Verified by |
+|---|---|---|
+| **I-1** | **No single vendor is the only path.** Every capability works with a local model, even if slower. | Remove every commercial CLI from `PATH` → the agent still finishes a task on Ollama. |
+| **I-2** | **Data outlives the program.** Git is the source of truth; every index can be rebuilt. | `rm -rf .dagi/` → rebuild → identical result. |
+| **I-3** | **Identities never bleed.** One agent's memory or personal data never appears in another's context. | Wear A, then B → ask B something only A knows → B must not answer. |
+| **I-4** | **The data owner can always withdraw.** Real deletion — and honesty about what *can't* be deleted. | `ohmyagi erase` → recount from disk → search the roots → zero results, beside a printed list of what it did **not** search. Of the five places the backlog names, one (a LoRA adapter) does not exist yet, and the output says "4 of 4 places that exist · 1 of 5 are not built" rather than a 5 nobody checked. Git history and fine-tuned weights are disclosed by `ohmyagi new`, before there is anything to ingest. A run that found nothing says `nothing-found` and exits 3 — it is not a certificate of erasure, and the document says so, including that om-agi cannot tell "this subject was never here" from "an earlier run removed it". |
+| **I-5** | **The agent is itself, never a person.** It says it's an AI when asked, and never signs or commits on a human's behalf. | 10 phrasings of "are you human?" → 10 honest answers. |
+| **I-6** | **Personal data leaves the agent only with a human's per-instance approval.** | Egress filter blocks; the "external contact" autonomy level is capped in code — `reach` is typed `0 \| 1 \| 2`, so a 3 does not compile and is refused in a file, and a turn runs at `min(write, run, reach)` so no other category can raise it by arithmetic. |
+
+## Architecture
+
+```
+projects/om-agi/                  engine  — the CLI (Bun)  ·  designed to be open-sourceable
+agents/<name>/                    one agent = one git repository, meant to stay private
+                                  (om-agi never creates a remote, and cannot see whether
+                                   one you add is private — only the host knows that)
+├── soul/                         identity (+ autonomy.md, triggers.md) ┐
+├── memory/                       distilled memory    │ in git — human-readable Markdown/JSON
+├── actions/                      extracted actions   │ = source of truth
+├── consent/                      legal basis         ┘
+└── .dagi/                        rebuildable local state — NOT in git (raw transcripts, indexes)
+~/.local/share/om-agi/<name>/personal/   personal data — outside the repo entirely
+~/.local/state/om-agi/ledger/<subject>/  the turn ledger — outside git AND outside .dagi/
+                                         (it records what happened, so nothing can rebuild it)
+
+ohmyagi setup            first run, one question at a time: checks the machine, creates an agent,
+                         writes its soul from your answers, runs a first turn — raises nothing
+ohmyagi doctor           what is installed, missing or stale on this machine
+ohmyagi backends         which CLIs and local models are reachable, and how identity lands in each
+ohmyagi new <name>       create an agent (repo + soul) — git init, no commit, no remote
+ohmyagi rebuild <dir>    rebuild .dagi/ from what git holds; --check says fresh, stale or missing
+ohmyagi worn             which identity this machine is wearing, read from the vendors' own files
+ohmyagi guard install    write the pre-commit and pre-push hooks (a clone arrives without them)
+ohmyagi guard scan       scan what is staged and block a commit that carries a credential
+ohmyagi guard status     are the hooks there, how many commits exist, and what none of it reaches
+ohmyagi soul check       validate a soul — every problem with its file and line
+ohmyagi soul import      convert an existing bwoc agent into a soul without losing a line
+ohmyagi soul apply       render the soul into every CLI that will read it (dry-run by default)
+ohmyagi soul verify      prove it landed: ask each backend questions only a souled session can answer
+ohmyagi soul revoke      take the soul back out of every file apply wrote — byte for byte to what was there
+ohmyagi soul card        the A2A agent card, built from role.md only — says it is an AI
+ohmyagi turn <dir>       one turn wearing this soul, on whichever backend answers
+ohmyagi ledger show      what was asked, when, and which backend received it
+ohmyagi ledger forget    withdraw it — and say plainly what deletion cannot reach
+ohmyagi observe enable   turn capture on — prints exactly what is kept, then waits for a
+                         phrase at a terminal. There is deliberately no --yes
+ohmyagi observe hook     print the settings snippet that would connect the capture hook;
+                         om-agi never edits another program's configuration
+ohmyagi observe disable  withdraw consent; capture stops, what was kept stays until purged
+ohmyagi observe capture  record one hook event from stdin — silent on stdout, always exit 0
+ohmyagi observe seed     import the history already on disk, once per vendor
+ohmyagi observe status   is it recording, how much is there, and what a purge cannot reach
+ohmyagi observe actions  what was done, as counts per month over closed lists of words —
+                         kind, outcome, origin, vendor, and tool or program names from a
+                         built-in list. --write is the only path into a git working tree
+ohmyagi observe audit    show what om-agi derived beside the transcript line it came from
+                         and take y/n per field — needs a terminal, stores nothing
+ohmyagi memory ingest    copy existing notes into memory/imported/, secrets scanned out first
+ohmyagi memory forget    forget whole notes: file gone, collection dropped whole, looked for again
+ohmyagi memory index     build recall from memory/ — full-text in .dagi/index/ always, the
+                         subject's own Qdrant collection when bge-m3 and Qdrant answer
+ohmyagi memory search    ask both indexes, merged; every hit says which index found it
+ohmyagi observe patterns routines and sequences in what you did, with the evidence for each —
+                         recomputed every run, printed and never kept (S3.3, D-057)
+ohmyagi observe leaks    count records that ran in a fleet launcher's directory without
+                         OM_AGI_FLEET — counts under the names given, no other path
+ohmyagi observe purge    delete every byte of it, then count the directory again
+ohmyagi egress needles   where your list of what must not leave lives, and how many it holds
+ohmyagi egress check     screen a text the way a turn does: your needles, and shapes like phones and IDs
+ohmyagi egress log       what was kept in, when, going where, by which rule — never the text
+ohmyagi erase <subject>  remove one subject from every place there is a deleter for,
+                         recount from disk, search for the identifier afterwards,
+                         and issue a certificate that names what it did not reach
+ohmyagi autonomy show    what a turn of this agent may do, per category, with every number
+                         that was set beside the number in force. Read the direction
+                         carefully: level 1 is the default and is what om-agi has always
+                         done — the vendor's read-only flag on every turn. 2 and 3 are
+                         what take that flag off
+ohmyagi autonomy set     write one category. Level 3 is typed at a terminal, there is no
+                         --yes, and who set it and when go in the file. It tells you as
+                         you set it when the number will have no effect, and which
+                         backend will be refused rather than run
+ohmyagi autonomy resume  take the brake off — a typed phrase, no --yes; `rm` works too
+ohmyagi proposal new     file what would be done, why, and what it affects. The same `what`
+                         a second time is refused with exit 5 unless --changed says what is
+                         new, because a refusal is remembered (S5.2 AC2)
+ohmyagi proposal decide  approve or refuse one, recording who and when. An approval is good
+                         for exactly one turn — `turn --proposal <id>` spends it
+ohmyagi proposal list    every proposal for this subject, and where they are kept — a store
+                         of its own, outside git and outside the ledger (D-029)
+ohmyagi proposal show    one in full, with the key it is compared by and whether its
+                         approval has been spent
+ohmyagi stop             set the brake, take every category to 0, end the turns that are
+                         running — and print the exact command for whatever it could not
+                         reach. The brake is a file whose contents are never read, so
+                         `touch` sets it without om-agi working at all
+ohmyagi triggers tick    run the schedules in triggers.md that are due, each as a turn held
+                         at level 1 — it proposes, nothing happens until somebody approves —
+                         then exit. No daemon: `triggers schedule` prints a systemd timer and
+                         a cron line, and installs neither (S5.3, D-054)
+ohmyagi triggers show    each trigger, when it last fired and when it is next due
+ohmyagi triggers schedule print a systemd timer and a cron line that call tick; installs nothing
+ohmyagi run <name>       not built yet [E5] — the agent decides *when* by itself, from what
+                         it has seen (S5.3 with S3.3). What is built: the agent files its own
+                         proposals (D-045), and triggers start turns on a schedule the owner
+                         wrote (D-054). Triggers mined from behaviour wait on the pattern
+                         miner (S3.3).
+```
+
+**`--json` means stdout is the document.** Every command that takes the flag puts one
+JSON value on stdout and nothing else — `ohmyagi erase … --json | jq` parses from the
+first byte — and sends everything written for a person to stderr. So keep the two
+streams apart: `2>&1 | jq` merges the plan back into the document and fails, and a
+script that reads "stderr is not empty" as "this failed" will misread a run that
+worked. The exit code is the answer to that question; under `erase` it is 0, 1 or 3.
+
+**Where a soul actually lands** (SP-2, measured 2026-09-23 — three identity questions × three runs,
+soul in project-level files; `soul verify` re-measures it on your machine):
+
+| Backend | Channel | Result |
+|---|---|---|
+| claude | instruction file · `--append-system-prompt` | 9/9 · 9/9 |
+| codex | `AGENTS.md` | 9/9 |
+| kimi | instruction file (needs level 2 — no read-only mode) | 9/9 |
+| copilot | instruction file | 8/9 |
+| ollama (local 27B) | system field | 9/9 |
+| grok | project `CLAUDE.md` | **0/9 — not supported; use the `--rules` flag (9/9)** |
+| gemini | — | **not measured** — the account's tier was withdrawn by the vendor |
+
+**Runtime strategy:** the MVP *borrows hands* — it drives existing CLIs and local models
+behind one `ExecBackend` interface — and only grows a native runtime if measured need appears.
+
+## Roadmap
+
+| Phase | Scope | Exit criteria |
+|---|---|---|
+| **A — Core** ✅ | soul schema · `soul apply` · **`soul verify`** · `ExecBackend` + CLI exec | met 2026-09-21 (`9989b49`): a verify table across 3 backends with the raw answers kept, graded in 4 levels rather than collapsed to a boolean |
+| **B — Edges** ✅ | agent repo template (`.dagi/`) · turn ledger · transcript spike | met: `git clone` into a stock `debian:bullseye-slim` holding only the binary and the checkout, reaching an ollama outside it → `soul verify` passes. Re-run 2026-09-22 at 15/15 |
+| **C — Observer** ✅ | observer: capture actions at the moment they happen · local-only guard | the reader, the extractor and the local-only guard are built and tested. Capture is **live on the owner's machine** since 2026-09-22 (D-034), and since 2026-09-23 a fleet launcher declares itself with `OM_AGI_FLEET` so its work never lands in the owner's data (D-036). The extractor's accuracy bar (S3.2 AC4) was judged by the owner at a terminal on 2026-09-24 — twenty random claude samples, every field answered yes (the instrument stores nothing, so the owner's word is the record; grok not judged) |
+| **D — Guard + autonomy** ✅ | repo guard · soul isolation · **autonomy** (propose → approve → act, with a kill switch) | repo guard and soul isolation are done. The autonomy dial, the proposal store and `ohmyagi stop` are built (`666f894`, `1f320c3`); the kill switch (S5.4) is ticked — SIGKILL follows SIGTERM, and a vendor that ignores SIGTERM is proven gone (D-044). So are proposals (S5.2): at level 1 the agent proposes instead of acting and om-agi files what it proposes (D-045), and a level-2 turn reports what it changed (D-043). Levels now differ as S5.1 says — 1 proposes, 2 is granted explicitly and reports, 3 does not interrupt (D-047, probed on the real claude and codex); 11 of 11 criteria are met. The categories are set apart and act together at the lowest of write, run and reach, because a shell both writes and reaches out (measured); every turn whose settings disagree names the one in force (D-052) |
+| **E4 — recall** ✅ | per-identity recall: full-text + vectors, rebuildable from git, erasable | S4.1 built (D-037, D-038): `memory/` in git is the source, an FTS5 trigram index and the subject's own Qdrant collection are derived from it, and `erase` drops the collection whole and asks the store again. S4.2 built (D-040): the owner's 75 notes went into the agent's `memory/` through the repo guard's scanner — 4 were held back, then found to hold only placeholders (`<pw>`, `***`, `{{…}}`, a path); the scanner learned the difference (D-051) and they went in. S4.4 built (D-041): `memory forget` removes the note, drops the collection whole and looks again. S4.3 built (D-039): every turn carries related pieces of memory beside the soul, named on stderr before they go — ten invented facts, **0/10 without recall, 10/10 with it** on a local 27B model |
+| Later | A2A · chat connectors · persona inheritance · LoRA *(only if a spike proves it beats RAG)* | each behind an explicit gate |
+
+Full detail: [`.scrum/backlog.md`](.scrum/backlog.md) · every decision and its evidence: [`.scrum/decisions.md`](.scrum/decisions.md)
+
+## Non-goals
+
+- **Competing on model intelligence.** om-agi competes on *ownership*.
+- **Impersonating a real person.** Inherit a *role's* knowledge, never a person's identity.
+- **Depending on any cloud service as the only path.** Ever.
+- **Re-implementing an inference loop, sandbox or scheduler** before a measured need — the OS and existing runtimes already do this.
+- **Fleet orchestration, review gates, worktree isolation** — other tools own that.
+
+## Status
+
+v0.3.0. 10 epics · 43 stories · 4 spikes · 58 recorded decisions.
+The full MVP is met (`.scrum/backlog.md` §7) as of v0.1.0: Phases A and B, the observer, the autonomy core and
+recall (E4). v0.2.0 added scheduled triggers (S5.3), the `ohmyagi` name, `ohmyagi setup` and a macOS installer; v0.3.0 adds the pattern miner (S3.3). Next: the interest tracker (S3.4) and agent-to-agent (E8).
+
+Those four numbers are counted out of `.scrum/` by `test/docs/readme-counts.test.ts`
+every time the suite runs, because a number in a README is the thing nobody comes
+back to.
+
+## Contributing
+
+Not open for contributions yet. The engine is designed so it *can* be open-sourced later;
+agent repositories (the identities) are meant to stay private — om-agi never creates a remote
+and has no code path that pushes, but it cannot check the visibility of a remote you add, and
+a vendor CLI it runs for a turn can push on its own. See ADR 0002 §5 for what the guard covers.
+
+## License
+
+[Apache License 2.0](LICENSE). Copyright 2026 BeMind Technology — see [NOTICE](NOTICE).
