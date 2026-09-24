@@ -2,8 +2,8 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { PAGE_HTML } from "../../src/web/page.ts";
-import { allowedHosts, handler, startWeb, TOKEN_HEADER, type WebDeps } from "../../src/web/server.ts";
-import { ago, excerpt, levelSentence, triageChips, type ViewState } from "../../src/web/view.ts";
+import { allowedHosts, handler, startWeb, tailnetNames, TOKEN_HEADER, type WebDeps } from "../../src/web/server.ts";
+import { ago, excerpt, levelSentence, remoteForPage, triageChips, type AgentInfo, type SettingsState, type ViewState } from "../../src/web/view.ts";
 import type { Triage } from "../../src/decide/triage.ts";
 
 const STATE: ViewState = {
@@ -17,6 +17,25 @@ const STATE: ViewState = {
   canTriage: false,
 };
 
+const SETTINGS: SettingsState = {
+  levels: { read: 1, write: 3, run: 0, reach: 1 },
+  stopped: false,
+  backends: [{ id: "ollama", available: true }, { id: "claude", available: false }],
+  defaultTurn: { backend: "ollama", model: null },
+  chatUsers: [{ platform: "telegram", userId: "42", label: "me", told: true, added: "just now" }],
+  peers: [{ name: "fern", endpoint: "http://127.0.0.1:1/", added: "yesterday" }],
+  guards: { judge: "qwen", triage: false, needles: 2 },
+  version: { current: "0.4.0", latest: "0.4.0", checked: "just now" },
+};
+
+const AGENT: AgentInfo = {
+  ok: true, problems: [], name: "Keeper", role: "keeps things", subject: "example", dir: "/a",
+  repo: { remote: null, web: null, head: "abc1234", lastCommit: "first", lastCommitAt: "just now" },
+  prohibitions: ["never lies"], scope: { does: "d", doesNot: "n" },
+  person: { tone: ["warm"], addressesUserAs: "you", refersToSelfAs: ["I"], principles: ["p"], inheritsFrom: [] },
+  roleNotes: "r", personNotes: "q", stats: { memories: 1, turns: 0, lastTurn: null, byBackend: [] },
+};
+
 function fakeDeps() {
   const runs: (readonly string[])[] = [];
   const deps: WebDeps = {
@@ -24,6 +43,10 @@ function fakeDeps() {
     subject: "example",
     turnFlags: ["--backend", "ollama"],
     state: async () => STATE,
+    settings: async () => SETTINGS,
+    agent: async () => AGENT,
+    memories: async () => [{ path: "memory/a.md", title: "A", description: "d", type: "project", bytes: 10, modified: "t" }],
+    memory: async (path) => (path === "memory/a.md" ? { ok: true, text: "hello" } : { ok: false, reason: "not a memory file" }),
     run: async (args) => {
       runs.push(args);
       if (args[0] === "turn") return { code: 0, stdout: JSON.stringify({ text: "hi", route: "answered by ollama", proposals: [] }), stderr: "" };
@@ -94,6 +117,10 @@ describe("guards", () => {
     expect((await h(req("/api/state", { token: "wrong" }))).status).toBe(401);
     expect((await h(req("/api/state"))).status).toBe(200);
     expect(allowedHosts("100.1.2.3", 9)).toEqual(["100.1.2.3:9"]);
+    expect(allowedHosts("100.1.2.3", 9, ["Box.tail1.ts.net", "box", "100.1.2.3"])).toEqual(["100.1.2.3:9", "box.tail1.ts.net:9", "box:9"]);
+    const named = handler(deps, "tok", allowedHosts("100.1.2.3", 30701, ["box.tail1.ts.net"]));
+    expect((await named(req("/api/state", { host: "box.tail1.ts.net:30701" }))).status).toBe(200);
+    expect((await named(req("/api/state", { host: "other.tail1.ts.net:30701" }))).status).toBe(421);
   });
 
   test("the page itself carries a strict content policy", async () => {
@@ -163,5 +190,121 @@ describe("listening", () => {
     const res = await fetch(`http://127.0.0.1:${port}/api/state`, { headers: { [TOKEN_HEADER]: a.token } });
     expect(res.status).toBe(200);
     expect(((await res.json()) as ViewState).agent.name).toBe("Keeper");
+  });
+});
+
+describe("tailnet names", () => {
+  test("the MagicDNS name and its first label; anything else is none", () => {
+    expect(tailnetNames(JSON.stringify({ Self: { DNSName: "Box.tail1.ts.net." } }))).toEqual(["box.tail1.ts.net", "box"]);
+    expect(tailnetNames(JSON.stringify({ Self: { DNSName: "box" } }))).toEqual(["box"]);
+    expect(tailnetNames(JSON.stringify({ Self: {} }))).toEqual([]);
+    expect(tailnetNames("not json")).toEqual([]);
+  });
+
+  test("startWeb shows the first name in the link", () => {
+    const { deps } = fakeDeps();
+    const server = startWeb(deps, { port: 0, names: ["box.tail1.ts.net"] });
+    try {
+      expect(server.url).toMatch(/^http:\/\/box\.tail1\.ts\.net:\d+\/#t=/);
+      const tls = startWeb(deps, { port: 0, names: ["box.tail1.ts.net"], scheme: "https" });
+      expect(tls.url).toMatch(/^https:\/\/box\.tail1\.ts\.net:\d+\/#t=/);
+      tls.stop();
+    } finally {
+      server.stop();
+    }
+  });
+});
+
+describe("Settings (the page sets only what a command could, and nothing that needs a phrase)", () => {
+  const post = (path: string, body: unknown) => req(path, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
+
+  test("GET /api/settings, behind the token", async () => {
+    const { deps } = fakeDeps();
+    const h = handler(deps, "tok", HOSTS);
+    expect(await (await h(req("/api/settings"))).json()).toEqual(SETTINGS);
+    expect((await h(req("/api/settings", { token: null }))).status).toBe(401);
+  });
+
+  test("a level of 0–2 is `autonomy set`; 3, or a category that is not one, runs nothing", async () => {
+    const { deps, runs } = fakeDeps();
+    const h = handler(deps, "tok", HOSTS);
+    const ok = (await (await h(post("/api/autonomy", { category: "write", level: 2 }))).json()) as { ok: boolean };
+    expect(ok.ok).toBe(true);
+    expect(runs).toEqual([["autonomy", "set", "write", "2", "/a", "--subject", "example"]]);
+    for (const bad of [{ category: "write", level: 3 }, { category: "write", level: "2" }, { category: "all", level: 1 }, { category: "write" }]) {
+      expect((await h(post("/api/autonomy", bad))).status, JSON.stringify(bad)).toBe(400);
+    }
+    expect(runs).toHaveLength(1);
+  });
+
+  test("removing a chat user or a peer is the remove command; adding has no route", async () => {
+    const { deps, runs } = fakeDeps();
+    const h = handler(deps, "tok", HOSTS);
+    await h(post("/api/chat-users/remove", { platform: "telegram", userId: "42" }));
+    await h(post("/api/peers/remove", { name: "fern" }));
+    expect(runs).toEqual([
+      ["chat", "remove", "telegram", "42", "--subject", "example"],
+      ["a2a", "remove", "fern", "--subject", "example"],
+    ]);
+    expect((await h(post("/api/chat-users/remove", { platform: "telegram", userId: "--subject" }))).status).toBe(400);
+    expect((await h(post("/api/peers/remove", { name: "../x" }))).status).toBe(400);
+    expect((await h(post("/api/chat-users/allow", { platform: "telegram", userId: "7" }))).status).toBe(404);
+    expect((await h(post("/api/peers/allow", { name: "x" }))).status).toBe(404);
+    expect(runs).toHaveLength(2);
+  });
+
+  test("update-check asks; the page's backend and model replace the start flags only when they are names", async () => {
+    const { deps, runs } = fakeDeps();
+    const h = handler(deps, "tok", HOSTS);
+    await h(post("/api/update-check", {}));
+    expect(runs[0]).toEqual(["update", "--check"]);
+    await h(post("/api/turn", { prompt: "hi", backend: "claude,ollama", model: "qwen3.8:27b" }));
+    expect(runs[1]!.slice(-4)).toEqual(["--backend", "claude,ollama", "--model", "qwen3.8:27b"]);
+    await h(post("/api/turn", { prompt: "hi", backend: "ollama --yes", model: "-x" }));
+    expect(runs[2]!.slice(-2)).toEqual(["--backend", "ollama"]);
+  });
+
+  test("the page has a Settings tab, and no button that sets a 3", () => {
+    expect(PAGE_HTML).toContain('id="tabSettings"');
+    expect(PAGE_HTML).toContain('const LEVELS = ["Never", "Ask me first", "Do it, then tell me"];');
+    expect(PAGE_HTML).not.toContain("/api/chat-users/allow");
+  });
+});
+
+describe("Agent and Memories (read-only)", () => {
+  test("GET /api/agent, /api/memories and /api/memory; a path that is not a memory is 404", async () => {
+    const { deps } = fakeDeps();
+    const h = handler(deps, "tok", HOSTS);
+    expect(((await (await h(req("/api/agent"))).json()) as AgentInfo).name).toBe("Keeper");
+    expect(((await (await h(req("/api/memories"))).json()) as unknown[]).length).toBe(1);
+    expect(await (await h(req("/api/memory?path=memory%2Fa.md"))).json()).toEqual({ text: "hello" });
+    expect((await h(req("/api/memory?path=..%2Fsoul%2Fperson.md"))).status).toBe(404);
+    expect((await h(req("/api/memory", { token: null }))).status).toBe(401);
+  });
+
+  test("search by meaning is `memory search`, and a query cannot become a flag", async () => {
+    const { deps, runs } = fakeDeps();
+    const h = handler(deps, "tok", HOSTS);
+    const post = (body: unknown) => req("/api/memory-search", { method: "POST", body: JSON.stringify(body) });
+    await h(post({ query: "where is vllm" }));
+    await h(post({ query: "--subject other" }));
+    expect(runs).toEqual([
+      ["memory", "search", "/a", "--subject", "example", "--limit", "8", "where is vllm"],
+      ["memory", "search", "/a", "--subject", "example", "--limit", "8", "subject other"],
+    ]);
+    expect((await h(post({ query: "  " }))).status).toBe(400);
+  });
+
+  test("a remote is shown without credentials, and linked when it is a forge", () => {
+    expect(remoteForPage("git@github.com:o/r.git")).toEqual({ remote: "git@github.com:o/r.git", web: "https://github.com/o/r" });
+    expect(remoteForPage("https://u:secret@github.com/o/r.git")).toEqual({ remote: "https://github.com/o/r.git", web: "https://github.com/o/r" });
+    expect(remoteForPage("/srv/git/r.git")).toEqual({ remote: "/srv/git/r.git", web: null });
+  });
+
+  test("the page has the four tabs and carries the mascot, which is the file in docs/", async () => {
+    for (const id of ["tabHome", "tabAgent", "tabMemories", "tabSettings"]) expect(PAGE_HTML).toContain(`id="${id}"`);
+    const { MASCOT_SVG, MASCOT_DATA_URI } = await import("../../src/web/mascot.ts");
+    expect(MASCOT_SVG).toBe(await Bun.file(new URL("../../docs/assets/mascot.svg", import.meta.url)).text());
+    expect(PAGE_HTML).toContain(MASCOT_DATA_URI);
   });
 });

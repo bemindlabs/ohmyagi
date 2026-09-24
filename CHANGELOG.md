@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## 0.4.1 — 2026-09-25
+
+### Web
+- A page opened without its key (or with an old one) says so in its header, clears the stale key, and takes the
+  link or the key pasted into a box, so there is no terminal round-trip. Answers in the chat carry the agent's name.
+- Om, the mascot, heads the page and speeds up while it thinks. There are two new tabs (D-068). **Agent** shows the
+  whole soul, the repository (its remote, HEAD and last commit) and counts. **Memories** lists every `memory/**/*.md`
+  with a filter, a reader and "Search by meaning" (`memory search`). Both are read-only, and the reader cannot leave
+  `memory/`.
+- A Settings tab (D-067). It sets each category to 0–2 (`autonomy set`), picks the backend and model this browser's chat
+  uses, stops answering a chat user (`chat remove`), removes a peer (`a2a remove`) and checks for updates. It also
+  shows the privacy guards. Level 3, adding a person or peer, consent, the brake and installing an update stay in the
+  terminal, and there is no route for any of them.
+- On a tailnet address the page answers to the machine's tailnet names; `--name` adds others. `--https` is for a page
+  on loopback behind `tailscale serve --https=<port>`: it accepts the tailnet name and prints the https link.
+- `--key-file <path>` keeps the page's link across restarts (D-069). The key is made once at 600, and a key file
+  others can read is refused.
+
 ## 0.4.0 — 2026-09-24
 
 ### Chat (E9)

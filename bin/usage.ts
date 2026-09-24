@@ -327,13 +327,19 @@ Usage:
   ohmyagi triggers schedule <dir> --subject <id> [--every <5m>]
                                         Print a systemd timer and a cron line
                                         that call tick. Installs nothing.
-  ohmyagi web <dir> --subject <id> [--port <n>] [--host <addr>]
+  ohmyagi web <dir> --subject <id> [--port <n>] [--host <addr>] [--name <host,…>] [--https] [--key-file <path>]
                                         A page for one agent in your browser:
                                         what it may do, what waits for your
                                         yes or no, a chat, and the brake. Every
                                         button runs a command; level 3, consent,
                                         releasing the brake and erase stay in
                                         the terminal. Loopback, with a link key.
+                                        On a tailnet address it also answers to
+                                        this machine's tailnet names; --name
+                                        adds others. --https: behind
+                                        tailscale serve, on loopback.
+                                        --key-file keeps the link across
+                                        restarts (made once, 600).
   ohmyagi a2a peers --subject <id>        Who this agent may talk to, both ways.
   ohmyagi a2a allow <name> --endpoint <url> --subject <id> [--send-token-file <path>]
                                         Allow a peer: typed at a terminal, never

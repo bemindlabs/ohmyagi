@@ -1,6 +1,6 @@
 {
   "name": "om-agi",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Oh My AGI — a CLI that builds AGI agents you actually own",
   "type": "module",
   "license": "Apache-2.0",

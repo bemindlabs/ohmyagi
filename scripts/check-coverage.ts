@@ -320,7 +320,7 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // three paragraphs that say where proposals are kept and why it is not the
   // ledger (D-029), that the comparison is exact and where that misses, and
   // that om-agi does not turn an agent's own actions into proposals.
-  ["bin/usage.ts", { lines: 498, why: "help text — one declaration, 498 lines of prose" }],
+  ["bin/usage.ts", { lines: 504, why: "help text — one declaration, 504 lines of prose" }],
   // The commands. Each is `cmdX(rest)` returning an exit code, and each reads
   // `process.env`, `homedir()` or `cwd` on its way. Calling them in-process
   // would mean swapping `HOME` inside the test runner; the tests spawn instead.
@@ -348,7 +348,7 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   ["bin/commands/a2a.ts", { lines: 216, why: "command — serve listens until Ctrl-C; its parts are tested in src/a2a" }],
   ["bin/commands/chat.ts", { lines: 227, why: "command — serve polls until Ctrl-C; its parts are tested in src/connectors, and test/cli/chat.test.ts runs it against a stub Telegram" }],
   ["bin/commands/update.ts", { lines: 77, why: "command — asks GitHub; its parts are tested in src/update" }],
-  ["bin/commands/web.ts", { lines: 127, why: "command — serves until Ctrl-C; its parts are tested in src/web" }],
+  ["bin/commands/web.ts", { lines: 250, why: "command — serves until Ctrl-C; its parts are tested in src/web" }],
   ["bin/commands/memory.ts", { lines: 215, why: "command — run by spawning the CLI" }],
   ["bin/commands/observe.ts", { lines: 750, why: "command — run by spawning the CLI" }],
   // S5.2. The store itself is `src/decide/proposals.ts`, on the floor and
@@ -466,7 +466,7 @@ export const PROOFS = new Map<string, Proof>([
       provedOn: "2026-09-24",
       by: "npm run demo -- --model <a local model>",
       result:
-        "15/15 criteria passed on 2026-09-24 on the tree released as 0.4.0 (run 065c6900, table kept in notes/2026-09-24_demo-v0.4.0.txt), on 0.3.0 the same day (run cbeda900, " +
+        "15/15 criteria passed on 2026-09-25 on the tree released as 0.4.1 (run 8a52848c, table kept in notes/2026-09-25_demo-v0.4.1.txt), on 0.4.0 the day before (run 065c6900, table kept in notes/2026-09-24_demo-v0.4.0.txt), on 0.3.0 the same day (run cbeda900, " +
         "table kept in notes/2026-09-24_demo-v0.3.0.txt), on 0.2.0 the same day (run fd433912, " +
         "table kept in notes/2026-09-24_demo-v0.2.0.txt), and earlier that day on the tree released as 0.1.0 (run 2ddacb38, " +
         "table kept in notes/2026-09-24_demo-v0.1.0.txt). Before that, " +

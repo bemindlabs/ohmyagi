@@ -103,3 +103,73 @@ export interface ViewState {
   readonly recent: readonly { readonly when: string; readonly backend: string; readonly asked: string; readonly ok: boolean }[];
   readonly canTriage: boolean;
 }
+
+/** What the Settings tab receives from `/api/settings`. */
+export interface SettingsState {
+  /** Per category, 0–3. The page can set 0–2; a 3 is typed in a terminal. */
+  readonly levels: Readonly<Record<string, number>>;
+  readonly stopped: boolean;
+  /** Backends this machine can reach right now, for the chat's choice. */
+  readonly backends: readonly { readonly id: string; readonly available: boolean }[];
+  /** What `ohmyagi web` was started with: the default the page's choice falls back to. */
+  readonly defaultTurn: { readonly backend: string | null; readonly model: string | null };
+  readonly chatUsers: readonly { readonly platform: string; readonly userId: string; readonly label: string; readonly told: boolean; readonly added: string }[];
+  readonly peers: readonly { readonly name: string; readonly endpoint: string; readonly added: string }[];
+  readonly guards: { readonly judge: string | null; readonly triage: boolean; readonly needles: number };
+  readonly version: { readonly current: string; readonly latest: string | null; readonly checked: string | null };
+}
+
+/** The four categories, in the words the page uses. */
+export const CATEGORY_WORDS: Readonly<Record<string, { readonly name: string; readonly what: string }>> = Object.freeze({
+  read: { name: "Read", what: "look at files and folders" },
+  write: { name: "Write", what: "change or create files" },
+  run: { name: "Run", what: "run commands on this computer" },
+  reach: { name: "Reach", what: "contact other services and agents" },
+});
+
+/** What each level means, per category, in one short phrase. */
+export const LEVEL_WORDS: readonly string[] = ["Never", "Ask me first", "Do it, then tell me", "On its own"];
+
+/** What the Agent tab receives from `/api/agent`: who it is, from its soul, and what it has done. */
+export interface AgentInfo {
+  readonly ok: boolean;
+  /** When the soul does not load: why, one line each. */
+  readonly problems: readonly string[];
+  readonly name: string;
+  readonly role: string;
+  readonly subject: string;
+  readonly dir: string;
+  /** The agent's git repository: where it lives, the remote if it has one, and the last commit. */
+  readonly repo: { readonly remote: string | null; readonly web: string | null; readonly head: string | null; readonly lastCommit: string | null; readonly lastCommitAt: string | null };
+  readonly prohibitions: readonly string[];
+  readonly scope: { readonly does: string; readonly doesNot: string };
+  readonly person: {
+    readonly tone: readonly string[];
+    readonly addressesUserAs: string;
+    readonly refersToSelfAs: readonly string[];
+    readonly principles: readonly string[];
+    readonly inheritsFrom: readonly string[];
+  } | null;
+  readonly roleNotes: string;
+  readonly personNotes: string;
+  readonly stats: {
+    readonly memories: number;
+    readonly turns: number;
+    readonly lastTurn: string | null;
+    readonly byBackend: readonly { readonly backend: string; readonly turns: number }[];
+  };
+}
+
+/**
+ * A remote as something safe to show and, when it is a known forge, to link:
+ * credentials in the URL are cut out, and `git@github.com:o/r.git` becomes
+ * `https://github.com/o/r`.
+ */
+export function remoteForPage(raw: string): { readonly remote: string; readonly web: string | null } {
+  const remote = raw.trim().replace(/^(https?:\/\/)[^@/]+@/, "$1");
+  const scp = /^[\w.-]+@([\w.-]+):(.+?)(?:\.git)?$/.exec(remote);
+  if (scp !== null) return { remote, web: `https://${scp[1]}/${scp[2]}` };
+  const http = /^https?:\/\/([^/]+)\/(.+?)(?:\.git)?\/?$/.exec(remote);
+  if (http !== null) return { remote, web: `https://${http[1]}/${http[2]}` };
+  return { remote, web: null };
+}
