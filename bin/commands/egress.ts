@@ -5,10 +5,13 @@ import {
   describeFindings,
   EGRESS_DIR,
   FILTER_LIMITS,
+  judgeConfig,
+  judgeEgress,
   loadLexicon,
   NEEDLES_FILE,
   readBlocked,
   screen,
+  verdictFindings,
 } from "../../src/egress/index.ts";
 import { personalDir } from "../../src/guard/personal.ts";
 import { subjectId, type SubjectId } from "../../src/types.ts";
@@ -55,8 +58,18 @@ async function cmdCheck(argv: readonly string[]): Promise<number> {
   if (!s.ok) return s.code;
   if (positional.length === 0) return usageError(USAGE);
   const { lexicon } = await loadLexicon(dialEnv(), s.id, []);
-  const findings = screen(positional.join(" "), lexicon);
+  const text = positional.join(" ");
+  let findings = screen(text, lexicon);
+  const judge = judgeConfig(process.env);
+  if (findings.length === 0 && judge !== undefined) findings = verdictFindings(await judgeEgress(text, lexicon.needles, judge));
   console.log(findings.length === 0 ? "may leave — no finding" : `kept in — ${describeFindings(findings)}`);
+  console.log(
+    dim(
+      judge === undefined
+        ? "second layer: off — set OM_AGI_EGRESS_JUDGE=<local ollama model> to have a model on this machine read meaning too (D-061)"
+        : `second layer: on — ${judge.model} at ${judge.host}${lexicon.needles.length === 0 ? " (idle: no needles to protect)" : ""}`,
+    ),
+  );
   console.log();
   console.log(bold("What this cannot see:"));
   for (const note of FILTER_LIMITS) console.log(dim(`  - ${note}`));

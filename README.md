@@ -8,11 +8,11 @@
 
 *Capability that stays with the person, not the organization.*
 
-[![Status](https://img.shields.io/badge/status-v0.3.0-green)](.scrum/backlog.md)
+[![Status](https://img.shields.io/badge/status-v0.4.0-green)](.scrum/backlog.md)
 [![Runtime](https://img.shields.io/badge/runtime-Bun-black?logo=bun)](.scrum/decisions.md#d-004)
 [![Protocol](https://img.shields.io/badge/agent--to--agent-A2A%201.0.0-blue)](.scrum/decisions.md#d-016)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](#license)
-[![Decisions](https://img.shields.io/badge/decisions-D--001%20→%20D--058-informational)](.scrum/decisions.md)
+[![Decisions](https://img.shields.io/badge/decisions-D--001%20→%20D--066-informational)](.scrum/decisions.md)
 
 <img src="docs/assets/hero.jpg" alt="An agent of light standing on a terminal, tied to a git branch, a local server and a padlock" width="720">
 
@@ -20,7 +20,7 @@
 
 ---
 
-> **v0.3.0.** The full MVP is met (since v0.1.0): identity, isolation, a git repository per
+> **v0.4.0.** The full MVP is met (since v0.1.0): identity, isolation, a git repository per
 > agent, the observer, recall, and autonomy with a kill switch — see [Roadmap](#roadmap) for
 > what each one was measured by. It is a 0.x: file formats and flags may still change, and
 > anything below marked `not built yet` describes what Oh My AGI is *designed* to do, not what it
@@ -52,7 +52,7 @@
 
 ```bash
 # pick the release and the file for your machine, e.g. Linux x86_64
-V=v0.3.0-alpha
+V=v0.4.0-alpha
 curl -LO https://github.com/bemindlabs/ohmyagi/releases/download/$V/ohmyagi-linux-x64
 curl -LO https://github.com/bemindlabs/ohmyagi/releases/download/$V/SHA256SUMS
 sha256sum -c SHA256SUMS --ignore-missing          # macOS: shasum -a 256 -c SHA256SUMS --ignore-missing
@@ -67,6 +67,10 @@ installing it:
 ```bash
 xattr -d com.apple.quarantine ohmyagi-darwin-arm64 2>/dev/null; codesign --force --sign - ohmyagi-darwin-arm64
 ```
+
+**Staying current:** `ohmyagi update --check` asks for a newer release; `ohmyagi update --yes` installs it after
+checking its SHA256SUMS. At a terminal, commands also check once a day and say so in one line —
+`OM_AGI_NO_UPDATE_CHECK=1` turns that off.
 
 **From source** — needs [Bun](https://bun.sh) ≥ 1.4:
 
@@ -98,6 +102,17 @@ where its repository goes, what it is for, what it does and declines, and how it
 the repository, writes the soul from your answers, checks it, and runs a first turn. It raises no autonomy,
 turns on no capture and writes into none of your AI CLIs' files — it prints those commands for you instead.
 
+**In your browser** — once an agent exists:
+
+```bash
+ohmyagi web ~/agents/keeper --subject me       # prints a link with a one-time key; this computer only
+```
+
+One page: what the agent may do on its own, a **Stop everything** button, what is **waiting for your yes or
+no** (with plain-language risk labels when triage is on), a chat, its schedule and what it did recently. Every
+button runs the same command you could type. Letting it act without asking, consenting to capture, releasing the
+brake and erasing data stay in the terminal, on purpose.
+
 **By hand**, the same steps:
 
 ```bash
@@ -122,6 +137,8 @@ ohmyagi turn ~/agents/keeper --subject me --backend ollama --model <model> \
 | Let it do more on its own | `ohmyagi autonomy show …` · `ohmyagi autonomy set write 2 …` (level 3 is typed at a terminal) |
 | Give it a schedule | write `soul/triggers.md`, then `ohmyagi triggers schedule …` prints a timer — triggered turns only propose |
 | Let it learn what you do | `ohmyagi observe enable --subject me` — you type the consent phrase; `ohmyagi observe hook --print --subject me` shows the hook to add |
+| Triage proposals (opt-in) | `ohmyagi proposal triage --pending …` asks TypeSafe's Jev what kind of action each is, whether it can be undone, whether it touches private data — advisory, it approves nothing; needs `TYPESAFE_API_KEY` (D-059) |
+| Guard what leaves more closely | `OM_AGI_EGRESS_JUDGE=<local model>` — after the text filter, a model on this machine reads meaning (paraphrase, other scripts); unsure keeps a prompt in (D-061) |
 | Stop everything | `ohmyagi stop` |
 | Take a subject back out | `ohmyagi erase me --agent ~/agents/keeper --by "me"` (a dry run until `--yes`) |
 
@@ -319,6 +336,22 @@ ohmyagi memory forget    forget whole notes: file gone, collection dropped whole
 ohmyagi memory index     build recall from memory/ — full-text in .dagi/index/ always, the
                          subject's own Qdrant collection when bge-m3 and Qdrant answer
 ohmyagi memory search    ask both indexes, merged; every hit says which index found it
+ohmyagi update           is there a newer release? --check asks; --yes installs this machine's build after
+                         checking SHA256SUMS. Commands check once a day at a terminal (D-065)
+ohmyagi a2a serve        listen for allowed peers (A2A 1.0.0, loopback); what arrives goes to the ledger
+                         and the inbox, and none of it is run (E8, D-063)
+ohmyagi a2a send         one message to an allowed peer, screened like a turn; kept in means not sent
+ohmyagi a2a allow        allow a peer — typed at a terminal, never by a flag (S8.4)
+ohmyagi a2a peers        who this agent may talk to
+ohmyagi a2a inbox        what peers have sent
+ohmyagi chat serve       answer allowed people on Telegram — a level-1 turn, screened by the filter and the
+                         local judge, says it is an AI first; anyone else gets no answer (E9, D-066)
+ohmyagi chat allow       let one person be answered — typed at a terminal, never by a flag (S9.2)
+ohmyagi chat users       who the agent answers in chat apps
+ohmyagi web              a page in your browser: what it may do, what waits for your yes or no, a chat,
+                         the brake — every button a command; loopback, one-time key (D-060)
+ohmyagi observe interests your projects ranked by how much and how recently you worked in them —
+                         counted over your own directories, never kept (S3.4, D-064)
 ohmyagi observe patterns routines and sequences in what you did, with the evidence for each —
                          recomputed every run, printed and never kept (S3.3, D-057)
 ohmyagi observe leaks    count records that ran in a fleet launcher's directory without
@@ -412,9 +445,9 @@ Full detail: [`.scrum/backlog.md`](.scrum/backlog.md) · every decision and its 
 
 ## Status
 
-v0.3.0. 10 epics · 43 stories · 4 spikes · 58 recorded decisions.
+v0.4.0. 10 epics · 43 stories · 4 spikes · 66 recorded decisions.
 The full MVP is met (`.scrum/backlog.md` §7) as of v0.1.0: Phases A and B, the observer, the autonomy core and
-recall (E4). v0.2.0 added scheduled triggers (S5.3), the `ohmyagi` name, `ohmyagi setup` and a macOS installer; v0.3.0 adds the pattern miner (S3.3). Next: the interest tracker (S3.4) and agent-to-agent (E8).
+recall (E4). v0.2.0 added scheduled triggers (S5.3), the `ohmyagi` name, `ohmyagi setup` and a macOS installer; v0.3.0 the pattern miner (S3.3); v0.4.0 adds agent-to-agent over A2A (E8), a chat connector for Telegram (E9), the web page, the local egress judge, proposal triage, the interest tracker (S3.4) and `ohmyagi update`. Next: identity inheritance (E6).
 
 Those four numbers are counted out of `.scrum/` by `test/docs/readme-counts.test.ts`
 every time the suite runs, because a number in a README is the thing nobody comes

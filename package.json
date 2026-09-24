@@ -1,6 +1,6 @@
 {
   "name": "om-agi",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Oh My AGI — a CLI that builds AGI agents you actually own",
   "type": "module",
   "license": "Apache-2.0",
@@ -21,7 +21,8 @@
     "build:macos": "bun build bin/om-agi.ts --compile --target=bun-darwin-arm64 --outfile dist/ohmyagi-darwin-arm64 && bun build bin/om-agi.ts --compile --target=bun-darwin-x64 --outfile dist/ohmyagi-darwin-x64",
     "coverage": "bun run scripts/check-coverage.ts",
     "demo": "bash scripts/demo-bare-container.sh",
-    "parity": "bun run scripts/cli-parity.ts"
+    "parity": "bun run scripts/cli-parity.ts",
+    "release:check": "test -n \"$OM_AGI_RELEASE_MODEL\" || { echo \"release:check needs OM_AGI_RELEASE_MODEL=<local ollama model> — the identity firewall (S6.4) is judged against a real model, and a release without that judgement does not ship (D-062)\" >&2; exit 1; } && bun run typecheck && bun test && bun run coverage && OM_AGI_REAL_FIREWALL=1 OM_AGI_REAL_MODEL=\"$OM_AGI_RELEASE_MODEL\" bun test test/soul/firewall.real.test.ts"
   },
   "engines": {
     "bun": ">=1.4.0"

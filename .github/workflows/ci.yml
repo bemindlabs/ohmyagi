@@ -1,0 +1,29 @@
+# S6.4 AC4 (D-062): every push and pull request runs the same three gates a
+# commit here has to pass. A red run is a release that does not happen.
+#
+# What CI cannot run: anything that needs a model. The identity firewall's
+# model half (S6.4 AC1/AC2) is `bun run release:check`, which a release runs
+# against a local model and which refuses to pass without one.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The notes cite commits by sha, and a test checks each one exists.
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun test
+      - run: bun run coverage

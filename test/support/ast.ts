@@ -762,7 +762,7 @@ const statementKind = (node: ts.Node): string =>
  * Reads the syntax tree, so a mention in a comment or a string is invisible to
  * it and `Bun["spawn"]`, `const b = Bun` and `globalThis["Bun"]` are not.
  */
-export function processEscapes(path: string, source: string, allowSpawn: boolean): string[] {
+export function processEscapes(path: string, source: string, allowSpawn: boolean, allowServe = false): string[] {
   const file = parse(path, source);
   const found: string[] = [];
 
@@ -771,7 +771,8 @@ export function processEscapes(path: string, source: string, allowSpawn: boolean
       const parent = node.parent as ts.Node | undefined;
       if (parent !== undefined && ts.isPropertyAccessExpression(parent) && parent.expression === node) {
         const member = parent.name.text;
-        const permitted = ALLOWED_BUN_MEMBERS.includes(member) || (allowSpawn && member === "spawn");
+        const permitted =
+          ALLOWED_BUN_MEMBERS.includes(member) || (allowSpawn && member === "spawn") || (allowServe && member === "serve");
         if (!permitted) found.push(`${line(file, node)}: Bun.${member}`);
       } else if (parent !== undefined && ts.isQualifiedName(parent) && parent.left === node) {
         // `Bun.Subprocess` in a type annotation. A type is erased before

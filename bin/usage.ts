@@ -164,6 +164,10 @@ Usage:
                                         going, with the evidence for each, and
                                         triggers.md snippets for timed ones.
                                         Recomputed each run; nothing is kept.
+  ohmyagi observe interests --subject <id> --root <dir> [--half-life <days>] [--limit <n>]
+                                        Your projects ranked by how much and how
+                                        recently you worked in them. Counts only;
+                                        nothing is kept.
   ohmyagi observe leaks --subject <id> --fleet-dir <dir> [--fleet-dir <dir>...]
                                         Count records in the subject that ran in
                                         a directory a fleet launcher uses — a
@@ -300,6 +304,14 @@ Usage:
                                         --json — \`proposal list --json\` already
                                         holds every record, and two JSON shapes
                                         for one record is one too many.
+  ohmyagi proposal triage (<proposal-id> | --pending) <dir> --subject <id>
+                                        Ask TypeSafe's Jev what kind of action a
+                                        proposal is, whether it can be undone
+                                        and whether it touches private data.
+                                        Opt-in, advisory, approves nothing; the
+                                        text is screened first. Needs
+                                        TYPESAFE_API_KEY. OM_AGI_TRIAGE=jev does
+                                        it on every filing.
   ohmyagi stop [<dir> --subject <id>]   Stop everything, in a fixed order: set
                                         the brake, take every category to 0, end
                                         the turns that are running. Prints what
@@ -315,6 +327,45 @@ Usage:
   ohmyagi triggers schedule <dir> --subject <id> [--every <5m>]
                                         Print a systemd timer and a cron line
                                         that call tick. Installs nothing.
+  ohmyagi web <dir> --subject <id> [--port <n>] [--host <addr>]
+                                        A page for one agent in your browser:
+                                        what it may do, what waits for your
+                                        yes or no, a chat, and the brake. Every
+                                        button runs a command; level 3, consent,
+                                        releasing the brake and erase stay in
+                                        the terminal. Loopback, with a link key.
+  ohmyagi a2a peers --subject <id>        Who this agent may talk to, both ways.
+  ohmyagi a2a allow <name> --endpoint <url> --subject <id> [--send-token-file <path>]
+                                        Allow a peer: typed at a terminal, never
+                                        by a flag. Prints the token it sends with.
+  ohmyagi a2a remove <name> --subject <id>
+                                        Take a peer away.
+  ohmyagi a2a serve <dir> --subject <id> [--port <n>] [--host <addr>]
+                                        Listen for allowed peers (loopback) and
+                                        serve the agent card. What arrives goes
+                                        to the ledger and the inbox; none is run.
+  ohmyagi a2a send <dir> --subject <id> --to <name> --text <message>
+                                        Send one message to a peer, screened
+                                        like a turn; kept in means not sent.
+  ohmyagi a2a inbox --subject <id>      What peers have sent.
+  ohmyagi chat users --subject <id>       Who the agent answers in chat apps.
+  ohmyagi chat allow <platform> <user-id> --subject <id> [--label <name>]
+                                        Let one person be answered: typed at a
+                                        terminal, never by a flag.
+  ohmyagi chat remove <platform> <user-id> --subject <id>
+                                        Stop answering them.
+  ohmyagi chat serve <dir> --subject <id> --token-file <path> [--platform telegram] [--once]
+                                        Answer allowed people on Telegram. Each
+                                        answer is a level-1 turn, screened by the
+                                        filter and the local judge; it says it is
+                                        an AI first; anyone else gets nothing.
+  ohmyagi update [--check] [--yes]       Is there a newer release? --check only
+                                        asks; without --yes it says what it would
+                                        replace; --yes installs this machine's
+                                        build after checking its SHA256SUMS.
+                                        Once a day, at a terminal, commands also
+                                        check by themselves and say so in one
+                                        line (OM_AGI_NO_UPDATE_CHECK=1 stops it).
   ohmyagi help                          This message
 
 A soul is two files — ${ROLE_FILE} (role knowledge) and ${PERSON_FILE} (personal

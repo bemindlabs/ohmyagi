@@ -188,11 +188,11 @@ describe("a full erase", () => {
     const env = envFor(home);
     const plan = await planErase(env, request(mine.agent, [mine.instruction]));
     expect(plan.refusals).toEqual([]);
-    // Eight trees: the soul, the derived directory, the backups, the level-3
+    // Ten trees: the soul, the derived directory, the backups, the level-3
     // confirmations (D-042), the rag marker (D-038), the run records (S5.4),
-    // the trigger fire times (S5.3) and the personal directory. The block and
-    // the ledger lines are counted separately.
-    expect(plan.trees.length).toBe(8);
+    // the trigger fire times (S5.3), the A2A peers (D-063), the chat
+    // allowlist (D-066) and the personal directory. The block and the ledger lines are counted separately.
+    expect(plan.trees.length).toBe(10);
     expect(plan.blocks.filter((block) => block.outcome === "strip").length).toBe(1);
     expect(plan.ledger.matched.length).toBe(1);
 
@@ -292,8 +292,8 @@ describe("a full erase", () => {
     await Bun.write(control, JSON.stringify({ what: `delete ${CANARY}` }));
 
     const plan = await planErase(envFor(home), request(mine.agent, [mine.instruction]));
-    // Still eight: the store is a subtree of a tree that was already planned.
-    expect(plan.trees.length).toBe(8);
+    // Still nine: the store is a subtree of a tree that was already planned.
+    expect(plan.trees.length).toBe(10);
     const observed = plan.trees.find((tree) => tree.plan.dir === personal);
     expect(observed).toBeDefined();
     expect(observed!.plan.before.paths.some((path) => path.includes("proposals"))).toBe(true);
@@ -329,7 +329,7 @@ describe("a full erase", () => {
 
     const before = await snapshot();
     const plan = await planErase(envFor(home), request(mine.agent, [mine.instruction]));
-    expect(plan.trees.length).toBe(8);
+    expect(plan.trees.length).toBe(10);
     const after = await snapshot();
 
     expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
@@ -453,8 +453,8 @@ describe("--personal", () => {
       }),
     );
     expect(plan.files).toEqual([join(mine.agent, "soul", "person.md")]);
-    // Seven trees, not eight: `soul/` stays, because `role.md` is in it.
-    expect(plan.trees.length).toBe(7);
+    // Nine trees, not ten: `soul/` stays, because `role.md` is in it.
+    expect(plan.trees.length).toBe(9);
 
     const result = await commitErase(plan);
     expect(result.files).toEqual([{ path: join(mine.agent, "soul", "person.md"), removed: true }]);
@@ -675,10 +675,10 @@ describe("--no-agent", () => {
 
     const plan = await planErase(envFor(home), request(null, [mine.instruction]));
 
-    // Backups, confirmations, run records, trigger fire times, the rag marker
-    // and the personal directory need no repository; soul/ and .dagi/ are not
-    // visited at all.
-    expect(plan.trees.length).toBe(6);
+    // Backups, confirmations, run records, trigger fire times, A2A peers, the
+    // chat allowlist, the rag marker and the personal directory need no
+    // repository; soul/ and .dagi/ are not visited at all.
+    expect(plan.trees.length).toBe(8);
     expect(plan.git).toBeNull();
     expect(plan.notes.join("\n")).toContain("--no-agent");
     // The reserved addresses cannot be probed either, and that is said.

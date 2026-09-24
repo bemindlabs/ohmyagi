@@ -163,14 +163,15 @@ export function isPersonal(value: unknown): value is Personal<unknown> {
 /**
  * How one part of a tally key is obtained from a string field.
  *
- * Three generic operations on a string, and deliberately nothing that knows any
+ * Generic operations on a string, and deliberately nothing that knows any
  * schema: `month` is the first seven characters of an ISO-8601 instant (a year
- * and a month, the coarsest date a timestamp can be reduced to), and
- * `first-word` is everything before the first space. Both exist so that a
- * *coarser* thing than the field can be counted; neither can widen what a key
- * may contain, because a key is only ever looked up (see {@link countPersonal}).
+ * and a month), `day` the first ten (a date — S3.4 weighs interest by how
+ * recent it is), and `first-word` is everything before the first space. Each
+ * exists so that a *coarser* thing than the field can be counted; none can
+ * widen what a key may contain, because a key is only ever looked up (see
+ * {@link countPersonal}).
  */
-export type CountTake = "whole" | "month" | "first-word";
+export type CountTake = "whole" | "month" | "day" | "first-word";
 
 /** One part of a tally key: a word from the caller's own source, or a field of the item. */
 export type CountPart =
@@ -300,6 +301,9 @@ function takePart(value: string, how: CountTake): string {
   // "2026-09-21T10:00:00.000Z" → "2026-09". A value that is not a timestamp
   // yields its first seven characters, which will not be in any vocabulary.
   if (how === "month") return value.slice(0, 7);
+  // "2026-09-21T10:00:00.000Z" → "2026-09-21" (S3.4): still coarser than the
+  // instant, and only ever looked up in a vocabulary of dates the caller wrote.
+  if (how === "day") return value.slice(0, 10);
   if (how === "first-word") return value.split(" ")[0] ?? "";
   return value;
 }

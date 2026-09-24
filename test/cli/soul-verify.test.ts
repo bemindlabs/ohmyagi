@@ -374,7 +374,10 @@ describe("ohmyagi soul verify", () => {
     const path = join(home, ".claude", "CLAUDE.md");
     const before = await readFile(path, "utf8");
 
-    await run(home, ["soul", "verify", SOUL, "--subject", "example", "--runs", "1", "--model", "stub"]);
+    // A dead loopback port, not the default daemon: what this machine's ollama
+    // does with a model named `stub` is not this test's question, and a daemon
+    // that sits on it for fifteen seconds made the case time out.
+    await run(home, ["soul", "verify", SOUL, "--subject", "example", "--runs", "1", "--model", "stub"], { ollama: "http://127.0.0.1:9" });
 
     expect(await readFile(path, "utf8")).toBe(before);
   });

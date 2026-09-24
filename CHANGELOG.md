@@ -2,6 +2,58 @@
 
 ## Unreleased
 
+## 0.4.0 — 2026-09-24
+
+### Chat (E9)
+- `ohmyagi chat` (S9.1, S9.2, D-066): the agent answers people on Telegram. `chat allow telegram <user-id>` is typed
+  at a terminal, and there is no flag for it. `chat serve --token-file <f>` long-polls the agent's own bot.
+  Anyone not on the list gets no answer at all. The first answer to each person, and every answer to "are you a
+  bot?", says it is an AI. Each answer is a turn held at level 1 and must pass the filter *and* the local judge
+  (serve refuses to start without `OM_AGI_EGRESS_JUDGE`); anything caught becomes "I can't share that here.", and no
+  approval lets it out. Every message, in and out, goes to the ledger as `chat:telegram:in|out:<user>`. `erase`
+  removes the allowlist. Platforms are adapters in `src/connectors/`.
+
+### Install
+- `ohmyagi update` (D-065): `--check` asks the public repository for a newer release; `--yes` downloads this
+  machine's build, checks it against the release's SHA256SUMS and swaps it in by rename (a checkout is told to use
+  git instead). Commands check once a day by themselves, only at a terminal, after they finish, in one line;
+  `OM_AGI_NO_UPDATE_CHECK=1` turns that off.
+
+### Observer (E3)
+- `observe interests --root <dir>…` (S3.4, D-064): projects ranked by frequency × recency (half-life tunable,
+  default 7 days), counted through `countPersonal` over directories on your own disk — no record's words become
+  keys, and nothing is kept. `countPersonal` gains a `day` take.
+
+### Agent-to-agent (E8)
+- `ohmyagi a2a` (D-063): `allow` a peer (typed at a terminal, never by a flag; each peer gets its own token),
+  `serve` (loopback, the agent card with a bearer scheme; what an allowed peer sends is written to the ledger, then
+  the inbox — never run), `send` (only to allowed peers, through both egress layers, announced, ledger first),
+  `peers`, `remove`, `inbox`. Interop checked against the real `bwoc-a2a` in both directions.
+
+### Release
+- CI (D-062): every push and pull request runs typecheck, the tests and the coverage gate. `bun run release:check`
+  adds the identity firewall's real-model test (S6.4) and refuses to pass without `OM_AGI_RELEASE_MODEL`.
+
+### Data (E7)
+- The egress guard's second layer (D-061): with `OM_AGI_EGRESS_JUDGE=<ollama model>`, a model on this machine reads
+  every prompt the text filter passed before it leaves — paraphrase, translation, other scripts — and anything it is
+  unsure about stays in. Loopback only; used by `turn`, `proposal triage` and `egress check`. Red team 10 of 10 with
+  qwen3.8:27b (was 8 of 10), ordinary work still leaves.
+
+### Web
+- `ohmyagi web <dir> --subject <id>` (D-060): one page for an agent, in plain words — what it may do on its own, a
+  Stop everything button, proposals waiting for a yes or no (with Jev's labels as "Changes this computer",
+  "Hard to undo" …), "Do it now" for approved ones, a chat, its schedule and recent turns. Every button runs the CLI;
+  level 3, capture consent, releasing the brake and erase stay in the terminal. Loopback by default, a one-time key
+  in the link, a Host check and a strict content policy; no remote assets, works offline.
+
+### Autonomy (E5)
+- `proposal triage` (D-059, opt-in): TypeSafe's Jev reads a proposal's what/why/impact and labels it — kind of action
+  (read-only · local-change · external · destructive), whether it can be undone, whether it touches private data —
+  with probabilities, shown in `proposal list` and `show`. Advisory only: it approves nothing. The text is screened
+  by the egress filter first and the departure is announced; `OM_AGI_TRIAGE=jev` triages every filing. Needs
+  `TYPESAFE_API_KEY` (or `TYPESAFE_API_KEY_FILE`).
+
 ### Published
 - A public repository, [`bemindlabs/ohmyagi`](https://github.com/bemindlabs/ohmyagi), starts from a one-commit
   snapshot of 0.3.0 (`v0.3.0-alpha`, pre-release — D-058). Local paths and addresses are replaced on export; the

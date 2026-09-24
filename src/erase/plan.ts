@@ -74,6 +74,8 @@ import {
 } from "../observer/store.ts";
 import { confirmationsDirFor } from "../decide/confirm.ts";
 import { triggersDirFor } from "../decide/triggers.ts";
+import { a2aDirFor } from "../a2a/peers.ts";
+import { chatDirFor } from "../connectors/users.ts";
 import { collectionFor } from "../memory/collection.ts";
 import { ragDirFor, readRagMarker, type RagMarker } from "../memory/marker.ts";
 import {
@@ -292,6 +294,13 @@ export async function planErase(
   // When each scheduled trigger last fired (S5.3 AC6). Under `ledger` for the
   // reason the run records are: it is a fact about turns, keyed by subject.
   wanted.push({ place: "ledger", label: "when each trigger last fired", dir: triggersDirFor(env, subject) });
+  // The A2A peer list (D-063): who this subject's agent may talk to, with the
+  // tokens issued to them. Under `ledger` beside the other per-subject state;
+  // the inbox itself is under the personal directory and goes with it.
+  wanted.push({ place: "ledger", label: "the A2A peers and their tokens", dir: a2aDirFor(env, subject) });
+  // Who the agent answers in chat apps, who has been told it is an AI, and
+  // where each platform was read up to (D-066). The messages are in the ledger.
+  wanted.push({ place: "ledger", label: "the chat allowlist and who has been told", dir: chatDirFor(env, subject) });
 
   const emptyParents: string[] = [];
   const personal = await personalDir(env, subject);

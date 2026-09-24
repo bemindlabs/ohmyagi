@@ -94,13 +94,23 @@ export function screen(text: string, lexicon: Lexicon): readonly EgressFinding[]
 
 /** A line a person can act on, naming no personal text. */
 export function describeFindings(findings: readonly EgressFinding[]): string {
-  return findings.map((f) => (f.rule === "needle" ? `personal needle #${f.needle}` : f.rule)).join(", ");
+  return findings
+    .map((f) =>
+      f.rule === "needle"
+        ? `personal needle #${f.needle}`
+        : f.rule === "judge:reveals"
+          ? "the local judge read it as revealing a protected item"
+          : f.rule === "judge:unsure"
+            ? "the local judge could not decide, so it stays in"
+            : f.rule,
+    )
+    .join(", ");
 }
 
 /** What the filter cannot see. Printed by `egress check`. */
 export const FILTER_LIMITS: readonly string[] = [
   "personal information written as prose — a name nobody listed, an illness, a relationship — has no shape and is not caught unless it is a needle",
-  "a needle paraphrased, abbreviated, translated or misspelled; the filter matches text, not meaning",
+  "a needle paraphrased, abbreviated, translated or misspelled; the filter matches text, not meaning — unless the local judge is on (OM_AGI_EGRESS_JUDGE, D-061), which reads meaning and can still be wrong",
   "a number split across lines or written in words",
   "anything a local backend receives: I-6 lets personal data reach this machine's own model, so local turns are not screened",
 ];

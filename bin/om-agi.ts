@@ -21,6 +21,8 @@
 
 import { VERSION } from "../src/version.ts";
 import { expandAs } from "./as.ts";
+import { cmdA2A } from "./commands/a2a.ts";
+import { cmdChat } from "./commands/chat.ts";
 import { cmdAutonomy } from "./commands/autonomy.ts";
 import { cmdBackends } from "./commands/backends.ts";
 import { cmdDoctor } from "./commands/doctor.ts";
@@ -38,6 +40,8 @@ import { cmdSoul } from "./commands/soul.ts";
 import { cmdStop } from "./commands/stop.ts";
 import { cmdTriggers } from "./commands/triggers.ts";
 import { cmdTurn } from "./commands/turn.ts";
+import { autoCheck, cmdUpdate } from "./commands/update.ts";
+import { cmdWeb } from "./commands/web.ts";
 import { cmdWorn } from "./commands/worn.ts";
 import { asksForHelp, helpFor } from "./shared.ts";
 import { USAGE } from "./usage.ts";
@@ -133,6 +137,17 @@ async function main(rawArgv: readonly string[]): Promise<number> {
     case "triggers":
       return cmdTriggers(rest);
 
+    case "web":
+      return cmdWeb(rest);
+
+    case "a2a":
+      return cmdA2A(rest);
+    case "chat":
+      return cmdChat(rest);
+
+    case "update":
+      return cmdUpdate(rest);
+
     case "erase":
       return cmdErase(rest);
 
@@ -161,4 +176,8 @@ async function main(rawArgv: readonly string[]): Promise<number> {
   }
 }
 
-process.exitCode = await main(process.argv.slice(2));
+const code = await main(process.argv.slice(2));
+// D-065: at most once a day, at a terminal, one line if a newer release exists.
+// After the command, so it can never delay or change what the command did.
+await autoCheck(process.argv.slice(2));
+process.exitCode = code;

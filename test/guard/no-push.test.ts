@@ -82,6 +82,12 @@ const DEAD = "http://127.0.0.1:1";
  * assertion they make meaningful.
  */
 const SPAWN_CHOKEPOINT = join("src", "spawn.ts");
+/**
+ * The two files that may listen: `ohmyagi web`'s server (D-060) and the A2A
+ * listener (D-063), both on loopback by default. Named here so a second listener is a red test, and kept out of every
+ * no-network closure (observer, erase), which still refuse `Bun.serve` outright.
+ */
+const SERVE_CHOKEPOINTS: readonly string[] = [join("src", "web", "server.ts"), join("src", "a2a", "server.ts")];
 
 describe("A. static — one place in the engine can start a process", () => {
   test("only src/spawn.ts reaches Bun.spawn, anywhere under src/ and bin/", async () => {
@@ -101,7 +107,7 @@ describe("A. static — one place in the engine can start a process", () => {
     const escapes: string[] = [];
     for (const path of files) {
       const rel = relative(ROOT, path);
-      for (const hit of processEscapes(path, await readFile(path, "utf8"), rel === SPAWN_CHOKEPOINT)) {
+      for (const hit of processEscapes(path, await readFile(path, "utf8"), rel === SPAWN_CHOKEPOINT, SERVE_CHOKEPOINTS.includes(rel))) {
         escapes.push(`${rel}:${hit}`);
       }
     }
@@ -116,6 +122,10 @@ describe("A. static — one place in the engine can start a process", () => {
     // what makes the exemption meaningful rather than decorative.
     expect(processEscapes(path, source, false)).not.toEqual([]);
     expect(processEscapes(path, source, true)).toEqual([]);
+    // The listener allowance is its own flag: spawn's does not grant it, nor it spawn's.
+    expect(processEscapes("s.ts", "Bun.serve({});", true)).not.toEqual([]);
+    expect(processEscapes("s.ts", "Bun.serve({});", false, true)).toEqual([]);
+    expect(processEscapes("s.ts", "Bun.spawn([]);", false, true)).not.toEqual([]);
   });
 
   test("the checker catches what a regular expression missed, and ignores comments", () => {
@@ -399,6 +409,8 @@ describe("C. behaviour — every command, watched by a git that writes down its 
       ["observe", "status", "--subject", SUBJECT],
       // S3.3 (D-057): reads capture, writes nothing.
       ["observe", "patterns", "--subject", SUBJECT],
+      // S3.4 (D-064): counts capture over the directories under a root.
+      ["observe", "interests", "--subject", SUBJECT, "--root", agent],
       ["observe", "purge", "--subject", SUBJECT, "--dry-run"],
       ["observe", "purge", "--subject", SUBJECT],
       // S4.1's two (D-038). `index` writes .dagi/index/ inside the repository —
@@ -427,6 +439,15 @@ describe("C. behaviour — every command, watched by a git that writes down its 
       // D-056's. With stdin closed it runs `backends`, then stops at its first
       // question having created nothing.
       ["setup", "--no-turn"],
+      // D-060's: with no agent named it prints its usage and starts nothing.
+      ["web"],
+      // D-063's: reads the peer list and the inbox; sends and listens nowhere.
+      ["a2a", "peers", "--subject", SUBJECT],
+      ["a2a", "inbox", "--subject", SUBJECT],
+      // D-066's: reads the allowlist; polls and answers nobody.
+      ["chat", "users", "--subject", SUBJECT],
+      // D-065's: a stray word is a usage error before anything is asked of GitHub.
+      ["update", "wat"],
       // `stop` writes the brake into this sandbox's XDG_STATE_HOME and zeroes
       // the dial in the repository. Nothing after it runs a turn, so the brake
       // affects no later step here.
@@ -505,6 +526,10 @@ describe("C. behaviour — every command, watched by a git that writes down its 
       "stop",
       "triggers",
       "setup",
+      "web",
+      "a2a",
+      "chat",
+      "update",
       // S5.2's. Run in sequence above rather than in the flat list, because
       // `decide` needs the id `new` printed.
       "proposal",

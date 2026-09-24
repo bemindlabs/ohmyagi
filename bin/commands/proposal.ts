@@ -57,7 +57,9 @@ import {
 } from "../../src/decide/index.ts";
 import { loadSoul } from "../../src/soul/index.ts";
 import { subjectId, type SubjectId } from "../../src/types.ts";
+import { readTriage, triageLabel, TRIAGE_NOTE } from "../../src/decide/triage.ts";
 import { dialEnv, whoIsSetting } from "../dial.ts";
+import { triageAndStore, triageIfEnabled } from "../triage.ts";
 import { ERR, OUT, parseArgs, report, usageError, type Sink } from "../shared.ts";
 
 const PROPOSAL_USAGE =
@@ -66,7 +68,8 @@ const PROPOSAL_USAGE =
   "                          [--changed <text>]\n" +
   "       ohmyagi proposal decide <proposal-id> <dir> --subject <id> (--approve | --refuse) [--note <text>]\n" +
   "       ohmyagi proposal list <dir> --subject <id> [--json]\n" +
-  "       ohmyagi proposal show <proposal-id> <dir> --subject <id> [--json]";
+  "       ohmyagi proposal show <proposal-id> <dir> --subject <id> [--json]\n" +
+  "       ohmyagi proposal triage (<proposal-id> | --pending) <dir> --subject <id>";
 
 /**
  * The flags `proposal` takes no value for.
@@ -284,6 +287,7 @@ async function cmdNew(argv: readonly string[]): Promise<number> {
 
   // stdout is the id and nothing else, so `id=$(ohmyagi proposal new …)` works.
   OUT.line(proposal.id);
+  await triageIfEnabled(dir.path, proposal, place.subject);
 
   ERR.line(`filed: ${path}`);
   if (blocking !== undefined) {
@@ -397,7 +401,10 @@ async function cmdList(argv: readonly string[]): Promise<number> {
   if (read.inventory.proposals.length === 0) {
     OUT.line("  nothing has been proposed for this subject.");
   }
-  for (const stored of read.inventory.proposals) OUT.line(`  ${proposalLine(stored.proposal)}`);
+  for (const stored of read.inventory.proposals) {
+    const triage = await readTriage(read.dir, stored.proposal.id);
+    OUT.line(`  ${proposalLine(stored.proposal)}${triage === undefined ? "" : OUT.dim(`  [${triageLabel(triage)}]`)}`);
+  }
   sayRefusals(ERR, read.inventory);
   return 0;
 }
@@ -449,8 +456,46 @@ async function cmdShow(argv: readonly string[]): Promise<number> {
   // `jq '.proposals[] | select(.id == "…")'` is the same answer. This
   // subcommand is the one written for a person about to decide.
   sayProposal(OUT, stored.proposal);
+  const triage = await readTriage(read.dir, stored.proposal.id);
+  if (triage !== undefined) {
+    const probs = Object.entries(triage.risk.probabilities).map(([k, v]) => `${k} ${v.toFixed(2)}`).join(" · ");
+    OUT.line(`  triage  ${triageLabel(triage)} (${triage.model}, ${triage.at})`);
+    OUT.line(OUT.dim(`          risk: ${probs}`));
+    OUT.line(OUT.dim(`          ${TRIAGE_NOTE}`));
+  }
   sayRefusals(ERR, read.inventory);
   return 0;
+}
+
+/**
+ * `ohmyagi proposal triage` — ask Jev about one proposal, or every pending one
+ * (D-059). On demand only; `OM_AGI_TRIAGE=jev` is what makes filing do it.
+ */
+async function cmdTriage(argv: readonly string[]): Promise<number> {
+  const { positional, options } = parseArgs(argv, [...PROPOSAL_BOOLEANS, "pending"]);
+  const pending = options.has("pending");
+  const at = pending ? 0 : 1;
+  const id = pending ? undefined : positional[0];
+  if (!pending && id === undefined) return usageError(PROPOSAL_USAGE);
+  const place = await placeOf(positional, options, at);
+  if (!place.ok) return place.code;
+  const read = await inventoryFor(place.subject);
+  if (!read.ok) return read.code;
+  const targets = pending
+    ? read.inventory.proposals.filter((s) => s.proposal.decision === null)
+    : read.inventory.proposals.filter((s) => s.proposal.id === id);
+  if (targets.length === 0) {
+    ERR.line(pending ? "ohmyagi: nothing is pending." : `ohmyagi: no proposal ${JSON.stringify(id)} for subject ${place.subject}.`);
+    return pending ? 0 : 1;
+  }
+  const loaded = await loadSoul(place.dir, place.subject);
+  const inherits = loaded.ok ? loaded.soul.person.inherits_from : [];
+  let failed = 0;
+  for (const stored of targets) {
+    const outcome = await triageAndStore(read.dir, stored.proposal, place.subject, inherits);
+    if (outcome.kind !== "triaged") failed += 1;
+  }
+  return failed === 0 ? 0 : 1;
 }
 
 /** `ohmyagi proposal …` — new, decide, list, show. */
@@ -465,6 +510,8 @@ export async function cmdProposal(argv: readonly string[]): Promise<number> {
       return cmdList(rest);
     case "show":
       return cmdShow(rest);
+    case "triage":
+      return cmdTriage(rest);
     default:
       return usageError(
         sub === ""

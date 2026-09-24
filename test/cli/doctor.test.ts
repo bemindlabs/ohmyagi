@@ -231,7 +231,11 @@ describe("ohmyagi doctor", () => {
     const before = await tree(home);
     await run(home, offline(home));
     const after = await tree(home);
-    expect(after).not.toEqual(before);
+    // Only where a vendor CLI is installed is there anything to leave behind —
+    // a CI runner has none, and there the run must leave the home untouched.
+    const vendorOnPath = ["claude", "codex", "grok", "gemini", "copilot", "kimi"].some((cli) => Bun.which(cli) !== null);
+    if (vendorOnPath) expect(after).not.toEqual(before);
+    else expect(after).toEqual(before);
     for (const entry of after) {
       if (before.includes(entry)) continue;
       expect(entry.startsWith("state/") || entry.startsWith("data/")).toBe(false);

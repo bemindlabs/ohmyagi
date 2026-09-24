@@ -15,7 +15,7 @@ import {
   removeRunRecord,
   writeRunRecord,
 } from "../../src/decide/runs.ts";
-import { loadLexicon, recordBlocked, screen } from "../../src/egress/index.ts";
+import { judgeConfig, judgeEgress, loadLexicon, recordBlocked, screen, verdictFindings } from "../../src/egress/index.ts";
 import { RecordingExec, canAppend, type RecordingOptions } from "../../src/ledger/index.ts";
 import {
   AUTONOMY_FILE,
@@ -50,6 +50,7 @@ import {
 import { isKnownBackend, loadSoul, renderSoul, resolveSoulDir, sha256 } from "../../src/soul/index.ts";
 import { subjectId, type SubjectId } from "../../src/types.ts";
 import { DIAL_REFUSED, decideDial, dialEnv, dialLine, heldNote } from "../dial.ts";
+import { triageIfEnabled } from "../triage.ts";
 import { dimErr, ledgerEnv, parseArgs, report, usageError } from "../shared.ts";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
@@ -349,6 +350,7 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
   // asked of `raw` rather than of the recorder around it: a wrapper copies the
   // id it wraps, and a copied id is no evidence of where a turn goes.
   const { lexicon } = await loadLexicon(dialEnv(), id, loaded.soul.person.inherits_from);
+  const judge = judgeConfig(process.env);
   const blocked: Promise<void>[] = [];
   const chain = turnChain(
     backendIds.map((backendId) => {
@@ -359,6 +361,14 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
         // S8.3 (D-048): prompt and system — the soul and whatever recall
         // attached — are screened before anything leaves this machine.
         screen: (request) => screen(`${request.prompt}\n${request.system ?? ""}`, lexicon),
+        // D-061: a model on this machine reads meaning the filter cannot, when
+        // the owner named one. Unsure keeps the prompt in.
+        ...(judge === undefined
+          ? {}
+          : {
+              judge: async (request) =>
+                verdictFindings(await judgeEgress(`${request.prompt}\n${request.system ?? ""}`, lexicon.needles, judge)),
+            }),
         onBlocked: (backendId, findings) => {
           blocked.push(
             recordBlocked(dialEnv(), id, { at: new Date().toISOString(), backend: backendId, findings }).then(
@@ -452,7 +462,7 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
   }
 
   const answered = result.confidence === "confirmed" || result.confidence === "partial";
-  const filed = verdict.effective.act === 1 && answered ? await fileAgentAsks(id, turnId, result.text) : [];
+  const filed = verdict.effective.act === 1 && answered ? await fileAgentAsks(id, turnId, result.text, loaded.soul.person.inherits_from) : [];
 
   if (options.has("json")) {
     console.log(
@@ -509,7 +519,12 @@ interface FiledAsk {
  * or not, because a proposal that silently went nowhere is the failure mode
  * this whole level exists to prevent.
  */
-async function fileAgentAsks(subject: SubjectId, turnId: string, text: string): Promise<readonly FiledAsk[]> {
+async function fileAgentAsks(
+  subject: SubjectId,
+  turnId: string,
+  text: string,
+  inheritsFrom: readonly string[],
+): Promise<readonly FiledAsk[]> {
   const found = extractAsks(text);
   const out: FiledAsk[] = [];
   for (let i = 0; i < found.unreadable; i += 1) out.push({ what: "", id: null, outcome: "unreadable" });
@@ -537,6 +552,8 @@ async function fileAgentAsks(subject: SubjectId, turnId: string, text: string): 
       try {
         await writeProposal(dir.path, proposal);
         out.push({ what: ask.what, id: proposal.id, outcome: "filed" });
+        // D-059 — only when the owner set OM_AGI_TRIAGE=jev. Advisory: it approves nothing.
+        await triageIfEnabled(dir.path, proposal, subject, inheritsFrom);
       } catch {
         out.push({ what: ask.what, id: null, outcome: "not-written" });
       }

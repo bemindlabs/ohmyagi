@@ -88,7 +88,8 @@ function commandOf(rest: string): string {
   const signature = rest.trim().split(/\s{2,}/)[0] ?? "";
   const words: string[] = [];
   for (const token of signature.split(/\s+/)) {
-    if (!/^[a-z][a-z-]*$/.test(token)) break;
+    // Digits are allowed after the first letter: `a2a` is a verb.
+    if (!/^[a-z][a-z0-9-]*$/.test(token)) break;
     words.push(token);
     if (words.length === 2) break;
   }

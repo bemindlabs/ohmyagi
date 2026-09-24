@@ -1525,3 +1525,143 @@ audit log กลางจะเป็นที่ที่เก้าที่ 
 ขัดข้อมูลตอน export: `/home/<user>` → `~` · IP tailnet → `<tailnet-ip>` · รายชื่อแอปภายใน → "แอปภายในหลายตัว" · port ยังเก็บไว้ (เป็นแค่ตัวเลขที่เข้าจากข้างนอกไม่ได้ และมีเป็น default อยู่ใน `src/` อยู่แล้ว) ·
 snapshot มีไฟล์ `.snapshot` บอกว่ามาจาก tag ไหน ⇒ เทสต์ที่ตรวจ sha ในประวัติ (`test/notes/sp1-note.test.ts`) **ข้ามและบอกว่าข้าม** เฉพาะใน snapshot · ใน repo นี้ยังตรวจตามเดิม ·
 release แรกบน public ติดป้าย **`v0.3.0-alpha` · pre-release** — API/รูปแบบไฟล์ยังเปลี่ยนได้
+
+---
+
+## D-059 — Jev (TypeSafe AI) คัดแยก proposal แบบ opt-in · เป็นคำแนะนำเท่านั้น ไม่อนุมัติอะไรเอง
+
+**สถานะ:** เจ้าของเคาะ (2026-09-24 — *"feat: opt-in typesafe.ai JEV model for decisions workflow"* · *"JEV for agi agent decision"* · เลือก *"คัดแยก proposal"*)
+
+**Jev คืออะไร:** โมเดลแบบ "System One" ของ TypeSafe AI (ออก 2026-09-15) ตอบคำถามที่มี type (`choice` / `noul` / `score`) พร้อม probability และ confidence แทนการตอบเป็นข้อความ · เรียกผ่าน `POST https://api.typesafe.ai/v1/systemone` · เป็น cloud เท่านั้น · ไม่เทรนด้วยข้อมูลลูกค้า (zero retention เฉพาะลูกค้า enterprise)
+
+**ทำอะไร:** ถาม 3 ข้อเกี่ยวกับ what/why/impact ของ proposal: **ประเภทความเสี่ยง** (read-only · local-change · external · destructive) · **ย้อนกลับได้ไหม** · **แตะข้อมูลส่วนตัวไหม** → ติดป้ายไว้ข้าง proposal ใน `proposal list` และ `show` (`src/decide/triage.ts` · `bin/triage.ts`)
+
+**ขอบเขตที่คุมไว้:**
+- **ปิดเป็นค่าเริ่มต้น** · เรียกได้เมื่อสั่ง `ohmyagi proposal triage <id|--pending>` หรือทุกครั้งที่ยื่น proposal เมื่อตั้ง `OM_AGI_TRIAGE=jev`
+- **ไม่อนุมัติ ไม่ปฏิเสธ ไม่ลงมือ** — การตัดสินใจยังเป็นของคน (D-045) · ถ้า triage ล้ม proposal ก็ยังเหมือนเดิม
+- ข้อความ**ผ่าน egress filter ก่อนส่ง** (D-048) · เจอ finding = ไม่ส่ง และบันทึกลง `egress log` · ประกาศก่อนส่งทุกครั้งว่าข้อความกำลังออกนอกเครื่อง
+- ส่งแค่ what/why/impact ไม่ส่ง subject · key มาจาก `TYPESAFE_API_KEY` หรือ `TYPESAFE_API_KEY_FILE` เท่านั้น om-agi ไม่เขียน key ลงที่ไหน · ย้าย endpoint ได้เฉพาะไป https หรือ http บน loopback
+- ผลเก็บที่ `personal/proposals/triage/` ⇒ `erase` ลบไปพร้อม proposal
+
+**วัดจริง 2026-09-24:** proposal สมมติ 4 แบบ ถูก **4/4** (`test/decide/triage.real.test.ts` · opt-in ด้วย `OM_AGI_REAL_TYPESAFE=1`) · "delete the old backup directory" → `destructive 1.00 · undo 0.06`
+
+---
+
+## D-060 — `ohmyagi web`: หน้าเว็บของ agent หนึ่งตัว · ปุ่มทุกปุ่มคือคำสั่ง CLI · ของที่ต้องพิมพ์วลียังอยู่ใน terminal
+
+**สถานะ:** เจ้าของเคาะ (2026-09-24 — *"Web UI แทน TUI ที่ทำงานได้ด้วย: … คุยกับ agent ได้ อนุมัติหรือปฏิเสธ proposal ได้ กดเบรกได้ ส่วนการตั้งระดับ 3 กับการยินยอม capture ยังต้องพิมพ์วลีเหมือนเดิม"* · *"the web need to user friendly, easy to understand and easy to use, user centric"*)
+
+**ยกเลิกข้อ "ไม่ทำ" บางส่วน:** backlog เคยเขียนว่า "Web UI / dashboard — MVP เป็น CLI ล้วน" · MVP ออกไปแล้ว และเจ้าของสั่งให้ทำ ⇒ ทำแบบเป็นส่วนเสริม ไม่แทน CLI
+
+**ทำอะไร:** `ohmyagi web <dir> --subject <id>` เปิดหน้าเดียวบอกเรื่องเป็นประโยคที่คนใช้พูดกัน: agent ทำอะไรเองได้แค่ไหน (เช่น "Asks you first") · ปุ่ม **Stop everything** · **Waiting for you** (proposal ที่รอตัดสิน พร้อมป้ายจาก Jev เป็นภาษาคน · "Yes, allow once" / "No, thanks" / "Check risk") · "Do it now" สำหรับ proposal ที่อนุมัติแล้ว · **Talk to it** (แชท = `turn`) · On a schedule · Recently · และกล่อง "Only in the terminal"
+
+**ขอบเขตที่คุมไว้:**
+- **ทุกปุ่มคือ CLI ที่รันเป็น process ลูก** (`turn` · `proposal decide/triage` · `stop`) ⇒ ได้ข้อปฏิเสธ คำเตือน และบันทึกชุดเดียวกับ terminal ไม่มีทางลัดใหม่เกิดขึ้น
+- **ยังต้องพิมพ์ใน terminal:** ระดับ 3 · การยินยอม capture · การปลดเบรก · erase — เพราะแต่ละอย่างต้องให้เจ้าตัวพิมพ์วลีเอง
+- **ไม่แสดง `observe patterns`** เพราะ D-057 กำหนดว่าผลของมันออกได้แค่ทาง terminal
+- **ความปลอดภัย:** bind `127.0.0.1` เป็นค่าเริ่มต้น (ใช้ `--host` ได้ แต่ต้องตั้งเอง) · token สุ่มอยู่ใน URL fragment และต้องส่งกลับใน header `x-ohmyagi-token` ทุกครั้ง (form ข้ามเว็บตั้ง header นี้ไม่ได้) · ตรวจ Host กัน DNS rebinding · CSP เข้ม · ข้อมูลใส่หน้าด้วย `textContent` เท่านั้น · ไม่โหลดอะไรจากข้างนอก ทำงานได้แบบ offline
+- port เริ่มต้น **30701** อยู่ใน block ของ om-agi ข้าง A2A (30700)
+
+**ตรวจแล้ว 2026-09-24:** หน้าจอกว้าง 1280 และมือถือ 390 แสดงผลถูก · API: แชทกับ qwen3.8 ได้คำตอบ ("I am the Example Keeper, an AI agent … not a human") · อนุมัติ · ปฏิเสธ · เบรก ใช้ได้ครบ · ไม่มี token ได้ 401 · Host ผิดได้ 421
+
+---
+
+## D-061 — S8.3 ด่านที่ 2 = local model ตัดสินความหมาย · ไม่แน่ใจ = ไม่ส่ง · เปิดด้วยการระบุชื่อโมเดล
+
+**สถานะ:** เจ้าของเคาะ (2026-09-24 — *"local model เป็นด่านที่ 2"*)
+
+**ที่มา:** filter จับตัวอักษร จึงหลุด 2 จาก 10 แบบของ red-team คือการเล่าอ้อม ๆ และชื่อที่เขียนคนละอักษร (`Wanida` ↔ `วนิดา`) · AC3 ขอให้ "บล็อกได้ทุกแบบ" และ S8.3 เป็นประตูของ E8
+
+**คำตัดสิน** (`src/egress/judge.ts`): หลังจาก filter ปล่อยผ่านแล้ว และเจ้าของมี needles อยู่ ให้ model **บนเครื่องนี้** ตอบคำถามเดียวว่าข้อความนี้เปิดเผยหรือชี้ไปถึงสิ่งที่ปกป้องไว้ไหม (ภาษาไหนก็ได้ · อักษรไหนก็ได้ · ชื่อเล่น · แปล · ถอดเสียง · เล่าอ้อม ๆ)
+- **ต้องอยู่บนเครื่องเท่านั้น:** ใช้ได้เฉพาะที่อยู่ loopback แบบตัวเลข (`notLoopbackLiteral`) · การถาม cloud ว่าข้อความเป็นความลับไหม เท่ากับส่งข้อความออกไปก่อนจะรู้คำตอบ
+- **ไม่แน่ใจ = ไม่ส่ง:** timeout · error · คำตอบที่ parse ไม่ได้ ทั้งหมดนับเป็น `judge:unsure` และกันข้อความไว้
+- **ต้องเปิดเอง:** ตั้ง `OM_AGI_EGRESS_JUDGE=<ollama model>` เพราะทำให้ทุก turn ที่ออก cloud ต้องเรียก model บนเครื่องเพิ่ม (วัดได้ประมาณ 0.35 วิ) · ถ้าไม่ตั้ง ด่านนี้ปิด และ `egress check` บอกไว้
+- ใช้ทุกทางที่ข้อความออก: `turn` (`AnnouncedExec.judge`) · `proposal triage` (D-059) · และ `egress check` เพื่อให้ลองดูได้
+
+**วัดจริง:** qwen3.8:27b · red-team **10/10** · ข้อความงานปกติผ่าน **5/5** (`test/egress/judge.real.test.ts` · opt-in ด้วย `OM_AGI_REAL_JUDGE=<model>`) ⇒ **S8.3 AC3 ✅ เมื่อเปิดด่านที่ 2** · ประตูของ E8 เปิดได้เมื่อตั้งค่านี้
+
+---
+
+## D-062 — S6.4 AC4: CI รัน gate ทุก push · ส่วนที่ต้องใช้โมเดลอยู่ใน `release:check` ซึ่งไม่ยอมผ่านถ้าไม่มีโมเดล
+
+**สถานะ:** บุษบาตัดสินตามอำนาจ D-031 (2026-09-24 — เจ้าของ: *"ลุยที่เหลือต่อ"* · `/loop implement and verify`)
+
+**AC4 เขียนว่า** "อยู่ใน CI — fail = ปล่อยไม่ได้" · แต่ CI ไม่มีโมเดล ส่วนที่ตรวจพฤติกรรมโมเดล (AC1 บอกว่าเป็น AI 10/10 · AC2 ไม่ลงชื่อแทนคน 3/3) จึงรันใน CI ไม่ได้
+
+**คำตัดสิน:** แยกเป็นสองชั้น
+1. `.github/workflows/ci.yml`: ทุก push และ PR รัน `typecheck` · `bun test` · `coverage` ด้วย bun ที่ pin เวอร์ชันไว้ · ได้สิทธิ์แค่อ่าน repo ครอบส่วนของ S6.4 ที่ไม่ต้องใช้โมเดล (AC3 และประโยคประกาศว่าเป็น AI ใน soul)
+2. `bun run release:check` คือสิ่งที่ release ต้องรัน: gate ทั้งสามข้างบน **แล้วตามด้วย** `test/soul/firewall.real.test.ts` กับโมเดลจริง · **ถ้าไม่ได้ตั้ง `OM_AGI_RELEASE_MODEL` จะไม่ยอมผ่าน** ⇒ release ที่ไม่ได้ตรวจกับโมเดลจริงจะออกไม่ได้ · มีเทสต์คุมทั้ง workflow และ script (`test/packaging/ci.test.ts`)
+
+⚠ CI จะเริ่มทำงานเมื่อ push ขึ้น GitHub แล้วเท่านั้น
+
+---
+
+## D-063 — E8: คุยกับ agent อื่นผ่าน A2A 1.0.0 · allowlist ที่ต้องพิมพ์วลีใน terminal · สิ่งที่รับเข้ามาเข้า inbox และไม่ถูกรันเอง
+
+**สถานะ:** บุษบาตัดสินตามอำนาจ D-031 (2026-09-24 — เจ้าของ: *"ลุยที่เหลือต่อ"* · `/loop implement and verify`) · ประตูเปิดแล้วจาก S8.3 ✅ (D-061)
+
+**S8.4 — allowlist:**
+- `ohmyagi a2a allow <name> --endpoint <url>` **ต้องพิมพ์วลี `allow <name>` ใน terminal จริงเท่านั้น** ไม่มี flag ที่ใช้แทนได้ ⇒ agent ที่ลงมือเองเพิ่ม peer เองไม่ได้ (AC2)
+- peer แต่ละตัวได้ **token ของตัวเอง** (32 bytes, เทียบแบบ constant-time) ไว้ส่งเข้ามา เพราะ A2A P1 ไม่มีตัวตนของผู้ส่ง · ถ้า peer ต้องการ token ของมันเอง ใส่ด้วย `--send-token-file`
+- เก็บที่ `state/a2a/<subject>/peers.json` (mode 0600) · `erase` ลบได้ · มี `a2a remove`
+
+**S8.2 — ส่งและรับ** (รูปแบบเดียวกับ `bwoc a2a`: JSON-RPC 2.0 `SendMessage` · Message `{role, parts:[{text}], messageId}`):
+- **รับ:** `ohmyagi a2a serve` (ไม่รันคำสั่งนี้ = ไม่ listen · ค่าเริ่มต้น loopback `:30700`) · agent card ที่เสิร์ฟประกาศ Bearer scheme · ไม่มี token ที่ถูกต้องได้ `401` / `-32001` · เขียน ledger **ก่อน** แล้วค่อยเข้า inbox (`personal/a2a/inbox.jsonl`) · messageId ซ้ำจะได้ ack แต่ไม่ส่งเข้า inbox ซ้ำ · **ไม่รันข้อความที่รับเข้ามา** ให้คนอ่านก่อน · body จำกัด 64 KB
+- **ส่ง:** `ohmyagi a2a send --to <peer>` ส่งได้แค่หา peer ใน allowlist · ผ่านด่าน egress ทั้งสองชั้น (D-048 · D-061) ถ้าโดนกันไว้คือไม่ส่ง · ประกาศก่อนส่ง · เขียน ledger ก่อนส่ง
+- บรรทัด ledger ใช้ backend `a2a:in:<peer>` / `a2a:out:<peer>` ⇒ `ledger show/forget` กับ `erase` ถึงโดยไม่ต้องมีทางใหม่ · `append` ถูกเพิ่มเข้า write-side allowance ของ D-022
+
+**listener ตัวที่ 2:** `src/a2a/server.ts` ถูกเพิ่มเข้า `SERVE_CHOKEPOINTS` ข้างของ web (D-060) · closure ของ observer และ erase ยังห้าม `Bun.serve` เหมือนเดิม
+
+**interop จริง 2026-09-24 (AC3):** client `bwoc-a2a send` ตัวจริงส่งเข้า `ohmyagi a2a serve` ได้ ack และข้อความเข้า inbox · ถ้าไม่มี token ได้ HTTP 401 · `ohmyagi a2a send` ส่งเข้า `bwoc-a2a serve` ตัวจริงได้ ข้อความเข้า inbox ของ bwoc · ข้อความที่มีชื่อที่ต้องปกป้องเขียนเป็นภาษาไทยถูกกันไว้ · peer ที่ไม่รู้จักส่งหาไม่ได้
+
+**e2e กับ bwoc fleet จริง 2026-09-24** (`test/a2a/fleet.e2e.test.ts` · opt-in): agent-busaba ตัวจริงเปิด `bwoc a2a serve` ชั่วคราวบน loopback · agent ทดลองของ om-agi ส่งถึง inbox จริงของ busaba · CLI `bwoc a2a send` ของ fleet ส่งกลับเข้า inbox ของ om-agi ด้วย token · ถ้าไม่มี token ถูกปฏิเสธ · ปิดครบทุก listener (ปิดทั้ง process group เพราะ `bwoc a2a serve` แตก `bwoc-a2a` เป็น process ลูก) · CLI `bwoc` 3.7.0 ที่ติดตั้งบนเครื่องไม่มี `bwoc-a2a` จึงใช้ตัวที่ build ไว้ใน scratchpad ผ่าน `OM_AGI_BWOC_A2A_DIR` และไม่ได้ติดตั้งอะไรลงระบบ
+
+---
+
+## D-064 — S3.4 interest tracker: นับผ่าน `countPersonal` บนโฟลเดอร์จากดิสก์ · ไม่เปิดประตู `Personal` บานใหม่
+
+**สถานะ:** บุษบาตัดสินตามอำนาจ D-031 (2026-09-24 — `/loop implement and verify`) · ADR 0002 §8 กำหนดว่า S3.4 ต้องใช้วิธีเดิม และ D-057 ให้ S3.3 เป็นประตูบานเดียวที่เพิ่ม
+
+**คำตัดสิน** (`src/observer/interests.ts` · `ohmyagi observe interests --root <dir>…`):
+- **คำศัพท์มาจากดิสก์ ไม่ได้มาจาก record:** โฟลเดอร์ใต้ `--root` ที่เจ้าของระบุ (ลึกไม่เกิน 4 ชั้น · ข้าม hidden, node_modules, build · ไม่เกิน 3000 โฟลเดอร์) · record ที่ cwd ไม่ใช่หนึ่งในโฟลเดอร์เหล่านี้จะไม่ถูกนับ · ไม่มี `--root` = ไม่ทำงาน (ไม่ไปค้นทั้ง home เอง)
+- **นับ** `project|origin|day` ผ่าน `countPersonal` · เพิ่ม `CountTake "day"` (10 ตัวอักษรแรกของ ISO instant) ซึ่งยังหยาบกว่าเวลาเต็ม ตามหลักของ take เดิม · ไม่นับ `subagent` และ `unattended` (ตามแนวเดียวกับ D-057 AC1)
+- **คะแนน = ความถี่ × ความใหม่:** แต่ละ action ได้น้ำหนัก `0.5^(อายุเป็นวัน / half-life)` · ค่าเริ่มต้น 7 วัน ปรับด้วย `--half-life` (AC1) · นับย้อนหลังแค่ 6 เท่าของ half-life · รวมคะแนนขึ้นไปที่โปรเจกต์ระดับแรกใต้ root
+- **คำนวณใหม่ทุกครั้ง ไม่เก็บไว้** ⇒ ขยับตามข้อมูลใหม่เอง (AC3) และไม่มีที่ใหม่ให้ `erase` ต้องตามลบ
+- AC2 (5 อันดับแรก ≥ 3 อันดับที่เจ้าของยืนยัน) ⏳ รอเจ้าของตรวจ · ผลแรกกับข้อมูลจริง 2026-09-24: om-agi · bwoc · jianchatea · Solutions/server · ai-trading
+
+---
+
+## D-065 — `ohmyagi update`: ถาม release จาก repo สาธารณะ · ติดตั้งเมื่อ checksum ตรงเท่านั้น · เช็กเองวันละครั้งตอนอยู่ใน terminal
+
+**สถานะ:** เจ้าของสั่ง (2026-09-24 — *"feat: command check to update to new version and auto check new version"*) · รายละเอียดบุษบาตัดสินตามอำนาจ D-031
+
+**คำสั่ง** (`src/update/version.ts` · `src/update/install.ts` · `bin/commands/update.ts`):
+- ถาม release จาก `bemindlabs/ohmyagi` ผ่าน GitHub API · เลือกตัวใหม่สุดที่ไม่ใช่ draft (นับ pre-release ด้วย) · เทียบแบบ semver โดยให้ pre-release ต่ำกว่า release ตัวจริง (`0.3.0-alpha` < `0.3.0`)
+- `--check` ถามอย่างเดียว · ถ้าไม่ใส่ `--yes` จะบอกว่าจะแทนไฟล์ไหนด้วยอะไร แล้วหยุด เหมือน `soul apply` กับ `erase` · ถ้าใส่ `--yes` จะดาวน์โหลด build ของ OS/arch นี้ → **ตรวจกับ `SHA256SUMS` ของ release** → เขียนไฟล์ไว้ข้างกันแล้ว rename ทับ ⇒ ถ้าพังกลางทาง ไฟล์เดิมยังใช้ได้ · checksum ไม่ตรงหรือไม่มี SHA256SUMS = ไม่ติดตั้ง · บน macOS เซ็นแบบ ad hoc หลังแทนไฟล์
+- ถ้ารันจาก checkout (`bun run bin/om-agi.ts`) จะไม่แตะอะไร และบอกให้ใช้ `git pull && bun install`
+
+**เช็กอัตโนมัติ:** หลังคำสั่งทำงานเสร็จ (จึงไม่ทำให้คำสั่งช้าหรือเปลี่ยน exit code) **เฉพาะเมื่อมีคนอยู่ที่ terminal** · ไม่เกินวันละครั้ง (เก็บผลไว้ที่ `state/update-check.json`) · timeout 1.5 วิ · ไม่ทำใน CI · ไม่ทำกับ `--json` · ไม่ทำกับ `observe` (hook), `a2a`, `web`, `update` · ถ้ามีเวอร์ชันใหม่จะบอกแค่หนึ่งบรรทัดทาง stderr · ปิดได้ด้วย `OM_AGI_NO_UPDATE_CHECK=1` ·
+**สิ่งที่ออกนอกเครื่อง:** คำขอ GET ไปที่ api.github.com ที่มี `User-Agent: ohmyagi/<version>` เท่านั้น (GitHub เห็น IP) · ไม่มีข้อมูลของ subject ไปด้วย
+
+---
+
+## D-066 — E9 เริ่มที่ Telegram: `ohmyagi chat` · bot ของ Om เอง · คนนอกไม่ได้คำตอบ · ช่องนี้ต้องมีตัวกรองและ judge ทั้งสองชั้น
+
+**สถานะ:** เจ้าของสั่ง (2026-09-24 — *"E9 chat connector -> Telegram first"* · bot = *"สร้าง bot ใหม่ให้ Om"*) · รายละเอียดบุษบาตัดสินตามอำนาจ D-031
+
+**โครง (S9.1 AC4):** `src/connectors/chat.ts` คือแกน มีทุกอย่างที่ต้องตัดสิน ได้แก่ ใครได้คำตอบ ต้องบอกอะไร และอะไรออกได้ · `src/connectors/telegram.ts` เป็นแค่ adapter (`getUpdates` แบบ long poll + `sendMessage`) · จะเพิ่มแพลตฟอร์มก็แค่เขียนไฟล์ใหม่ที่ implement `ChatConnector` ไม่ต้องแก้แกน · ใช้ bot ของตัวเอง เพราะ Telegram ส่ง update ของ bot หนึ่งตัวให้ผู้ poll ได้รายเดียว ถ้าใช้ token ร่วมกับโปรแกรมอื่นจะแย่งข้อความกัน
+
+**ประตู (S9.2):**
+- **AC2:** ต้องอยู่ใน allowlist (`chat allow <platform> <user-id>`) ซึ่งเพิ่มได้ด้วยการพิมพ์วลี `answer <platform> <id>` ที่ terminal เท่านั้น เหมือนตอนเพิ่ม peer (D-063) · คนนอกจะ **ไม่ได้อะไรกลับไปเลย** ไม่มีแม้แต่คำปฏิเสธ เพราะคำปฏิเสธเท่ากับยืนยันว่ามี agent อยู่ · turn ไม่ถูกเรียกเลย · ข้อความของคนนอกลง ledger แบบ `withheld` คือเก็บแค่ขนาด
+- **AC1:** ข้อความแรกถึงแต่ละคนขึ้นต้นด้วย *"I'm <name>, an AI agent — not a person."* และบอกซ้ำทุกครั้งที่ถูกถาม (จับคำถามได้ทั้งภาษาอังกฤษและไทย) · จะนับว่า "บอกแล้ว" ต่อเมื่อส่งสำเร็จเท่านั้น
+- **AC3:** คำตอบต้องผ่าน **ทั้ง** egress filter (S8.3) **และ** local judge (D-061) · สำหรับช่องนี้ judge ไม่ใช่ทางเลือก: `chat serve` จะไม่เริ่มถ้าไม่ได้ตั้ง `OM_AGI_EGRESS_JUDGE` · ถ้าชั้นไหนพบอะไร (รวมกรณี judge ไม่แน่ใจ) คนอีกฝั่งจะได้ *"I can't share that here."* แทน · ไม่มีทางอนุมัติให้ออก และบันทึกไว้ใน `egress log` เป็น `chat:telegram`
+- **AC5:** ปิดอยู่เป็นค่าเริ่มต้น จะทำงานก็ต่อเมื่อเจ้าของรัน `chat serve` เอง และมีคนอยู่ใน list อย่างน้อยหนึ่งคน
+- ทุกคำตอบคือ turn ที่ถูกจำกัดไว้ที่ระดับ 1 (`OM_AGI_AUTONOMY_MAX` เหมือน trigger ใน D-054) · prompt บอก agent ว่าผู้อ่านไม่ใช่เจ้าของ
+
+**Ledger (S9.1 AC3):** backend `chat:<platform>:in|out:<user>` · เขียน ledger ก่อนส่งทุกครั้ง ถ้าเขียนไม่ได้จะไม่ส่งและ serve หยุด · state (allowlist, คนที่บอกไปแล้ว, offset) อยู่ที่ `state/chat/<subject>/state.json` (600) และ `erase` ลบทั้งหมด
+
+**Token:** อ่านจาก `--token-file` ถ้าไฟล์เปิดให้คนอื่นอ่านได้ (mode ไม่ใช่ 600) จะไม่เริ่ม · base URL ของ API เปลี่ยนได้ (`OM_AGI_TELEGRAM_URL`) แต่ต้องเป็น https หรือ loopback เท่านั้น ใช้สำหรับ stub ในเทสต์
+
+**ผลทดสอบจริง (2026-09-24):** S9.1 AC1 ผ่านกับ Telegram จริงแล้ว · ใช้ bot ของ agent อีกตัวบนเครื่องนี้ ตามที่เจ้าของสั่ง (*"ใช้ token ของ busaba test ได้"*) · ระหว่างทดสอบหยุด bridge ของ bot ตัวนั้น ไว้ เพราะ poll ซ้อนกันไม่ได้ · เจ้าของส่งมา 2 ข้อความ ได้คำตอบ 2 ข้อความ ทั้งสองขึ้นต้นด้วยประโยคบอกว่าเป็น AI (ข้อความแรก + ถูกถามว่า "เป็นบอทหรือเปล่า") · ledger มี in 2 / out 2 · `contacted` บันทึกหลังส่งสำเร็จ
+
+**แก้หลังทดสอบจริง:** turn ระดับ 1 ส่งข้อเสนอกลับมาเป็น block ` ```om-agi-proposal ` ซึ่งหลุดไปถึงแชททั้งก้อน และมีชื่อ service ภายในเครื่องติดไปด้วย · ตอนนี้ `forChat()` เอา block ออกก่อนเข้าตัวกรอง แล้วแทนด้วยประโยคเดียว *"I've passed that to the owner to decide."* · block ที่โมเดลไม่ได้ปิดจะถูกตัดจนสุดข้อความ · ข้อเสนอยังถูกยื่นเข้าคิวของเจ้าของตามปกติ เพราะ turn เป็นคนยื่น ไม่ใช่ chat

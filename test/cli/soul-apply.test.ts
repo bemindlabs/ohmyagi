@@ -34,6 +34,13 @@ async function makeHome(): Promise<string> {
   homes.push(home);
   await mkdir(join(home, ".claude"), { recursive: true });
   await writeFile(join(home, ".claude", "CLAUDE.md"), await readFile(HUMAN, "utf8"));
+  // `soul apply` writes only for CLIs it finds on PATH. These stand in for them,
+  // so the tests do not depend on what the machine running them has installed
+  // (CI has none; the machine this was written on has all of them).
+  await mkdir(join(home, "bin"), { recursive: true });
+  for (const cli of ["claude", "codex"]) {
+    await writeFile(join(home, "bin", cli), "#!/bin/sh\necho 0.0.0-stub\n", { mode: 0o755 });
+  }
   return home;
 }
 
@@ -42,7 +49,7 @@ async function run(home: string, args: readonly string[]) {
     cwd: ROOT,
     env: {
       HOME: home,
-      PATH: process.env["PATH"] ?? "",
+      PATH: `${join(home, "bin")}:${process.env["PATH"] ?? ""}`,
       // Keep the backup tree inside the temporary home, and keep CODEX_HOME
       // from leaking in from whatever shell ran the tests.
       XDG_STATE_HOME: join(home, "state"),

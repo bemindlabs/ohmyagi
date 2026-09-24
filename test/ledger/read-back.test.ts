@@ -23,7 +23,7 @@
  * second), so it is a list that stays still.
  *
  * So: any file outside `src/ledger/` may take a name out of `src/ledger/` only if
- * the name is on {@link WRITE_SIDE}, or the file is one of the two {@link READERS}
+ * the name is on {@link WRITE_SIDE}, or the file is one of the {@link READERS}
  * and the name is one that reader declares. Everything else is a read, whether it
  * is called `query` today or `tail` tomorrow.
  *
@@ -112,7 +112,7 @@ const RED =
  * Names any file may take out of `src/ledger/`, each with the verb that makes it
  * safe.
  *
- * All four are either a write or a string constant. None of them can return a
+ * All five are either a write or a string constant. None of them can return a
  * line of the ledger to its caller, which is the property being bought — not
  * "these are the ones currently imported".
  *
@@ -126,6 +126,7 @@ const WRITE_SIDE: ReadonlyMap<string, string> = new Map([
   ["canAppend", "write — the probe `turn` runs before a prompt goes out, so it can refuse to send"],
   ["UNDELETABLE", "constant — the sentences `ledger forget` and `erase` print about what deletion cannot reach"],
   ["VENDORS_HOLD", "constant — one of those sentences, said again before a cloud send (S7.2 AC4)"],
+  ["append", "write — one line in, the file's path out; A2A records every message before it is delivered or sent (S8.2 AC5, D-063)"],
 ]);
 
 /** A file allowed to read the ledger, the verb that allows it, and why. */
@@ -138,7 +139,7 @@ interface Reader {
 }
 
 /**
- * The two files allowed to read the ledger back, with the verb each reads for.
+ * The three files allowed to read the ledger back, with the verb each reads for.
  *
  * The verb is the whole allowance. D-022 does not forbid reading the ledger — it
  * forbids reading it *into a decision*. Showing an owner their own record and
@@ -163,6 +164,15 @@ const READERS: readonly Reader[] = [
       "goes, and `planForget` reads the lines to answer that. It is the one read the agent's own " +
       "behaviour cannot depend on, because what it produces is the absence of the thing it read.",
     names: ["planForget", "commitForget", "removeLedgerDirAt"],
+  },
+  {
+    file: join("bin", "commands", "web.ts"),
+    verb: "show",
+    why:
+      "reads to show, as `ledger show` does, in a page instead of a terminal (D-060): the ten latest " +
+      "turns under \"Recently\". The list goes to the owner's browser and nowhere else; no button on " +
+      "the page and nothing the agent runs reads it back.",
+    names: ["query"],
   },
 ];
 
@@ -333,13 +343,15 @@ describe("nothing reads the ledger back into a decision (S2.2 AC5, D-022)", () =
     ).toEqual([]);
   });
 
-  test("the two allowed readers are the two the decision names, with their verbs", () => {
+  test("the allowed readers are the ones the decisions name, with their verbs", () => {
     // Pinned as a value on purpose, unlike the name lists above. *How many files
     // may read the ledger* is the decision itself, not an implementation detail,
-    // so a third one appearing has to be somebody's deliberate edit here.
+    // so a new one appearing has to be somebody's deliberate edit here. The third,
+    // `web`, is D-060's: the same `show` as `ledger show`, in a browser.
     expect(READERS.map((reader) => `${reader.file} (${reader.verb})`)).toEqual([
       `${join("bin", "commands", "ledger.ts")} (show)`,
       `${join("src", "erase", "plan.ts")} (delete)`,
+      `${join("bin", "commands", "web.ts")} (show)`,
     ]);
     // Every allowance carries its reason, which is the part a later reader needs:
     // seeing that a file is on a list says nothing about why it was allowed.
@@ -384,6 +396,8 @@ describe("nothing reads the ledger back into a decision (S2.2 AC5, D-022)", () =
 
   test("the control — the checks fire on code that violates them, and not on code that does not", () => {
     const values = new Set(["query", "append", "canAppend", "parseLine", "RecordingExec"]);
+    // `append` became a write-side name with D-063; `parseLine` stands in as the
+    // name no declared reader asked for.
     const elsewhere = join(ROOT, "src", "soul", "render.ts");
     const allowed = join(ROOT, "bin", "commands", "ledger.ts");
 
@@ -437,7 +451,7 @@ describe("nothing reads the ledger back into a decision (S2.2 AC5, D-022)", () =
 
     // Not caught: the declared reader is allowed *its* names and no others.
     expect(
-      readBackHits(allowed, `import { append } from "../../src/ledger/index.ts";\n`, values).length,
+      readBackHits(allowed, `import { parseLine } from "../../src/ledger/index.ts";\n`, values).length,
     ).toBe(1);
 
     // Not caught: an import that does not reach the ledger at all.

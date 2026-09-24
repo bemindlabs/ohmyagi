@@ -93,6 +93,19 @@ const MODULES: Readonly<Record<string, { doors: readonly string[]; downstream: R
       lockFired: "locks a path a door resolved",
     },
   },
+  "src/a2a/peers.ts": {
+    doors: ["a2aDirFor"],
+    downstream: {
+      peersPath: "joins a directory a2aDirFor resolved",
+      allowPhrase: "formats a phrase",
+      peerProblem: "checks a name and a URL",
+      readPeers: "reads a directory a door resolved",
+      writePeers: "writes a directory a door resolved",
+      newToken: "makes random bytes",
+      peerForBearer: "searches a list already read",
+      findPeer: "searches a list already read",
+    },
+  },
   "src/memory/marker.ts": {
     doors: ["ragDirFor", "writeRagMarker"],
     downstream: { readRagMarker: "reads a directory ragDirFor resolved" },

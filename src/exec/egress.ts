@@ -183,6 +183,12 @@ export interface EgressOptions {
    * for personal data, is how it reaches the local model I-6 allows.
    */
   readonly screen?: (request: TurnRequest) => readonly EgressFinding[];
+  /**
+   * S8.3's second layer (D-061): asked only when `screen` found nothing — a
+   * model on this machine judging meaning the text filter cannot see. Its
+   * findings keep the prompt in exactly as the filter's do.
+   */
+  readonly judge?: (request: TurnRequest) => Promise<readonly EgressFinding[]>;
   /** Told of every prompt kept in, so it can be recorded (AC4). */
   readonly onBlocked?: (backend: string, findings: readonly EgressFinding[]) => void;
 }
@@ -221,23 +227,24 @@ export class AnnouncedExec implements ExecBackend {
     return this.inner.available();
   }
 
-  run(request: TurnRequest): Promise<TurnResult> {
+  async run(request: TurnRequest): Promise<TurnResult> {
     const target = egressTarget(this.options.origin);
     if (target === undefined) return this.inner.run(request);
-    const findings = this.options.screen?.(request) ?? [];
+    let findings = this.options.screen?.(request) ?? [];
+    if (findings.length === 0 && this.options.judge !== undefined) findings = await this.options.judge(request);
     if (findings.length > 0) {
       this.options.onBlocked?.(this.inner.id, findings);
       const reason =
         `kept on this machine — the prompt carries personal data (${describeFindings(findings)}), ` +
         `and it does not leave without a person removing it (I-6, D-048)`;
       this.options.write(`ohmyagi: not sent to ${target.id}: ${reason}`);
-      return Promise.resolve({
+      return {
         backend: this.inner.id,
         text: "",
         confidence: "failed",
         evidence: { source: this.inner.id, prompt: "", raw: reason },
         identityStrength: "none",
-      });
+      };
     }
     return dispatchAnnounced(announceEgress(this.options.write, target), this.inner, request);
   }

@@ -420,6 +420,7 @@ describe("the recorded sizes are still the sizes of the files", () => {
       join("bin", "as.ts"),
       join("bin", "dial.ts"),
       join("bin", "shared.ts"),
+      join("bin", "triage.ts"),
     ]);
   });
 

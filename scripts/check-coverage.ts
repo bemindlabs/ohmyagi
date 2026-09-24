@@ -307,7 +307,7 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // because the one command that got this wrong, `ohmyagi stop`, was the one
   // where getting it wrong set the brake. See `test/cli/help-does-nothing.test.ts`.
   // 83 since S5.2: one `case` label and one import, for `proposal`.
-  ["bin/om-agi.ts", { lines: 95, why: "entry point — dispatch and process.exit" }],
+  ["bin/om-agi.ts", { lines: 109, why: "entry point — dispatch and process.exit" }],
   // One `export const USAGE = \`…\`` around 240 lines of help text. A test could
   // import it and the floor would read 100% off a single declaration while the
   // text said anything at all; the size is the only honest number here.
@@ -320,7 +320,7 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // three paragraphs that say where proposals are kept and why it is not the
   // ledger (D-029), that the comparison is exact and where that misses, and
   // that om-agi does not turn an agent's own actions into proposals.
-  ["bin/usage.ts", { lines: 447, why: "help text — one declaration, 447 lines of prose" }],
+  ["bin/usage.ts", { lines: 498, why: "help text — one declaration, 498 lines of prose" }],
   // The commands. Each is `cmdX(rest)` returning an exit code, and each reads
   // `process.env`, `homedir()` or `cwd` on its way. Calling them in-process
   // would mean swapping `HOME` inside the test runner; the tests spawn instead.
@@ -342,16 +342,20 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // 667 since E5: `readTerminalLine` moved to `bin/shared.ts`, because
   // `autonomy` needs the same typed-phrase prompt and one command may not
   // import another (`test/cli/layout.test.ts`).
-  ["bin/commands/egress.ts", { lines: 81, why: "command — run by spawning the CLI" }],
+  ["bin/commands/egress.ts", { lines: 94, why: "command — run by spawning the CLI" }],
   ["bin/commands/triggers.ts", { lines: 155, why: "command — run by spawning the CLI" }],
   ["bin/commands/setup.ts", { lines: 166, why: "command — run by spawning the CLI" }],
+  ["bin/commands/a2a.ts", { lines: 216, why: "command — serve listens until Ctrl-C; its parts are tested in src/a2a" }],
+  ["bin/commands/chat.ts", { lines: 227, why: "command — serve polls until Ctrl-C; its parts are tested in src/connectors, and test/cli/chat.test.ts runs it against a stub Telegram" }],
+  ["bin/commands/update.ts", { lines: 77, why: "command — asks GitHub; its parts are tested in src/update" }],
+  ["bin/commands/web.ts", { lines: 127, why: "command — serves until Ctrl-C; its parts are tested in src/web" }],
   ["bin/commands/memory.ts", { lines: 215, why: "command — run by spawning the CLI" }],
-  ["bin/commands/observe.ts", { lines: 724, why: "command — run by spawning the CLI" }],
+  ["bin/commands/observe.ts", { lines: 750, why: "command — run by spawning the CLI" }],
   // S5.2. The store itself is `src/decide/proposals.ts`, on the floor and
   // tested there; what is here is the parsing, the four subcommands, and the
   // refusals printed on every run — all of which only happen in a spawned
   // process, and are exercised by `test/cli/proposal.test.ts`.
-  ["bin/commands/proposal.ts", { lines: 346, why: "command — run by spawning the CLI" }],
+  ["bin/commands/proposal.ts", { lines: 388, why: "command — run by spawning the CLI" }],
   ["bin/commands/rebuild.ts", { lines: 38, why: "command — run by spawning the CLI" }],
   ["bin/commands/soul.ts", { lines: 506, why: "command — run by spawning the CLI" }],
   // E5. The signalling itself is in `src/decide/runs.ts`, where a test can
@@ -367,7 +371,7 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // anything is written, and the approval it names is marked spent immediately
   // before the prompt goes — an approval recorded afterwards is one a crash
   // hands back unused.
-  ["bin/commands/turn.ts", { lines: 444, why: "command — run by spawning the CLI" }],
+  ["bin/commands/turn.ts", { lines: 458, why: "command — run by spawning the CLI" }],
   ["bin/commands/worn.ts", { lines: 66, why: "command — run by spawning the CLI" }],
 ]);
 
@@ -462,7 +466,7 @@ export const PROOFS = new Map<string, Proof>([
       provedOn: "2026-09-24",
       by: "npm run demo -- --model <a local model>",
       result:
-        "15/15 criteria passed on 2026-09-24 on the tree released as 0.3.0 (run cbeda900, " +
+        "15/15 criteria passed on 2026-09-24 on the tree released as 0.4.0 (run 065c6900, table kept in notes/2026-09-24_demo-v0.4.0.txt), on 0.3.0 the same day (run cbeda900, " +
         "table kept in notes/2026-09-24_demo-v0.3.0.txt), on 0.2.0 the same day (run fd433912, " +
         "table kept in notes/2026-09-24_demo-v0.2.0.txt), and earlier that day on the tree released as 0.1.0 (run 2ddacb38, " +
         "table kept in notes/2026-09-24_demo-v0.1.0.txt). Before that, " +
@@ -477,13 +481,17 @@ export const PROOFS = new Map<string, Proof>([
   [
     "scripts/cli-parity.ts",
     {
-      sha256: "2acabdf8eb983ebde5ad82d52a1a2cfe39d145b18fbd2b421f895873d3ae8a7e",
+      sha256: "702fed55a94fce3a669e29664e955eccc1c720b697ee8554d0736f03ed7f6acb",
       provedOn: "2026-09-24",
       by: "npm run parity -- --base . --selftest",
       result:
         "exit 0 — control 1 steady, control 2 not blind to a changed character, control 3 not " +
         "blind to an added line, and control 4 refusing a side with no engine in it, over all " +
-        "17 case(s), 181 invocation(s) per side. Re-proved for `setup` (D-056), which added `setup wat` " +
+        "17 case(s), 185 invocation(s) per side. Re-proved for `chat` (D-066), which added bare `chat` " +
+        "to `02-unknown`; before that for `update` (D-065), which added `update wat` " +
+        "to `02-unknown`; before that for `a2a` (D-063), which added bare `a2a` " +
+        "to `02-unknown`; before that for `web` (D-060), which added bare `web` " +
+        "to `02-unknown`; before that for `setup` (D-056), which added `setup wat` " +
         "to `02-unknown`; before that after the CLI took the name `ohmyagi` " +
         "(D-055), which rewrote the expected `om-agi …` strings in this file's declarations; " +
         "before that for S5.3 (D-054), which added `triggers wat` " +

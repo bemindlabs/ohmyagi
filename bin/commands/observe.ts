@@ -72,6 +72,7 @@ import {
   type ConsentScope,
   type ObserverEnv,
 } from "../../src/observer/index.ts";
+import { candidateDirs, formatInterests, rankInterests } from "../../src/observer/interests.ts";
 import { printPatterns, systemClock } from "../../src/observer/patterns.ts";
 import { subjectId } from "../../src/types.ts";
 import { GENERATOR } from "../../src/version.ts";
@@ -928,6 +929,35 @@ async function cmdObservePatterns(argv: readonly string[]): Promise<number> {
   return 0;
 }
 
+/**
+ * `ohmyagi observe interests --subject <id> --root <dir>... [--half-life <days>] [--limit <n>]`
+ * — S3.4 (D-064): projects ranked by frequency × recency, counted through
+ * `countPersonal` over the directories under the roots named. Nothing kept.
+ */
+async function cmdObserveInterests(argv: readonly string[]): Promise<number> {
+  const usage = "usage: ohmyagi observe interests --subject <id> --root <dir> [--root <dir>...] [--half-life <days>] [--limit <n>]";
+  const roots = argv.flatMap((arg, i) => (arg === "--root" && argv[i + 1] !== undefined ? [resolve(argv[i + 1] as string)] : []));
+  const rest = argv.filter((arg, i) => arg !== "--root" && argv[i - 1] !== "--root");
+  const { options } = parseArgs(rest);
+  const parsed = subjectOf(options, usage);
+  if (!parsed.ok) return parsed.code;
+  if (roots.length === 0) return usageError(`${usage} — name at least one root; om-agi will not go looking through your home directory`);
+  const halfLife = Number(options.get("half-life") ?? "7");
+  const limit = Number(options.get("limit") ?? "5");
+  if (!(halfLife > 0 && halfLife <= 365) || !Number.isInteger(limit) || limit < 1) return usageError(`${usage} — --half-life is 1 to 365 days, --limit a whole number`);
+  const dir = await observerDir(observerEnv(), parsed.id);
+  if (!dir.ok) {
+    console.error(`ohmyagi: ${dir.reason}`);
+    return 1;
+  }
+  const ranked = rankInterests((await readCaptured(dir.path)).records, { dirs: await candidateDirs(roots), roots, now: new Date(), halfLifeDays: halfLife });
+  console.log(bold(`interests — subject ${parsed.id}`));
+  for (const line of formatInterests(ranked, { limit, halfLifeDays: halfLife, home: observerEnv().home })) console.log(line);
+  console.log();
+  console.log(dim("Counts only, over directories on your disk; recomputed on every run and never kept (D-064)."));
+  return 0;
+}
+
 export async function cmdObserve(argv: readonly string[]): Promise<number> {
   const [sub, ...rest] = argv;
   switch (sub) {
@@ -953,10 +983,12 @@ export async function cmdObserve(argv: readonly string[]): Promise<number> {
       return cmdObserveLeaks(rest);
     case "patterns":
       return cmdObservePatterns(rest);
+    case "interests":
+      return cmdObserveInterests(rest);
     default:
       return usageError(
         `unknown observe subcommand ${JSON.stringify(sub ?? "")} — try "status", "enable", ` +
-          `"disable", "hook", "capture", "seed", "actions", "audit", "leaks", "patterns" or "purge"`,
+          `"disable", "hook", "capture", "seed", "actions", "audit", "leaks", "patterns", "interests" or "purge"`,
       );
   }
 }

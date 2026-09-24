@@ -16,6 +16,8 @@ import { join } from "node:path";
 import { confirmationsDirFor } from "../../src/decide/confirm.ts";
 import { runsDirFor } from "../../src/decide/runs.ts";
 import { triggersDirFor } from "../../src/decide/triggers.ts";
+import { a2aDirFor } from "../../src/a2a/peers.ts";
+import { chatDirFor } from "../../src/connectors/users.ts";
 import { planErase } from "../../src/erase/plan.ts";
 import { backupTree } from "../../src/erase/soul.ts";
 import { personalDir } from "../../src/guard/personal.ts";
@@ -36,6 +38,8 @@ describe("S7.1 — every place om-agi keeps a subject's data is in the erase pla
         "level-3 confirmations (D-042)": confirmationsDirFor(env, SUBJECT),
         "run records (S5.4)": runsDirFor(env, SUBJECT),
         "trigger fire times (S5.3)": triggersDirFor(env, SUBJECT),
+        "A2A peers (D-063)": a2aDirFor(env, SUBJECT),
+        "chat allowlist (D-066)": chatDirFor(env, SUBJECT),
         "rag marker (D-038)": ragDirFor(env.home, env.env, SUBJECT),
         "personal directory (capture, proposals, egress)": personal.path,
       };
