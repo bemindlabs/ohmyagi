@@ -35,7 +35,8 @@ JSON, reads line-delimited logs, and keeps a ledger.
   dependency.
 - JSON is native to the language, and every vendor CLI's structured output is
   JSON.
-- `bun:sqlite` is built in, so the ledger needs no package.
+- `bun:sqlite` is built in, so the memory full-text index needs no package (the ledger turned out
+  to be plain JSONL — one line per turn, readable with `jq`).
 - `bun build --compile` produces a single binary, which removes the usual
   distribution objection to a scripted language.
 - Local model serving and vector search are reached over HTTP, so neither
@@ -102,6 +103,9 @@ locations are written relative to the home directory and expanded at runtime,
 and test fixtures are synthetic. Licence: **Apache-2.0** (recorded in
 `package.json`); a `LICENSE` file is added before the repository is made
 public, which is the owner's decision to make, not this project's.
+
+*Amended 2026-09-24:* `LICENSE` and `NOTICE` are in the repository, and the owner published it as a
+snapshot of each release at `bemindlabs/ohmyagi` (D-058), keeping the development history private.
 
 ## Consequences
 

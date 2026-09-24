@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Published
+- A public repository, [`bemindlabs/ohmyagi`](https://github.com/bemindlabs/ohmyagi), starts from a one-commit
+  snapshot of 0.3.0 (`v0.3.0-alpha`, pre-release — D-058). Local paths and addresses are replaced on export; the
+  development history stays in the private repository. A snapshot carries `.snapshot`, and the one test that checks
+  a sha in the development history skips there and says why.
+
+### Docs
+- The product is called **Oh My AGI** everywhere a sentence names it; the command stays `ohmyagi`.
+- README: four Mermaid diagrams (how the parts fit, one turn, autonomy, what is remembered and how it goes), an
+  Install section (release binaries checked against `SHA256SUMS`, the macOS signing step, from source, the `.pkg`)
+  and Set up an agent (`ohmyagi setup`, the same steps by hand, what to do next).
+- ADR 0001/0002, the CLI matrix, the demo notes and the backlog brought up to date with what shipped.
+
 ## 0.3.0 — 2026-09-24
 
 The observer mines routines and sequences from what you did, and offers the timed ones as triggers.
@@ -10,6 +25,12 @@ The observer mines routines and sequences from what you did, and offers the time
   time), each with its evidence, and a `triggers.md` snippet for timed routines that you copy yourself. Recomputed
   on every run and never stored. Shell plumbing (`cd`, `cat`, …) is not an action, and wrappers like `rtk` are seen
   through. The miner is the third file allowed to open a `Personal` box, and only `observe` imports it.
+
+### Known limits
+- S3.3 AC6 is open: the owner judges the top five patterns once capture has run for a few weeks.
+- Still not built: the interest tracker (S3.4), agent-to-agent messaging (S8.2, S8.4) and chat connectors (E9), LoRA
+  (S6.3, behind SP-3). Partly met: S6.4 AC4, and S8.3 AC3 — the egress filter catches 8 of 10 red-team forms
+  (paraphrase and translation get through).
 
 ## 0.2.0 — 2026-09-24
 
@@ -46,6 +67,8 @@ criteria in the backlog; the reasoning behind each is a numbered decision in `.s
   `soul revoke` puts every touched file back byte for byte, `soul verify` measures whether the identity
   actually landed, per backend.
 - Isolation: switching identity leaves nothing of the previous one behind (S1.6).
+- `soul check` (every problem with its file and line) and `soul card` — the A2A 1.0.0 agent card, built from
+  `role.md` only, saying it is an AI (S8.1; not served yet).
 - `soul import` converts an existing bwoc agent without losing a line.
 
 ### Engine (E0, E2)
@@ -53,10 +76,15 @@ criteria in the backlog; the reasoning behind each is a numbered decision in `.s
 - A repo guard scans what is staged for secrets and personal data; it never pushes and has no code that can.
 - `turn` runs one turn wearing a soul, trying backends in order until one really answers; every turn is in the ledger.
 - `doctor`, `backends`, `worn`.
+- `guard install / scan / status` — the pre-commit and pre-push hooks, and what none of it reaches.
+- `ledger show / forget` — what was asked, when, of which backend; and withdrawing it.
 
 ### Observer (E3)
 - Actions (files edited, commands run, tools called) captured by hook at the moment they happen, with consent,
   local-only. Fleet launchers declare themselves (`OM_AGI_FLEET`) so their work never lands in the owner's data.
+- `observe enable / disable / hook / capture / seed / status / actions / audit / leaks / purge` — consent typed by
+  the person it is about, the hook snippet, a one-time seed from history, counts-only summaries into git, the
+  accuracy audit, fleet-leak counts, and purge.
 
 ### Recall (E4)
 - `memory index / search / ingest / forget`: full-text (FTS5 trigram) plus a per-subject Qdrant collection,
@@ -65,11 +93,15 @@ criteria in the backlog; the reasoning behind each is a numbered decision in `.s
 ### Autonomy (E5)
 - A dial per category (read, write, run, reach); a turn acts at the lowest of write, run and reach.
   Level 1 proposes instead of acting, 2 acts and reports, 3 needs a confirmation typed at a terminal.
+- `autonomy show / set / resume` — per category, with who set it and when; level 3 typed at a terminal.
+- `proposal new / list / show / decide` — a store of its own; a refusal is remembered, an approval is good for
+  one turn (`turn --proposal <id>`).
 - `stop`: one command, every category to 0, running work killed (SIGTERM, then SIGKILL).
 
 ### Data (E7)
 - `erase` removes a subject from every place om-agi writes, checks again from disk, and says what it cannot reach.
-- The egress filter keeps personal data and credentials off cloud backends, falling through to local.
+- The egress filter keeps personal data and credentials off cloud backends, falling through to local;
+  `egress needles / check / log` — your own list of what must not leave, a dry screen, and what was kept in.
 
 ### Also in this release
 - A turn whose dial settings disagree names the category in force (D-052).

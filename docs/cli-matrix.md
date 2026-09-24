@@ -9,6 +9,13 @@ they cause are silent. Re-measure before trusting a row.
 
 Measured 2026-09-20 against: `claude 2.1.278` · `grok 1.0.24` ·
 `codex 0.153.4` · `gemini 0.38.2` · `copilot 0.0.367` · `kimi 2.0.2`.
+Six CLIs were surveyed; a seventh the backlog names (agy) was not.
+
+> ⚠ **Drift recorded since:** claude 2.1.280 no longer sends the hook's `source` field and adds
+> `effort` to `PostToolUse` (`.scrum/decisions.md`, D-036 and `notes/`), and the soul-verify probes
+> of 2026-09-23 ran against claude 2.1.280 · codex 0.155.1 · grok 1.0.40 · copilot 0.0.367 ·
+> kimi 2.0.2 (gemini was not measurable on the test account). A full re-measure of this table is
+> still owed; the rows below are the 2026-09-20 readings.
 
 Re-measured 2026-09-21 for the read-only section below, and two of them had
 moved already: `grok 1.0.40` and `codex 0.155.1`. The grok row in *Built-in
@@ -243,7 +250,8 @@ means the vendor moved and this table is out of date.
 
 ## Hooks: what a capture actually receives
 
-**Measured 2026-09-21** against `claude 2.1.278`, by reading the hook input
+**Measured 2026-09-21** against `claude 2.1.278` (see the drift note at the top: 2.1.280 dropped
+`source`), by reading the hook input
 schema out of the installed binary
 (`~/.local/share/claude/versions/2.1.278`) rather than recalling it.
 `src/observer/adapters/claude-hook.ts` encodes the same rows.

@@ -1,6 +1,9 @@
 # The demo (B3)
 
-The one thing MVP-lite is defined by:
+The one thing MVP-lite is defined by — and re-run before every release since (v0.1.0, v0.2.0 and
+v0.3.0 each passed 15/15; the runs are listed at the end). It proves the core claims in a bare
+container; it does not exercise `setup`, triggers, `observe patterns` or recall, which have tests of
+their own.
 
 > make an agent → give it an identity → `git clone` it into a bare container
 > that has **only ollama** → `soul verify` passes → a turn finishes.
@@ -71,7 +74,7 @@ A stock `debian:bullseye-slim`, unmodified, with exactly two things copied in.
 | what it has | why the demo still proves what it claims |
 |---|---|
 | the base image's glibc | a binary needs a libc; "bare" was never going to mean `scratch` |
-| one `om-agi` binary from `bun build --compile` | installing bun inside would need network and an installer, which is not bare — and the binary proves the stronger claim: **no runtime at all** (ADR 0001 §1) |
+| one binary from `bun build --compile` (the script installs it as `om-agi`, the alias of `ohmyagi` — D-055) | installing bun inside would need network and an installer, which is not bare — and the binary proves the stronger claim: **no runtime at all** (ADR 0001 §1) |
 | one working tree from `git clone` | this is the whole point: what git holds has to be enough |
 | ollama, **outside** the container, over the docker bridge | "only ollama" means the one endpoint reachable from in there is a local model daemon — not that ollama is installed twice |
 

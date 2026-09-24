@@ -290,6 +290,9 @@ issues no certificate.** A tripwire test fails if a derivation starts writing
 under those addresses, if `src/memory/` grows a file, or if anything in `src/`
 names a vector store or an adapter path while the matching place still says
 `not-built` — so "register it later" is enforced rather than remembered.
+*Amended (S4.1, D-038):* `rag` has since registered as `implemented`, with its deleter, in the same
+commit that added the vector store; `lora` is still `not-built` (S6.3), and the output now reads
+"4 of 4 places that exist · 1 of 5 are not built".
 
 #### What erase does not claim
 
@@ -613,3 +616,9 @@ prints.
   vocabulary, or stay in the personal store. Neither may add a callback to that
   door — the test that fails if one appears is in
   `test/guard/personal-type.test.ts`.
+  *Amended (S3.3, D-057):* the pattern miner could not work from counts — a routine needs the
+  project, the order of events and the hour — so the owner opened exactly one more door:
+  `src/observer/patterns.ts` unwraps the box in one function that writes to a writer it is handed
+  (the terminal), stores nothing, and is imported only by `bin/commands/observe.ts`; the same test
+  file now lists three allowed files and fails if anything else imports the miner. S3.4 still
+  inherits the original line.

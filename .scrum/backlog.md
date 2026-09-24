@@ -1,7 +1,7 @@
-# om-agi (Oh My AGI) — Product Backlog
+# Oh My AGI (`ohmyagi`) — Product Backlog
 
-> **ฉบับตกผลึก** · เขียนใหม่ 2026-09-20 หลังเคาะ D-001 → D-013
-> workspace = `~/workspaces/om-agi` (bwoc workspace, validate 7/7) · engine repo = `projects/om-agi` (private, ยังไม่มี commit)
+> **ฉบับตกผลึก** · เขียนใหม่ 2026-09-20 หลังเคาะ D-001 → D-013 · **อัปเดตถึง D-058 (2026-09-24)** — ออกแล้ว v0.1.0 (MVP เต็ม) · v0.2.0 · v0.3.0
+> workspace = `~/workspaces/om-agi` (bwoc workspace, validate 7/7) · engine repo = `projects/om-agi` (private — ประวัติครบ) · repo สาธารณะ = [`bemindlabs/ohmyagi`](https://github.com/bemindlabs/ohmyagi) (snapshot ของ release · `v0.3.0-alpha` · D-058) · คำสั่ง = `ohmyagi` (ชื่อสำรอง `om-agi` · D-055)
 > การตัดสินใจทั้งหมดอยู่ใน [`decisions.md`](decisions.md)
 
 ---
@@ -23,8 +23,8 @@ agents/<name>/                ← ตัวตน — 1 agent 1 repo (D-013)
    .dagi/                     ← ไม่เข้า git · ลบแล้วสร้างใหม่ได้ (observer ดิบ · index · ledger · adapter)
 ~/.local/share/om-agi/<name>/personal/   ← นอก repo · ข้อมูลส่วนตัว (D-014)
 
-  om-agi new <name>   →  สร้าง agent (repo + soul)
-  om-agi run <name>   →  agent ทำงานเอง  →  ExecBackend  →  claude | codex | ollama | …
+  ohmyagi setup / new <name>  →  สร้าง agent (repo + soul)
+  ohmyagi turn · triggers tick →  agent ทำงาน (ทำเองตามเวลาได้ แต่เสนอเท่านั้น)  →  ExecBackend  →  claude | codex | ollama | …
        agent A  ⇄  A2A 1.0.0 (มาตรฐานเปิด)  ⇄  agent B / agent ของ bwoc / ใครก็ได้
 ```
 
@@ -100,7 +100,7 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
 | # | Story | วัน | ค่า/แรง |
 |---|---|---|---|
 | ✅ S0.1 | โครง engine + ADR + commit แรก `A1` — 5/5 (AC4: `test/types/subject-doors.test.ts` ตรวจด้วย type checker · 2026-09-23) | 1 | สูง |
-| ✅ S0.2 | `om-agi doctor` `w6` — 7/7 (AC6 เทสต์ remote จริง 2026-09-23) | 1 | สูง |
+| ✅ S0.2 | `ohmyagi doctor` `w6` — 7/7 (AC6 เทสต์ remote จริง 2026-09-23) | 1 | สูง |
 | ✅ S0.3 | agent repo template (1 agent 1 repo) `B1` `dod1` | 1 | สูง |
 | ✅ S0.4 | agent repo guard — กันข้อมูลหลุดทาง git `w1` `w1b` `w3` `fix2` `dod1` | 1 | **สูงสุด** |
 
@@ -133,7 +133,7 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
 - AC7: exit 0 = พร้อม · 1 = ขาดของจำเป็น (ใช้ใน CI ได้)
 
 **S0.3** — *`git clone` คือการพกพา* (I-2, D-013)
-- AC1: `om-agi new <name>` สร้าง repo ใหม่ โครง `soul/ memory/ consent/` + `.gitignore`
+- AC1: `ohmyagi new <name>` สร้าง repo ใหม่ โครง `soul/ memory/ consent/` + `.gitignore`
 - AC2: `.gitignore` มี **บรรทัดเดียว** `/.dagi/` — ของที่สร้างใหม่ได้ทั้งหมดอยู่ในนั้น (D-014)
 - AC3: ทุกอย่างใน git มนุษย์เปิดอ่านออก — ไม่มี binary ที่ต้องมี om-agi ถึงจะอ่าน
 - AC4: **ทดสอบจริง** — clone ไป container เปล่าที่มีแค่ ollama → `rm -rf .dagi` ไม่มีอยู่แล้ว → rebuild → `soul verify` ผ่าน
@@ -153,7 +153,7 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
 - AC5: `erase` แจ้งตรง ๆ ว่าอะไรอยู่ใน git history แล้วลบไม่ได้ถ้าไม่ rewrite — **ห้ามสัญญาเกินจริง**
   ✅ **ปิดครบ 2026-09-22 (`w1` + `w3`)** — ข้อความและจุดพิมพ์มาใน `w1` (`GIT_UNDELETABLE`;
   `test/guard/history.test.ts:227-239` บังคับให้เอ่ยครบทั้ง reflog · clone · filter-repo · packfile
-  และห้ามกริยาที่สัญญาการลบที่ทำไม่ได้) · `om-agi erase` มาใน `w3` และใบรับรองพิมพ์ว่า git history
+  และห้ามกริยาที่สัญญาการลบที่ทำไม่ได้) · `ohmyagi erase` มาใน `w3` และใบรับรองพิมพ์ว่า git history
   **ถูกนับ ไม่ถูกค้น** (`test/erase/certificate.test.ts:182`)
 
 ---
@@ -174,7 +174,7 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
 **S1.1** — *นิยามตัวตนที่เดียว ไม่ต้องไปแก้ 7 ที่ให้ตรงกันเอง*
 - ✅ AC6 (เพิ่ม 2026-09-22 · D-033): ทุกคำสั่งที่รับ `<dir>` รับได้ทั้ง soul directory และ agent repository ผ่าน `resolveSoulDir` ตัวเดียว · "not found" ระบุทั้งสองที่ที่มอง — `test/soul/load.test.ts` "D-033"
 - AC1: ครบ: ชื่อ · หน้าที่ · ขอบเขต · **ข้อห้าม** · person (น้ำเสียง วิธีเรียกผู้ใช้ หลักการ)
-- ✅ AC2 (**เขียนใหม่ D-049**): หลาย soul อยู่ร่วมเครื่องได้ — repo ละตัว แยกกันจริง (S1.6) — และบอกได้ว่าสวมตัวไหน โดยอ่านจากไฟล์ของ vendor (`om-agi worn`) · ~~เป็น registry~~ ไม่สร้าง: registry = สำเนาที่สองของความจริง (พิสูจน์: `om-agi new` ยังบอกให้รอ S1.6 หลัง S1.6 เสร็จ — แก้แล้ว)
+- ✅ AC2 (**เขียนใหม่ D-049**): หลาย soul อยู่ร่วมเครื่องได้ — repo ละตัว แยกกันจริง (S1.6) — และบอกได้ว่าสวมตัวไหน โดยอ่านจากไฟล์ของ vendor (`ohmyagi worn`) · ~~เป็น registry~~ ไม่สร้าง: registry = สำเนาที่สองของความจริง (พิสูจน์: `ohmyagi new` ยังบอกให้รอ S1.6 หลัง S1.6 เสร็จ — แก้แล้ว)
 - AC3: แยก **role knowledge** ออกจาก **personal trait** คนละไฟล์ (I-5)
 - AC4: schema validation — ผิดรูปถูกปฏิเสธพร้อมบอกบรรทัด
 - ✅ AC5: **persona ของบุษบาที่มีอยู่ แปลงเข้า schema นี้ได้โดยไม่เสียข้อมูล** (D-009) · 2026-09-24: `soul import` ของ `~/bwoc/agents/agent-busaba` จริง (map อยู่นอก repo ตาม D-021) → **259/259** บรรทัดไม่ว่างของ persona/ + mindsets/ อยู่ครบในปลายทาง · `soul check` ผ่าน · **เจ้าของอ่านแล้วตอบ "persona ผ่าน"** · ข้อสังเกตที่เจ้าของรับไว้: `addresses_user_as` ยังติดเครื่องหมายคำพูด (`test/soul/bwoc.test.ts:370`) · ข้อปฏิบัติเรื่อง worktree ตกอยู่ใน prohibitions เพราะอยู่ใต้หัว Constraints
@@ -285,7 +285,7 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
 | 🔸 S3.3 | pattern miner — AC1–5 ✅ (D-057 · `src/observer/patterns.ts` · `ohmyagi observe patterns`) · **AC6 รอเจ้าของ** — capture จริงมีแค่ 3 วัน (ตั้งแต่ 2026-09-22) ยังไม่มี pattern ผ่านเกณฑ์ | 2 | กลาง |
 | S3.4 | interest tracker | 1 | สูง |
 | ✅ S3.5 | **local-only guard + purge** `w2` | 1 | **สูงสุด** (ประตู) |
-| ✅ S3.6 | **`om-agi turn` เป็นแหล่ง capture** (source `turn` · vendor `om-agi`) — D-032 · `src/observer/adapters/turn.ts` · `bin/commands/turn.ts:captureTurn` | 1 | สูง |
+| ✅ S3.6 | **`ohmyagi turn` เป็นแหล่ง capture** (source `turn` · vendor `om-agi`) — D-032 · `src/observer/adapters/turn.ts` · `bin/commands/turn.ts:captureTurn` | 1 | สูง |
 
 **S3.1** — *~~อ่านประวัติ~~ **รับ action จาก capture hook** · ประวัติเป็นแค่ seed* (แก้ D-024)
 - AC1: reader ตัวเดียวกันรับได้ทั้งจาก hook (ตอนเกิดเหตุ) และจากไฟล์ (ตอน seed) — ไม่เขียนสองตัว
@@ -295,7 +295,7 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
   ⚠ **ตัวเลข "100% ของ 1,506 ไฟล์ / 356k บรรทัด" ไม่ใช่ผลของ reader ตัวนี้** — มาจาก
   `scripts/sp1-transcript-survey.ts` ของ `SP-1` (`1ba8efd`) ซึ่ง**ถูกลบไปแล้ว** (`test/notes/sp1-note.test.ts:96`
   ยืนยันว่าไฟล์ไม่มีอยู่) · `readInto`/`seedVendor` ที่ ship อยู่เขียนทีหลัง (`0e33296`) และ**ไม่เคยรันบนไฟล์ชุดนั้น**
-  **สิ่งที่จะตอบ AC นี้ได้:** `om-agi observe seed --vendor claude --root <dir>` หนึ่งรอบที่เทอร์มินัลของเจ้าของ
+  **สิ่งที่จะตอบ AC นี้ได้:** `ohmyagi observe seed --vendor claude --root <dir>` หนึ่งรอบที่เทอร์มินัลของเจ้าของ
   แล้วจด % ที่โปรแกรมพิมพ์เอง พร้อมจำนวนไฟล์ที่เดินจริง
 - AC4: อ่านแบบ stream ไม่โหลด 663 MB เข้า memory · ปิดแล้วด้วยการวัด heap delta บนไฟล์ที่ใหญ่กว่า heap
   (`test/observer/reader.test.ts:184`)
@@ -325,13 +325,13 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
   การสกัด "เจ้าของยืนยันแล้ว" จากร้อยแก้วเป็นคนละงานและยากกว่ามาก — และคือวิธีที่ extractor จะได้ 60% บนเกณฑ์ที่ต้องการ 80%
 - AC2: แต่ละ action มี เวลา · โปรเจกต์ · ชนิด · เป้าหมาย · สำเร็จ/ล้มเหลว
 - AC3 (**ถอนจาก transcript · ย้ายไป capture hook · D-024**): แยก **สิ่งที่เจ้าของสั่ง** ออกจาก **สิ่งที่ AI เสนอเอง**
-  🔸 **ตอบที่ขอบ subject แทน label (D-036 · 2026-09-23)** — `source` ไม่มาจาก claude 2.1.280 · fleet ประกาศตัวด้วย `OM_AGI_FLEET=<subject>` แล้ว capture ย้ายไป subject นั้น (`src/observer/fleet.ts:captureTarget`) · launcher ที่ลืมจับด้วย `om-agi observe leaks` · **ยังไม่ติ๊ก**: launcher จริงยังไม่ได้ใส่ env และ record เก่าใน om-bmt ยังปนอยู่จนกว่าจะ purge
+  🔸 **ตอบที่ขอบ subject แทน label (D-036 · 2026-09-23)** — `source` ไม่มาจาก claude 2.1.280 · fleet ประกาศตัวด้วย `OM_AGI_FLEET=<subject>` แล้ว capture ย้ายไป subject นั้น (`src/observer/fleet.ts:captureTarget`) · launcher ที่ลืมจับด้วย `ohmyagi observe leaks` · **ยังไม่ติ๊ก**: launcher จริงยังไม่ได้ใส่ env และ record เก่าใน om-bmt ยังปนอยู่จนกว่าจะ purge
   ⛔ **ตอบจากไฟล์ transcript ไม่ได้** — ข้อมูลนี้ไม่มีอยู่ในนั้น สิ่งเดียวที่แยกได้เชิงโครงสร้างคือ
   "session นี้มีคนพิมพ์ไหม" ซึ่งตัด **44% ของ session claude และ 80% ของ grok** ออก (นั่นคืองานของ fleet ไม่ใช่พฤติกรรมเจ้าของ)
   ⇒ hook ต้องบันทึกตอนเกิดเหตุ ไม่งั้น E3 จะเรียนนิสัยของ AI แทนของคน ซึ่งเป็นสิ่งที่ AC นี้มีไว้กันพอดี
 - AC4: ตรวจมือ 20 ไฟล์สุ่ม — แม่น **≥ 80%** · ✅ **2026-09-24: เจ้าของรัน `observe audit --vendor claude --root ~/.claude/projects` ที่เทอร์มินัลเอง และตอบ `y` ทุกข้อ** (คำของเจ้าของ: *"run แล้ว ฉันตอบ y"*) · หลักฐานคือคำยืนยันของเจ้าของเท่านั้น เพราะเครื่องมือไม่เก็บอะไรไว้โดยเจตนา · วัดเฉพาะ claude ส่วน grok ยังไม่ได้วัด
   ไม่มีตัวเลขจาก fixture สังเคราะห์ตัวไหนถูกอ้างเป็นความแม่นยำ · ทางตอบที่เป็นรูปธรรม:
-  **เส้นทาง seed** ตอบได้ทันทีด้วย `om-agi observe audit --vendor claude --root <dir>` ที่เทอร์มินัลของเจ้าของ
+  **เส้นทาง seed** ตอบได้ทันทีด้วย `ohmyagi observe audit --vendor claude --root <dir>` ที่เทอร์มินัลของเจ้าของ
   **เส้นทาง hook** ตอบไม่ได้จนกว่าจะเปิด capture และมีข้อมูลสัก 7 วัน (ข้อจำกัดอยู่ใน `AUDIT_LIMITS`)
   ⚠ **95.1% ของ `SP-1` ตอบ AC นี้ไม่ได้ทั้งสองครึ่ง (`recon1`, 2026-09-22)** —
   (1) มันคือ ***yield***: สัดส่วนของ turn ที่มี tool use แล้วสกัดออกมาเป็น record ได้
@@ -349,7 +349,7 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
   กลไก: `countPersonal` ปล่อยออกได้เฉพาะจำนวนเต็มที่มีคีย์จากชุดคำ **ไม่ใช่ `mapPersonal` ทั่วไปซึ่งเป็นรูที่มียามเฝ้า**
 
 **S3.6** — *turn ที่ om-agi รันเองต้องถูกจำ ไม่งั้นเส้นทาง local (I-1) คือเส้นทางเดียวที่ observer มองไม่เห็น* (D-032)
-- ✅ AC1: หลัง `om-agi turn` เขียน 1 record `kind=prompt` `vendor=om-agi` `source=turn` `session=<turnId>` `tool=<backend ที่ตอบ>` ลง store เดียวกับ hook — `test/cli/turn.test.ts` "with consent: one prompt record"
+- ✅ AC1: หลัง `ohmyagi turn` เขียน 1 record `kind=prompt` `vendor=om-agi` `source=turn` `session=<turnId>` `tool=<backend ที่ตอบ>` ลง store เดียวกับ hook — `test/cli/turn.test.ts` "with consent: one prompt record"
 - ✅ AC2: **ไม่มีข้อความ prompt** ใน record — adapter รับ prompt ไม่ได้ทางชนิดข้อมูล (`TurnCapture` ไม่มี field) + token เฉพาะ run ต้องไม่โผล่ในไฟล์ — `test/cli/turn.test.ts`, `test/observer/turn-capture.test.ts`
 - ✅ AC3: `origin` เป็น `owner-prompted` **เฉพาะ**เมื่อ stdin+stderr เป็น TTY และไม่มี `--proposal` · ที่เหลือ `unknown` ไม่เดา — ตาราง 4 กรณีใน `test/observer/turn-capture.test.ts`
 - ✅ AC4: ไม่มี consent → เงียบและ**ไม่สร้าง directory** · `OM_AGI_CAPTURE=off` → ไม่บันทึกแม้มี consent — `test/cli/turn.test.ts`
@@ -398,7 +398,7 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
 | ✅ S4.3 | recall ตอนเริ่ม turn — D-039 · AC4 0/10 → 10/10 | 2 | สูง |
 | ✅ S4.4 | `memory forget` — D-041 · token หายจากไฟล์ดิบของ Qdrant 2 → 0 | 1 | สูง |
 
-**S4.1** — *ข้อมูลแต่ละตัวตนแยกกัน ลบของตัวหนึ่งไม่กระทบอีกตัว* (I-3, I-4, D-007) · 🔸 **ลงแล้ว D-038 (2026-09-23)** — `om-agi memory index|search`
+**S4.1** — *ข้อมูลแต่ละตัวตนแยกกัน ลบของตัวหนึ่งไม่กระทบอีกตัว* (I-3, I-4, D-007) · 🔸 **ลงแล้ว D-038 (2026-09-23)** — `ohmyagi memory index|search`
 - AC1: collection `omagi__<subject_id>` บน Qdrant :10300 — **ห้ามแตะ `docs`** · ✅ ทุก request สร้างจาก `collectionFor` · เทสต์ fake store ยืนยัน `docs` ไม่ถูกแตะ (`test/erase/plan.test.ts`, `test/memory/store-admin.test.ts`) · รันจริงบนเครื่อง `docs` ยังอยู่
 - AC2: ลบทั้ง collection ได้ในคำสั่งเดียว ยืนยันได้ว่าหายจริง · ✅ `rag` = `implemented` · `erase` drop ทั้ง collection แล้ว**ถามกลับ**ว่า 404 · รันจริงกับ Qdrant 1.18.2: `erased-and-verified` · ไม่มี per-point delete ในโค้ด (เทสต์แดงถ้ามี)
 - AC3: embedding ใช้ `bge-m3` ที่มีอยู่ · ✅ ที่ Ollama จริง `:11435` ไม่ผ่าน shim (D-038) · มิติผิด = error
@@ -410,11 +410,11 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
 > FTS ไม่อยู่ใน manifest ของ `.dagi/` ⇒ `rebuild --check` ไม่รู้ว่า FTS เก่ากว่า `memory/` · ยังไม่ได้ตรวจ vector inversion (D-035)
 
 **S4.2** — *ความจำที่มีอยู่แล้วเข้ามาใน agent ได้ โดยไม่พา secret มาด้วย* · ✅ D-040 (2026-09-23)
-- ✅ `om-agi memory ingest <agent> --from <dir>` — `*.md` ชั้นบนสุด → `memory/imported/<name>/` · mirror · plan ก่อน เขียนเมื่อ `--yes` · ไม่ commit
+- ✅ `ohmyagi memory ingest <agent> --from <dir>` — `*.md` ชั้นบนสุด → `memory/imported/<name>/` · mirror · plan ก่อน เขียนเมื่อ `--yes` · ไม่ commit
 - ✅ ผ่าน `scanStaged` ของ repo guard ก่อน — **dry-run บน `~/.claude/projects/-home-bmt/memory` จริง: 73 ผ่าน · 4 ถูกกัน** (credential ใน URL 2 · ค่า secret 2) · ค่าไม่ถูกพิมพ์
 - ✅ action เข้า recall เฉพาะ `actions/summary.json` เป็นร้อยแก้ว — คีย์นอก vocabulary ของ om-agi ถูกทิ้ง (เทสต์ใส่ path ด้วยมือแล้วต้องไม่หลุด)
 - ✅ **นำเข้าจริง 2026-09-23** (เจ้าของเลือก *"สร้าง repo om-bmt บน host"*) — repo `lab` ของ subject `om-bmt` ถูก copy ออกจากกล่องมาที่ `workspaces/om-agi/agents/om-bmt/`
-  (ตัวตนเดิม ไม่ใช่ `om-agi new` ตัวที่สอง) · 73 ไฟล์เข้า `memory/imported/owner/` · สแกนซ้ำหลังเขียน **0 finding** ·
+  (ตัวตนเดิม ไม่ใช่ `ohmyagi new` ตัวที่สอง) · 73 ไฟล์เข้า `memory/imported/owner/` · สแกนซ้ำหลังเขียน **0 finding** ·
   `memory index` → **74 ไฟล์ · 246 ชิ้น** · FTS + `omagi__om-bmt` · ลองค้น 3 คำถามจริง ได้ไฟล์ที่ถูกเรื่องเป็นอันดับแรกทุกข้อ
   ⚠ **ยังไม่ commit** (เป็นของเจ้าของ) · สำเนาในกล่อง `/agent/lab` เก่ากว่า host แล้ว · 4 ไฟล์ที่ถูกกันยังมี credential อยู่ใน `~/.claude/projects/-home-bmt/memory` (ซึ่ง Claude อ่านเข้า context อยู่แล้ว)
 
@@ -471,8 +471,8 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
 **S5.3** — *ทำงานตามเวลาที่ตกลงกันไว้ โดยไม่ต้องมีคนกดทุกครั้ง* (AC เขียนก่อนเทสต์ · D-054 · 2026-09-24)
 - AC1: trigger ประกาศใน `triggers.md` ข้าง `autonomy.md` (อยู่ใน git · ต่อ repo ต่อตัวตน · `git diff` เห็นทุกการเพิ่ม) · ตรวจรูปแบบพร้อมบอกบรรทัด · มีแค่ช่วงเวลา (`every = "30m" | "6h" | "1d"` · ไม่ต่ำกว่า 5 นาที) กับ prompt
 - AC2: turn ที่ trigger ปลุก **ถูกกดไว้ที่ระดับ 1 (เสนอ) เสมอ** ไม่ว่า dial จะตั้งไว้เท่าไร — การลงมือที่ไม่ได้ถูกสั่งตรง ๆ ต้องออกมาเป็น proposal (S5.2 AC1) · ใช้เพดาน `OM_AGI_AUTONOMY_MAX` ที่มีอยู่แล้ว ซึ่งลดได้อย่างเดียว เพิ่มไม่ได้
-- AC3: เบรก (`om-agi stop`) หรือ dial ที่ 0 → ไม่มี trigger ไหนทำงาน และไม่ถูกนับว่าทำงานแล้ว · ถ้า turn ไหนเจอเบรกกลางทาง ตัวที่เหลือหยุดทันที
-- AC4: **ไม่มี daemon** (non-goal: ไม่เขียน scheduler เอง) — `om-agi triggers tick` รันเฉพาะตัวที่ถึงเวลาแล้วก็จบ · `om-agi triggers schedule` พิมพ์ systemd user timer + บรรทัด cron ให้ **ไม่ติดตั้งอะไรเอง**
+- AC3: เบรก (`ohmyagi stop`) หรือ dial ที่ 0 → ไม่มี trigger ไหนทำงาน และไม่ถูกนับว่าทำงานแล้ว · ถ้า turn ไหนเจอเบรกกลางทาง ตัวที่เหลือหยุดทันที
+- AC4: **ไม่มี daemon** (non-goal: ไม่เขียน scheduler เอง) — `ohmyagi triggers tick` รันเฉพาะตัวที่ถึงเวลาแล้วก็จบ · `ohmyagi triggers schedule` พิมพ์ systemd user timer + บรรทัด cron ให้ **ไม่ติดตั้งอะไรเอง**
 - AC5: ถ้าเครื่องปิดไปหลายรอบ ตอนเปิดกลับมาทำงานแค่ครั้งเดียว ไม่ไล่ทำย้อนหลังทุกรอบ · trigger ที่พังไม่ขวางตัวอื่น · tick สองตัวพร้อมกันไม่ปลุกซ้ำ (มี lock)
 - AC6: เวลาที่แต่ละ trigger ทำงานล่าสุดเก็บใต้ state root ของ subject และ `erase` ลบถึง (S7.1) · ตัว turn เข้า ledger ตามปกติ
 - ~~trigger ที่ om-agi ขุดจากพฤติกรรมเอง~~ → รอ S3.3 (ต้องมี pattern ก่อน และต้องเป็น proposal ให้เจ้าของรับเป็น trigger เอง)
@@ -497,7 +497,7 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
 
 | # | Story | วัน | ค่า/แรง |
 |---|---|---|---|
-| ✅ S8.1 | Agent Card — `om-agi soul card` · AC1–3 ✅ (interop กับ `bwoc a2a fetch-card` ตัวจริง · 2026-09-23) · ยังไม่เสิร์ฟ (รอ S8.3) | 1 | สูง |
+| ✅ S8.1 | Agent Card — `ohmyagi soul card` · AC1–3 ✅ (interop กับ `bwoc a2a fetch-card` ตัวจริง · 2026-09-23) · ยังไม่เสิร์ฟ (รอ S8.3) | 1 | สูง |
 | S8.2 | SendMessage ขาส่ง + ขารับ | 2 | สูง |
 | 🔸 S8.3 | **egress guard — กันข้อมูลรั่วผ่านสาย** — D-048 · AC1 AC2 AC4 AC5 ✅ · AC3 8/10 (paraphrase · translation จับไม่ได้) | 2 | **สูงสุด** (ประตู) |
 | S8.4 | peer allowlist + การอนุมัติ peer ใหม่ | 1 | สูง |
@@ -531,8 +531,8 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
 > ✅ AC1 บล็อก ไม่ใช่เตือน: backend บน cloud ไม่ถูกเรียก chain ตกไป local (`test/cli/turn-egress.test.ts`) ·
 > ✅ AC2 reach ตั้ง 3 ไม่ได้ — ที่ type (`test/decide/autonomy.test.ts` "`tsc` refuses a reach of 3") ·
 > 🔸 AC3 red-team 10 แบบ: จับได้ **8** (ตรง · ในบริบท · ในไฟล์แนบ · ใน log · ข้อมูลสุขภาพ · เบอร์ · อีเมล · เลขบัตร) · **จับไม่ได้ 2**: สรุปอ้อม ๆ และการแปลชื่อเป็นอักษรไทย — เทสต์ยืนยันว่าจับไม่ได้ (`test/egress/filter.test.ts`) · ชั้นที่สองที่ใช้โมเดล local ตัดสินยังไม่ทำ ·
-> ✅ AC4 `personal/egress/blocked.jsonl` + `om-agi egress log` — กฎ + ลำดับ needle ไม่มีข้อความ ·
-> ✅ AC5 A2A ปิด: ไม่มีโค้ดที่ listen หรือส่ง (`soul card` แค่พิมพ์) · needles อยู่ `personal/egress/needles.txt` (`om-agi egress needles`)
+> ✅ AC4 `personal/egress/blocked.jsonl` + `ohmyagi egress log` — กฎ + ลำดับ needle ไม่มีข้อความ ·
+> ✅ AC5 A2A ปิด: ไม่มีโค้ดที่ listen หรือส่ง (`soul card` แค่พิมพ์) · needles อยู่ `personal/egress/needles.txt` (`ohmyagi egress needles`)
 
 **S8.4** — *ไม่คุยกับใครก็ไม่รู้จัก*
 - AC1: allowlist ไม่ใช่ denylist · peer ใหม่ต้องมนุษย์อนุมัติครั้งแรก
@@ -606,8 +606,8 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
 
 | # | Story | วัน | ค่า/แรง |
 |---|---|---|---|
-| ✅ S7.1 | data map — D-050: `om-agi erase <subject>` (dry run) คือ data map · เทสต์ยึดว่าทุกที่ที่ resolve จาก SubjectId อยู่ใน plan (`test/erase/data-map.test.ts`) | 1 | สูง |
-| ✅ S7.2 | **`om-agi erase <subject>`** `w3` `w3b` `fix1` `fix2` `dod1` | 2 | **สูงสุด** (ประตู) |
+| ✅ S7.1 | data map — D-050: `ohmyagi erase <subject>` (dry run) คือ data map · เทสต์ยึดว่าทุกที่ที่ resolve จาก SubjectId อยู่ใน plan (`test/erase/data-map.test.ts`) | 1 | สูง |
+| ✅ S7.2 | **`ohmyagi erase <subject>`** `w3` `w3b` `fix1` `fix2` `dod1` | 2 | **สูงสุด** (ประตู) |
 | S7.3 | consent record (เมื่อ subject ≠ เจ้าของ) | 1 | กลาง — ขึ้นเมื่อมีคนจริง |
 | S7.4 | ~~audit log~~ — **ไม่ทำ (D-050)**: ทุกการกระทำมีบันทึกของตัวเองในที่ที่ erase ถึงแล้ว · log กลางจะเก็บร่องรอยของ subject ที่ถูกลบ (ขัด I-4) | 1 | ต่ำ |
 
@@ -630,7 +630,7 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
   บริการ network · clone และ remote · git object
   ⚠ การค้นนี้**หยาบ** — ภาษาที่ไม่มีขอบคำ (เช่นไทย) จะเจอเกินจริง ผิดไปทางปลอดภัย และโปรแกรมพิมพ์บอกเอง
 - AC4 (**ทำให้เป็นจริงแล้ว 2026-09-21 · w3**): แจ้ง**ก่อนข้อมูลจะเกิดที่จุดนั้น** ไม่ใช่ตอนขอลบ
-  ทุกที่ใน registry มีฟิลด์ `said at:` ที่บอกว่าประกาศตอนไหน — `om-agi new` ก่อน commit แรก ·
+  ทุกที่ใน registry มีฟิลด์ `said at:` ที่บอกว่าประกาศตอนไหน — `ohmyagi new` ก่อน commit แรก ·
   และอีกครั้งก่อน capture แรกผ่าน `announceCapture` ซึ่ง `ensureObserverDir` รับ `CaptureNotice`
   ที่สร้างได้จากฟังก์ชันที่พิมพ์เท่านั้น ⇒ **w4 สร้างโฟลเดอร์ capture ไม่ได้ถ้ายังไม่ได้แจ้ง** (ท่าเดียวกับ `asLocal()`)
   ⚠ ข้อจำกัด: พิสูจน์ได้ว่า*ถูกเรียก* ไม่ได้พิสูจน์ว่า*มีคนอ่าน*
@@ -694,7 +694,7 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
 
 ## 7. MVP / ทีหลัง / ไม่ทำ
 
-### ⭐ MVP-lite — 2 สัปดาห์ (10 วัน-คน) · **เป้าหมายปัจจุบัน**
+### ⭐ MVP-lite — 2 สัปดาห์ (10 วัน-คน) · ✅ **เสร็จ** (B3 demo 12/12 → 15/15 · ออกใน v0.1.0)
 
 > เจ้าของเลือกลดขอบเขตเพื่อให้เห็นของเร็ว (2026-09-20)
 > **หลักการตัด:** เก็บสิ่งที่*พิสูจน์ว่าไอเดียนี้จริง* · เลื่อนสิ่งที่*เพิ่มความแข็งแรง*
@@ -720,7 +720,7 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
 | ✅ A5 | `S2.1` CliExec + **AC6 รันด้วย ollama ล้วน** `5b6850d` | 2 | **จุดต่างเดียวจาก Grok Bot (I-1)** |
 
 **เกณฑ์ผ่านเฟส A (วัดได้ ไม่ใช่ความรู้สึก):** ✅ **ผ่านครบ 3 ข้อ 2026-09-21**
-1. ✅ `om-agi soul apply --apply` แล้ว `soul verify` ได้ตาราง 3 backend พร้อมคำตอบดิบ — 4 ระดับ ไม่ยุบเป็น boolean (`9989b49`)
+1. ✅ `ohmyagi soul apply --apply` แล้ว `soul verify` ได้ตาราง 3 backend พร้อมคำตอบดิบ — 4 ระดับ ไม่ยุบเป็น boolean (`9989b49`)
 2. ✅ **ปิด PATH ของ claude/codex → สั่งงานยังจบด้วย ollama ล้วน** (I-1) — PATH เหลือ `bun` ตัวเดียว
    `claude: unavailable · codex: unavailable · answered by ollama` (`5b6850d`)
 3. ✅ `soul apply` ไม่กลืนเนื้อหาที่มนุษย์เขียน — `sha256` ของไฟล์จริงไม่เปลี่ยน · `strip()` คืนต้นฉบับตรงทุก byte (`9a6afa2`)
@@ -736,11 +736,11 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
 | ✅ B2 | `S2.2` ledger แบบ `jsonl` (ยังไม่ต้อง sqlite) `6089998` | 0.5 | ตรวจสอบย้อนได้ |
 | ✅ B3 | **DEMO** — clone ไป container เปล่า → ollama ล้วน → verify ผ่าน · **12/12 เกณฑ์** `62f9a43` | 0.5 | **คือ DoD ของ MVP-lite** |
 | ✅ B4 | `SP-1` transcript spike — **ผลเปลี่ยนแผน E3** `1ba8efd` | 1 | ลดความเสี่ยง E3 ทั้งก้อนก่อนลงแรงสัปดาห์ที่ 3 |
-| B5 | กันชน (เผื่องานบานจากเฟส A) | 1 | ประเมินจากของจริง ไม่ใช่เลขสวย |
+| ~~B5~~ | กันชน (เผื่องานบานจากเฟส A) — ไม่ได้ใช้ งานจบในกรอบ | 1 | ประเมินจากของจริง ไม่ใช่เลขสวย |
 
 **รวม A + B = 10 วัน**
 
-**สิ่งที่เลื่อน — พร้อมสิ่งที่ต้องทำแทนระหว่างนี้:**
+**สิ่งที่เลื่อน — พร้อมสิ่งที่ต้องทำแทนระหว่างนี้:** *(บันทึกประวัติ · ทุกข้อในตารางนี้ทำเสร็จใน MVP เต็มแล้ว ยกเว้น E8/E9 — ดู "ทีหลัง")*
 
 | เลื่อน | เพราะ | **ต้องทำแทนระหว่างนี้** |
 |---|---|---|
@@ -756,11 +756,11 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
 **สิ่งที่ยังห้ามละเมิดแม้ลดขอบเขต:** `I-1` `I-2` `I-5` — สามข้อนี้อยู่ใน DoD โดยตรง
 `I-3` `I-4` `I-6` แปลงเป็น **hard stop** ข้างบนแทน (กันด้วยการไม่เปิดใช้ ไม่ใช่ด้วยโค้ด)
 
-**สัปดาห์ที่ 3-4 ต่อทันที:** `S3.1` `S3.2` observer → `S0.2` `S0.4` → `S1.5` `S1.6` → `E5`
+~~**สัปดาห์ที่ 3-4 ต่อทันที:** `S3.1` `S3.2` observer → `S0.2` `S0.4` → `S1.5` `S1.6` → `E5`~~ ✅ ทำครบแล้ว
 
 ---
 
-### MVP เต็ม — *"agent ตัวแรกที่เป็นตัวตนจริง ย้ายเครื่องได้ และพิสูจน์ตัวเองได้"*
+### MVP เต็ม — *"agent ตัวแรกที่เป็นตัวตนจริง ย้ายเครื่องได้ และพิสูจน์ตัวเองได้"* · ✅ **ออกใน v0.1.0 (2026-09-24)** · เกณฑ์ 7/7
 
 `SP-1` · `SP-2` · **E0 ทั้งหมด** · **E1 ทั้งหมด** · `S2.1` `S2.2` · `S3.1` `S3.2` `S3.5` · `S5.1` `S5.2` `S5.4`
 
@@ -778,23 +778,23 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
 > `S1.6` isolation · `S0.3/S0.4` repo+guard · `S2.1 AC6` local path (D-011/012/013) แล้ว `S5.1/5.2/5.4` (D-015)
 > **ทั้งหมดเป็นแกนของ vision ไม่ใช่ของแถม** — E8 (คุยกันได้) ยังไม่อยู่ใน MVP เพราะต้องรอ S8.3 ซึ่งรอ S3.5
 
-### ทีหลัง (ตามลำดับ)
-1. `S3.3` `S3.4` — ต่อยอด observer เมื่อ S3.2 แม่นพอ
-2. `E4` — หลัง SP-4 ผ่าน
-3. `S7.1` `S7.2` — ก่อนรับข้อมูลส่วนตัวเข้าระบบ (**ประตู**)
-4. **`E8` คุยกันได้** — หลัง `S3.5` + `S7.2` (ต้องรู้ว่าอะไรคือ personal ก่อนถึงจะกันรั่วได้) · `S8.3` เป็นประตู
-   แล้วต่อด้วย **`E9` chat connector** — ใช้ egress filter ตัวเดียวกัน ⇒ ทำหลัง E8 ได้ถูกกว่ามาก
-5. `S5.3` trigger อัตโนมัติ — หลัง `S3.3` pattern
-5. `E6` — หลัง SP-3 · เริ่มที่เจ้าของเอง
-6. `S7.3` + fixture คนจริง — เมื่อมี use case พนักงานจริง
-7. `NativeExec` — เฉพาะเมื่อเข้าเงื่อนไข D-002
+### ทีหลัง (ตามลำดับ) — ปรับ 2026-09-24 หลัง v0.3.0
+
+✅ ทำไปแล้วจากรายการเดิม: `E4` (S4.1–S4.4) · `S7.1` `S7.2` · `S5.3` trigger (v0.2.0 · D-054) · `S3.3` pattern miner AC1–5 (v0.3.0 · D-057) · `S8.1` agent card
+
+1. `S3.3` AC6 — เจ้าของตรวจ 5 อันดับแรกเมื่อ capture สะสมพอ (หลายสัปดาห์) · แล้ว `S3.4` interest tracker
+2. `S8.3` AC3 (ตอนนี้ 8/10) → **`E8` คุยกันได้**: `S8.2` SendMessage · `S8.4` peer allowlist — ประตูยังปิด
+3. **`E9` chat connector** — ใช้ egress filter ตัวเดียวกับ E8 ⇒ ทำหลัง E8
+4. `E6` — `S6.4` AC4 ก่อน แล้ว S6.1/S6.2/S6.5 · `S6.3` LoRA อยู่หลัง SP-3 · เริ่มที่เจ้าของเอง
+5. `S7.3` + fixture คนจริง — เมื่อมี use case พนักงานจริง
+6. `NativeExec` — เฉพาะเมื่อเข้าเงื่อนไข D-002
 
 ### ไม่ทำ
 
 | ไม่ทำ | เพราะ |
 |---|---|
 | เขียน inference loop / sandbox / context compaction เองใน MVP | `bwoc-harness` ใช้ถึง 3.5.0 กว่าจะได้ · ยืมมือ CLI ได้ผลเท่ากันด้วยแรง 1/6 (D-002) |
-| daemon / scheduler ของตัวเอง | systemd มีอยู่และใช้กับทุก service บนเครื่องนี้ |
+| daemon / scheduler ของตัวเอง | systemd มีอยู่และใช้กับทุก service บนเครื่องนี้ · S5.3 ทำตามนี้: `triggers schedule` พิมพ์ timer/cron ให้ ไม่ติดตั้งเอง (D-054) |
 | fleet orchestration / review gate / worktree isolation / task routing | bwoc + ostraka ทำแล้ว · สิ่งเหล่านั้นคือการ *สั่งการ fleet* ไม่ใช่แกนของ om-agi (แกนคือแต่ละตัวยืนได้เอง) · **แต่ "คุยกันได้" ทำ — ดู E8** |
 | คิด protocol สื่อสารเอง | A2A 1.0.0 เป็นมาตรฐานเปิดที่ bwoc ก็ใช้ ⇒ พูด A2A ได้ interop ฟรีและไม่ผูกกับใคร (D-016) |
 | เปิด A2A / chat connector โดยค่าเริ่มต้น | I-6 — ข้อความที่ส่งออกแล้วตามลบไม่ได้ · ต้องเปิดเอง หลัง S8.3 ผ่าน |
@@ -815,16 +815,15 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
 | # | สมมติฐาน | พิสูจน์ด้วย | ถ้าผิดกระทบ |
 |---|---|---|---|
 | ~~A1~~ | ~~transcript สกัดพฤติกรรมได้จริง~~ → **ตอบแล้ว 2026-09-21 (SP-1)**: สกัดได้จริง 95% บน claude/grok **แต่ย้อนหลังได้แค่ 7 สัปดาห์** ⇒ E3 ต้องเปลี่ยนเป็น *ดักจับ* ไม่ใช่ *ขุดย้อนหลัง* (D-024) | SP-1 ✅ | — |
-| A2 | soul ลงได้ผลพอใช้กับ backend ที่ไม่มี flag | SP-2 | คำสัญญาหลักของ E1 |
+| ~~A2~~ | ~~soul ลงได้ผลพอใช้กับ backend ที่ไม่มี flag~~ → **ตอบแล้ว 2026-09-23 (SP-2)**: claude/codex/kimi 9/9 · copilot 8/9 จากไฟล์ · grok ต้องใช้ flag | SP-2 | คำสัญญาหลักของ E1 |
 | A3 | LoRA คุ้มกว่า RAG ที่ขนาดข้อมูลที่หาได้ | SP-3 | S6.3 — ผิดแล้วตัดทิ้ง |
 | ~~A4~~ | ~~ลบข้อมูลได้จริงทุกที่~~ → **ตอบแล้ว 2026-09-23 (SP-4/D-035)**: ได้ เฉพาะเมื่อลบทั้ง collection · ลบราย point ไม่ลบไบต์ · vector ยังไม่ตรวจ | SP-4 ✅ | — |
 | ~~A5~~ | ~~**ollama ล้วน ๆ ทำงานแทน claude/codex ได้พอใช้**~~ → **ตอบแล้ว 2026-09-21**: `soul verify` ได้ `confirmed` **9/9** (3 คำถาม × 3 รอบ ค่าสุ่มใหม่ทุกรอบ) บน 27B ในเครื่อง | S2.1 AC6 ✅ | — |
-| A6 | ความจำที่แนบทำให้ผลงานดีขึ้นจริง | S4.3 AC4 | คุณค่าหลักของ E4 |
+| ~~A6~~ | ~~ความจำที่แนบทำให้ผลงานดีขึ้นจริง~~ → **ตอบแล้ว 2026-09-23 (S4.3 AC4)**: 0/10 ไม่มี recall → 10/10 มี recall | S4.3 AC4 | คุณค่าหลักของ E4 |
 | A7 | เจ้าของจะปล่อยให้ agent ลงมือเองจริง | S5.1 ใช้จริง 2 สัปดาห์ | E5 ไม่มีคนใช้ |
-| A8 | **egress filter จับข้อมูลส่วนตัวได้จริง** | S8.3 AC3 (red-team 10 รูปแบบ) | **I-6 — ถ้าจับไม่ได้ ห้ามเปิด A2A เลย** |
+| 🔸 A8 | **egress filter จับข้อมูลส่วนตัวได้จริง** — ได้ 8/10 (paraphrase · แปลภาษา ยังจับไม่ได้) | S8.3 AC3 (red-team 10 รูปแบบ) | **I-6 — ถ้าจับไม่ได้ ห้ามเปิด A2A เลย** |
 
-> **A5 คือสมมติฐานที่เสี่ยงที่สุดและยังไม่มี spike** — ถ้า `qwen3.8:27b` ทำงานแทน claude ไม่ได้เลย
-> vision "ไม่ผูกกับใคร" ก็เป็นแค่คำพูด · พิจารณาเพิ่ม **SP-5** ถ้าที่รักเห็นว่าควรพิสูจน์ก่อน
+> ~~A5 คือสมมติฐานที่เสี่ยงที่สุดและยังไม่มี spike~~ → ตอบแล้ว (แถว A5 ข้างบน) · ความเสี่ยงที่เหลือมากที่สุดตอนนี้คือ **A8** — ประตูของ E8/E9
 
 ---
 
@@ -864,7 +863,7 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
 | **F2-4** | ต้องรัน `cli-parity` และ**ประกาศความต่างให้ครบ** ไม่ normalise ทิ้ง | `--base 64d16ec --head .` → **PARITY-OK · 14 case · 128 invocation** · 24 declared + 6 declared insertion จาก 12 กฎใหม่ ทุกข้อพิมพ์เต็มพร้อมเหตุผล | ✅ fix2 |
 | **F2-5** | qdrant: แก้**ถ้อยคำ** · กฎใน `test/cli/binary.test.ts` **ไม่แตะแม้ตัวอักษรเดียว** | `· 0 collection(s)` → `· no collection yet` แบบเดียวกับ `no commit yet` ของ `checkAgent` · odd2 ยืนยัน regex เดิมใน `binary.test.ts` ยังอยู่ครบตัวอักษร · ไล่ `ok`+เลขศูนย์ครบทั้ง src+bin แล้วเหลือศูนย์ตัว | ✅ fix2 |
 | **O3-1** | ใต้ `--json` stdout ต้องเป็น **เอกสาร JSON ก้อนเดียวทั้งก้อน** หรือ **ว่างพร้อม exit ≠ 0** เท่านั้น | `test/cli/json-stdout.test.ts` — 10 แถว รันผ่าน **pipe(2) จริง** (`sh -c '{ "$@"; echo $? > f; } \| cat'`) แล้ว `JSON.parse(stdout)` ทั้งก้อน ไม่มี slice · วัดหลังแก้: ทุกแถว ✅ (ตารางใน D-028) | ✅ odd3 |
-| **O3-2** | ไล่ทุกคำสั่งที่รับ `--json` แล้วรันจริงทุกตัว รายงานเป็นตาราง | 7 site (`doctor` `worn` `soul verify` `turn` `ledger show` `observe actions` `erase`) · `erase` 4 แถว · ตารางเดิมของแผน + ตารางวัดซ้ำหลังแก้ใน D-028 · จำนวน `[--json]` ใน `USAGE` ต้องเท่าจำนวน site ที่ AST เจอ | ✅ odd3 |
+| **O3-2** | ไล่ทุกคำสั่งที่รับ `--json` แล้วรันจริงทุกตัว รายงานเป็นตาราง | 7 site ณ ตอนนั้น — ตอนนี้ 8 (เพิ่ม `proposal list`) (`doctor` `worn` `soul verify` `turn` `ledger show` `observe actions` `erase`) · `erase` 4 แถว · ตารางเดิมของแผน + ตารางวัดซ้ำหลังแก้ใน D-028 · จำนวน `[--json]` ใน `USAGE` ต้องเท่าจำนวน site ที่ AST เจอ | ✅ odd3 |
 | **O3-3** | คำสั่งใหม่ที่รับ `--json` แล้วพิมพ์อะไรปน **ต้องแดงเอง** | หา site ด้วย AST — array literal ที่มี string `"json"` ใต้ `bin/commands/` (`arrayLiteralsContaining()`) ครอบทั้ง `parseArgs(argv, ["json"])` และ const แบบ `WORN_BOOLEANS` · site ที่ไม่มีแถว = แดง `unasked` (ท่า G4-1) · แถวที่ไม่มี site = แดง | ✅ odd3 |
 | **O3-4** | อย่าทำให้ `--json` เงียบ · exit code และพฤติกรรมอื่นต้องไม่เปลี่ยน · อย่าทำให้ที่ fix3 จัดไว้รก | ข้อความมนุษย์ทั้งหมด **ย้ายไป stderr** ท่าเดียวกับ `say()` ของ `observe actions` ไม่ได้ถูกลบ → `NOT_SEARCHED` ยังพิมพ์ทุก run (S7.2 AC3) · exit 0/1/2/3 เท่าเดิมทุกแถว (assert ในทุกแถวของ guard) · spacer ฝั่ง stderr เป็น `console.error("")` ตามกฎ fix3 — `bareConsoleCalls` ยังได้ 0 hit | ✅ odd3 |
 | **O3-5** | ต้องรัน `cli-parity` และ **ประกาศความต่างให้ครบ** | `--base d6c03b5 --head .` → **PARITY-OK · 14 case · 128 invocation** · 1 declared crossing (74 บรรทัดออกจาก stdout ขึ้น stderr ไม่เปลี่ยนแม้ไบต์เดียว) + 6 declared difference + 6 declared insertion (ประโยคใหม่ใน help ที่ 7 step ซึ่งพิมพ์ help) · `--binary` ก็ **PARITY-OK** · `--structure` แดงตามคาดเพราะงานนี้ *แก้* โค้ด ไม่ใช่ *ย้าย* บรรทัด (45 base / 62 head, import-union ไม่ขยับ) | ✅ odd3 |
