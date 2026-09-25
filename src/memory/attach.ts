@@ -23,8 +23,15 @@
 
 import type { RecallHit } from "./recall.ts";
 
-/** The default ceiling, in characters of recalled text. */
-export const DEFAULT_RECALL_CHARS = 3000;
+/**
+ * The default ceiling, in characters of recalled text, and how many hits recall
+ * ranks for it. 3000 and 8 until D-075: `eval --recall-only` on a real agent's
+ * 24 tasks found the answer in what was attached for 79.2% of them; 4500 and 12
+ * (with query stopwords) for 91.7%. Past 4500 characters nothing more was
+ * found; the cost is ~500 tokens of system prompt per turn.
+ */
+export const DEFAULT_RECALL_CHARS = 4500;
+export const RECALL_HITS = 12;
 
 /** The heading the block opens with. Also how a test finds it. */
 export const RECALL_HEADING = "## Recalled from this agent's memory (om-agi)";

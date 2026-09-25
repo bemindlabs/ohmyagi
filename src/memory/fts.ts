@@ -99,11 +99,30 @@ export const MAX_TERMS = 32;
  * index can find. Words under three characters are dropped: the index cannot
  * use them and a scan over every row for "a" is not recall.
  */
+/**
+ * Words that say how a question is asked, not what it is about. With the
+ * index matching trigrams inside words, "which" or "the" OR-ed into a query
+ * find nearly every note, and the note that answers ends up below the ceiling
+ * of what recall attaches (D-075: measured with `eval --recall-only`).
+ */
+export const STOPWORDS: ReadonlySet<string> = new Set(
+  (
+    "the and for are was were been being has have had does did doing done not but nor yet " +
+    "this that these those there their them they then than what which who whom whose when where why how " +
+    "with without within into onto from about above below over under again further once here " +
+    "all any both each few more most other some such only own same very can will just should would could must might shall " +
+    "you your yours our ours his her hers its itself myself yourself what's it's i'm " +
+    "also still ever never always really actually instead please tell know need needs want wants make makes made " +
+    "use used using get got gets keep keeps kept pick picks thing things way ways one two"
+  ).split(" "),
+);
+
 export function queryTerms(text: string): readonly string[] {
   const out: string[] = [];
   for (const raw of text.split(/[\s\p{P}]+/u)) {
     const chars = [...raw];
     if (chars.length < 3) continue;
+    if (STOPWORDS.has(raw.toLowerCase())) continue;
     if (UNSPACED.test(raw) && chars.length > WINDOW + STEP) {
       for (let at = 0; at + WINDOW <= chars.length; at += STEP) out.push(chars.slice(at, at + WINDOW).join(""));
     } else {

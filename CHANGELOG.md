@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.5.1 — 2026-09-25
+
+### Identity (E6)
+- SP-3 closed as not passed for now (D-076): soul + RAG already answers 91.7% of the task set, the data is 270
+  pieces rather than 1k–10k, and trained weights cannot have one person removed. S6.3 is not built; om-agi has no Python.
+  D-076 lists the conditions for reopening it.
+
+### Recall
+- Recall finds the answer more often (D-075). A turn's query drops English stopwords, ranks 12 hits instead of 8, and
+  attaches up to 4500 characters instead of 3000. On a real agent's 24 tasks, the attached text held the answer for
+  91.7%, up from 79.2%. `ohmyagi eval --recall-only [--recall-chars <n>]` measures this without asking any model.
+
 ## 0.5.0 — 2026-09-25
 
 ### Web

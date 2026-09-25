@@ -97,7 +97,7 @@ Usage:
                                         approval.
                                         Recall: pieces of memory/ related to
                                         the prompt ride along beside the soul,
-                                        whole or not at all, up to 3000
+                                        whole or not at all, up to 4500
                                         characters (--recall-chars), each named
                                         on stderr before the prompt goes. The
                                         prompt itself is sent as typed.

@@ -10,8 +10,8 @@
  * anyone can recompute from the answer is one worth putting a percentage on.
  *
  * The third configuration AC2 names, soul + RAG + a fine-tuned model, is
- * S6.3's and waits on SP-3; the report says so rather than leaving the column
- * out.
+ * S6.3's, and SP-3 closed as not passed for now (D-076); the report says so
+ * rather than leaving the column out.
  */
 
 import { parseFrontmatter } from "./frontmatter.ts";
@@ -38,7 +38,7 @@ export interface EvalTask {
 export const MODES = ["soul", "soul+rag"] as const;
 export type Mode = (typeof MODES)[number];
 export const NOT_MEASURED: readonly { readonly mode: string; readonly why: string }[] = [
-  { mode: "soul+rag+fine-tune", why: "S6.3 waits on SP-3 — nothing to measure yet" },
+  { mode: "soul+rag+fine-tune", why: "SP-3 closed as not passed for now (D-076) — nothing is trained" },
 ];
 
 const ID = /^[a-z0-9][a-z0-9-]{0,62}$/;

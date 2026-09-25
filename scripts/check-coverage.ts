@@ -346,7 +346,7 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   ["bin/commands/triggers.ts", { lines: 155, why: "command — run by spawning the CLI" }],
   ["bin/commands/setup.ts", { lines: 166, why: "command — run by spawning the CLI" }],
   ["bin/commands/a2a.ts", { lines: 216, why: "command — serve listens until Ctrl-C; its parts are tested in src/a2a" }],
-  ["bin/commands/eval.ts", { lines: 76, why: "command — runs turns as children; its parts are tested in src/soul/evals, and test/cli/eval.test.ts runs it against a stub model" }],
+  ["bin/commands/eval.ts", { lines: 105, why: "command — runs turns as children; its parts are tested in src/soul/evals, and test/cli/eval.test.ts runs it against a stub model" }],
   ["bin/commands/persona.ts", { lines: 230, why: "command — asks a local model and a person at a terminal; its parts are tested in src/soul/extract, and test/cli/persona.test.ts runs it against a stub model" }],
   ["bin/commands/chat.ts", { lines: 227, why: "command — serve polls until Ctrl-C; its parts are tested in src/connectors, and test/cli/chat.test.ts runs it against a stub Telegram" }],
   ["bin/commands/update.ts", { lines: 77, why: "command — asks GitHub; its parts are tested in src/update" }],
@@ -373,7 +373,7 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // anything is written, and the approval it names is marked spent immediately
   // before the prompt goes — an approval recorded afterwards is one a crash
   // hands back unused.
-  ["bin/commands/turn.ts", { lines: 458, why: "command — run by spawning the CLI" }],
+  ["bin/commands/turn.ts", { lines: 459, why: "command — run by spawning the CLI" }],
   ["bin/commands/worn.ts", { lines: 66, why: "command — run by spawning the CLI" }],
 ]);
 
@@ -468,7 +468,7 @@ export const PROOFS = new Map<string, Proof>([
       provedOn: "2026-09-24",
       by: "npm run demo -- --model <a local model>",
       result:
-        "15/15 criteria passed on 2026-09-25 on the tree released as 0.5.0 (run 5e5f6903, table kept in notes/2026-09-25_demo-v0.5.0.txt), on 0.4.2 the same day (run fbad84d0, table kept in notes/2026-09-25_demo-v0.4.2.txt), on 0.4.1 the same day (run 8a52848c, table kept in notes/2026-09-25_demo-v0.4.1.txt), on 0.4.0 the day before (run 065c6900, table kept in notes/2026-09-24_demo-v0.4.0.txt), on 0.3.0 the same day (run cbeda900, " +
+        "15/15 criteria passed on 2026-09-25 on the tree released as 0.5.1 (run caa68c60, table kept in notes/2026-09-25_demo-v0.5.1.txt), on 0.5.0 the same day (run 5e5f6903, table kept in notes/2026-09-25_demo-v0.5.0.txt), on 0.4.2 the same day (run fbad84d0, table kept in notes/2026-09-25_demo-v0.4.2.txt), on 0.4.1 the same day (run 8a52848c, table kept in notes/2026-09-25_demo-v0.4.1.txt), on 0.4.0 the day before (run 065c6900, table kept in notes/2026-09-24_demo-v0.4.0.txt), on 0.3.0 the same day (run cbeda900, " +
         "table kept in notes/2026-09-24_demo-v0.3.0.txt), on 0.2.0 the same day (run fd433912, " +
         "table kept in notes/2026-09-24_demo-v0.2.0.txt), and earlier that day on the tree released as 0.1.0 (run 2ddacb38, " +
         "table kept in notes/2026-09-24_demo-v0.1.0.txt). Before that, " +

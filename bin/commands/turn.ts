@@ -40,6 +40,7 @@ import {
 import {
   attachWithin,
   DEFAULT_RECALL_CHARS,
+  RECALL_HITS,
   describeAttachment,
   ftsPath,
   recall,
@@ -606,7 +607,7 @@ async function recallFor(
     agentDir,
     subject,
     prompt,
-    8,
+    RECALL_HITS,
     checked.ok ? checked.endpoints : { reason: checked.reason },
     undefined,
     "any",

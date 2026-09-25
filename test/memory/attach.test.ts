@@ -60,8 +60,8 @@ describe("describeAttachment", () => {
 });
 
 describe("queryTerms", () => {
-  test("a sentence becomes its words, lower-cased, without the short ones or punctuation", () => {
-    expect(queryTerms("Which PORT does the dashboard use?")).toEqual(["which", "port", "does", "the", "dashboard", "use"]);
+  test("a sentence becomes its words, lower-cased, without the short ones, punctuation or stopwords", () => {
+    expect(queryTerms("Which PORT does the dashboard use?")).toEqual(["port", "dashboard"]);
     expect(queryTerms("a an to")).toEqual([]);
   });
 
@@ -79,5 +79,15 @@ describe("queryTerms", () => {
   test("never more than the cap", () => {
     const many = Array.from({ length: 100 }, (_, i) => `word${i}`).join(" ");
     expect(queryTerms(many).length).toBe(MAX_TERMS);
+  });
+});
+
+describe("stopwords (D-075)", () => {
+  test("how a question is asked is dropped; what it is about stays", () => {
+    const { STOPWORDS } = require("../../src/memory/fts.ts") as typeof import("../../src/memory/fts.ts");
+    expect(queryTerms("Which port does the vLLM server listen on, and what must other services call instead?")).toEqual(["port", "vllm", "server", "listen", "services", "call"]);
+    expect(queryTerms("The THE the")).toEqual([]);
+    expect(STOPWORDS.has("which")).toBe(true);
+    expect(STOPWORDS.has("port")).toBe(false);
   });
 });

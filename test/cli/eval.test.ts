@@ -93,4 +93,21 @@ describe("ohmyagi eval", () => {
       expect((await t.run(args)).code, args.join(" ")).toBe(2);
     }
   }, 60_000);
+
+  test("--recall-only asks no model: is the answer in what recall would attach?", async () => {
+    const t = await setup();
+    await Bun.write(join(t.agent, "memory", "queue.md"), "# Queue\n\nThe queue listens on port 10410 since the move.\n");
+    const idx = await t.run(["memory", "index", t.agent, "--subject", "example"]);
+    expect(idx.code, idx.stderr).toBe(0);
+    const out = await t.run(["eval", t.agent, "--subject", "example", "--recall-only"]);
+    expect(out.code, out.stderr).toBe(0);
+    expect(t.asked).toEqual([]);
+    expect(out.stdout).toMatch(/hit\s+port/);
+    expect(out.stdout).toMatch(/MISS incident\s+.*missing "disk full"/);
+    expect(out.stdout).toContain("recall attached the answer for 1/2 (50%) — no model asked");
+    const json = JSON.parse((await t.run(["eval", t.agent, "--subject", "example", "--recall-only", "--json"])).stdout) as { hits: number };
+    expect(json.hits).toBe(1);
+    expect((await t.run(["eval", t.agent, "--subject", "example", "--recall-chars", "-1"])).code).toBe(2);
+  }, 60_000);
 });
+

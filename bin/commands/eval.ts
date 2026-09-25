@@ -8,20 +8,55 @@
  * answer, never asked of a model.
  */
 
-import { resolve, join } from "node:path";
+import { dirname, resolve, join } from "node:path";
+import { attachWithin, DEFAULT_RECALL_CHARS, RECALL_HITS } from "../../src/memory/attach.ts";
+import { recall } from "../../src/memory/recall.ts";
+import { vectorEndpoints } from "../../src/memory/endpoints.ts";
+import { resolveSoulDir } from "../../src/soul/load.ts";
 import { AUTONOMY_MAX_ENV } from "../../src/decide/effective.ts";
 import { triggeredCeiling } from "../../src/decide/triggers.ts";
 import { engineCommand } from "../../src/guard/hooks.ts";
 import { loadSoul } from "../../src/soul/load.ts";
-import { EVALS_FILE, grade, MIN_TASKS, MODES, parseEvals, report as evalReport, type EvalResult } from "../../src/soul/evals.ts";
+import { EVALS_FILE, grade, MIN_TASKS, MODES, parseEvals, report as evalReport, type EvalResult, type EvalTask } from "../../src/soul/evals.ts";
 import { runGuarded } from "../../src/spawn.ts";
 import { subjectId, type SubjectId } from "../../src/types.ts";
 import { bold, dim, parseArgs, report, usageError } from "../shared.ts";
 
-const USAGE = "usage: ohmyagi eval <dir> --subject <id> [--set <file>] [--only <id,…>] [--backend <b>] [--model <m>] [--json]";
+const USAGE = "usage: ohmyagi eval <dir> --subject <id> [--set <file>] [--only <id,…>] [--recall-only] [--recall-chars <n>] [--backend <b>] [--model <m>] [--json]";
+
+const EVAL_BOOLEANS: readonly string[] = ["json", "recall-only"];
+
+/**
+ * `--recall-only`: no model at all. For each task, does the text a turn's
+ * recall would attach already hold the answer — every `expect` phrase? A fast,
+ * repeatable number for the half of the job that is finding the right note
+ * (D-075). The task's `source` is shown, not required: the same fact in
+ * another note answers just as well.
+ */
+async function recallOnly(dir: string, id: SubjectId, tasks: readonly EvalTask[], json: boolean, ceiling: number): Promise<number> {
+  const soulDir = await resolveSoulDir(dir);
+  const agentDir = soulDir === dir ? dirname(dir) : dir;
+  const checked = vectorEndpoints(process.env);
+  const rows: { task: string; kind: string; hit: boolean; missing: readonly string[]; attached: readonly string[] }[] = [];
+  for (const task of tasks) {
+    const found = await recall(agentDir, id, task.ask, RECALL_HITS, checked.ok ? checked.endpoints : { reason: checked.reason }, undefined, "any");
+    const attachment = attachWithin(found.hits, ceiling);
+    const missing = grade({ ...task, reject: [] }, attachment.block).missing;
+    rows.push({ task: task.id, kind: task.kind, hit: attachment.block !== "" && missing.length === 0, missing, attached: attachment.attached.map((a) => a.path) });
+  }
+  const hits = rows.filter((r) => r.hit).length;
+  const withSource = tasks.length;
+  if (json) {
+    console.log(JSON.stringify({ hits, tasks: withSource, rows }, null, 2));
+    return 0;
+  }
+  for (const r of rows) console.log(`${r.hit ? "hit " : "MISS"} ${r.task.padEnd(28)} ${r.hit ? "" : dim(`missing ${r.missing.map((m) => JSON.stringify(m)).join(", ")} · attached: ${r.attached.map((a) => a.replace(/^memory\//, "")).join(", ") || "nothing"}`)}`);
+  console.log(bold(`\nrecall attached the answer for ${hits}/${withSource} (${withSource === 0 ? 0 : Math.round((hits / withSource) * 1000) / 10}%) — no model asked`));
+  return 0;
+}
 
 export async function cmdEval(argv: readonly string[]): Promise<number> {
-  const { positional, options } = parseArgs(argv, ["json"]);
+  const { positional, options } = parseArgs(argv, EVAL_BOOLEANS);
   const dir = positional[0];
   const raw = options.get("subject");
   if (dir === undefined || positional.length > 1 || raw === undefined || raw === "") return usageError(USAGE);
@@ -45,10 +80,13 @@ export async function cmdEval(argv: readonly string[]): Promise<number> {
   const tasks = only.length === 0 ? parsed.value : parsed.value.filter((t) => only.includes(t.id));
   if (tasks.length === 0) return usageError(`no task matches --only ${only.join(",")}`);
   const json = options.has("json");
+  const recallChars = Number(options.get("recall-chars") ?? String(DEFAULT_RECALL_CHARS));
+  if (!Number.isInteger(recallChars) || recallChars < 0) return usageError(`${USAGE} — --recall-chars is a whole number`);
+  if (options.has("recall-only")) return recallOnly(dir, id, tasks, json, recallChars);
   const say = (line: string) => (json ? console.error(line) : console.log(line));
   if (parsed.value.length < MIN_TASKS) say(dim(`note: ${parsed.value.length} task(s) — S6.5 AC1 asks for at least ${MIN_TASKS} before the number means much.`));
 
-  const flags = ["backend", "model"].flatMap((name) => {
+  const flags = ["backend", "model", "recall-chars"].flatMap((name) => {
     const value = options.get(name);
     return value === undefined || value === "" ? [] : [`--${name}`, value];
   });
