@@ -1707,3 +1707,27 @@ release แรกบน public ติดป้าย **`v0.3.0-alpha` · pre-rel
   - web รันเป็น systemd **user** service บน loopback :30701 ผ่าน `--https` และมี `tailscale serve --https=30701` อยู่ข้างหน้า · เปิด judge (qwen3.8:27b) และ Jev triage ให้ turn ที่เริ่มจากหน้าเว็บ · กุญแจอยู่ใน `~/.secrets/tokens/` (600)
   - มี trigger 2 ตัว (`morning-look` ทุก 1 วัน และ `memory-review` ทุก 7 วัน) รันผ่าน user timer ทุก 5 นาทีตามที่ `triggers schedule` พิมพ์ออกมา · ถูกจำกัดที่ระดับ 1 = ทำได้แค่เสนอ
   - recall index สร้างใหม่แล้ว (78 ไฟล์ / 270 ชิ้น)
+
+---
+
+## D-070 — Web แสดง markdown · local fallback มีโมเดลตั้งต้น (`OM_AGI_OLLAMA_MODEL`)
+
+**สถานะ:** เจ้าของสั่ง (2026-09-25 — *"web ui support markdown rendering"* · *"ใช้ vllm แทน ollama"*) และเจอปัญหาจริงระหว่างใช้ งาน: ถามว่า "hi what's your name?" แล้วไม่มี backend ตัวไหนตอบเลย
+
+**ปัญหาที่เจอ:** พอมี needles แล้ว judge ก็เริ่มอ่าน system prompt (soul + recall) และตัดสินว่า "revealing" จึงกันไม่ให้ส่งไป claude/codex ซึ่งถูกต้องตามที่ออกแบบไว้ (ถ้าไม่แน่ใจ ให้เก็บไว้ในเครื่อง) แต่ปลายสาย ollama ไม่มีโมเดล เพราะ chain `claude,codex,ollama` ไม่ได้ระบุโมเดล ผลคือทุก turn ที่ถูกกันไว้ไม่มีใครตอบ · **แก้:** `OM_AGI_OLLAMA_MODEL` เป็นโมเดลตั้งต้นของ backend local ถ้า turn ไม่ได้ระบุโมเดล (ถ้าใส่ `--model` จะใช้ตัวที่ใส่) · บนเครื่องนี้ตั้งเป็น `qwen3.8:27b` · `:11434` ของเครื่องนี้คือ ollama-shim ที่ส่งต่อไป LiteLLM แล้วไป vLLM จึง **"ใช้ vLLM" อยู่แล้วโดยไม่ต้องแก้ om-agi** (PORTS.md ห้ามต่อ vLLM ตรง ๆ) ตรวจแล้วว่ามี request ใหม่เข้า log ของ vLLM
+
+**Markdown:** ใช้ renderer ตัวเล็กที่เขียนเองใน `src/web/markdown.ts` แบ่งเป็นสองขั้น `mdTree` (pure) แล้ว `mdDom` (ใช้ `createElement` / `textContent` เท่านั้น) · ไม่ใช้ `innerHTML` และมีเทสต์คอยตรวจเงื่อนไขนี้ · ลิงก์ทำได้เฉพาะ http(s) · รองรับหัวข้อ, ย่อหน้า, list ซ้อน, code block, quote, เส้นคั่น, ตาราง, front matter และ inline code / bold / italic / ลิงก์ · ไม่แปลง `snake_case` และ `2*3*4` ให้เป็นตัวเอียง · ใช้ในคำตอบของ agent, ช่องอ่าน memory (มีตัวเลือก "show as written" ให้ดูแบบดิบ) และ notes ในแท็บ Agent
+
+**เจ้าของเลือก (2026-09-25):** ให้ judge อ่านทั้ง soul และ recall ต่อไปเหมือนเดิม ไม่ลดสิ่งที่ judge อ่าน · ผลคือบนเครื่องนี้ turn ส่วนใหญ่จะตอบด้วย qwen3.8:27b ในเครื่อง (ollama-shim → LiteLLM → vLLM) และ claude/codex จะได้รับเฉพาะ turn ที่ judge ตัดสินว่า clear เท่านั้น · เลือกทางปลอดภัยไว้ก่อน ยอมเสียความเก่งของ cloud model
+
+---
+
+## D-071 — judge ของ turn อ่านแค่คำถามกับ recall ไม่อ่าน soul (เปลี่ยนจากที่เลือกไว้ใน D-070)
+
+**สถานะ:** เจ้าของเปลี่ยนใจ (2026-09-25 — *"2"* → "ใช่ — judge ไม่อ่าน soul" · *"ให้ต่อ cloud backend ได้ด้วย"*)
+
+- judge (D-061) ของ `turn` อ่าน `judgeInput(prompt, recall)` เท่านั้น ได้แก่ คำถาม และ block ที่ recall แนบมา · **ไม่อ่าน soul** และไม่อ่านคำสั่งเสนอของระดับ 1
+- เหตุผล: soul คือตัวตนของ agent เอง เหมือนเดิมทุก turn และเจ้าของเป็นคนเขียนเองโดยตั้งใจ · พอ judge อ่าน soul ควบคู่กับ needles มันเลยกันแทบทุก turn ไม่ให้ไป cloud
+- **ตัวกรอง (filter) ยังตรวจทั้งหมดเหมือนเดิม** ทั้ง prompt, soul และ recall ถ้ามี needle อยู่ใน soul ก็ยังถูกจับ
+- ผลที่คาดไว้: คำถามทั่วไปกลับไปที่ claude/codex ได้ · คำถามหรือ memory ที่ recall ดึงมาแล้วมีข้อมูลส่วนตัว ยังถูกเก็บไว้ในเครื่อง และตอบด้วย qwen3.8:27b ผ่าน vLLM
+- เทสต์: `test/cli/turn-egress.test.ts` ใช้ judge ที่ตัดสินว่า "reveals" ทุกครั้งที่เห็นชื่อใน soul · turn ที่คำถามสะอาดต้องไปถึง claude (ถ้าเป็นโค้ดก่อนแก้ turn นี้จะถูกกันไว้)

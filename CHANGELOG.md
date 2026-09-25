@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.4.2 — 2026-09-25
+
+### Web
+- Markdown is rendered: answers, memories (with a "show as written" switch) and the soul's notes (D-070). It is a
+  small built-in renderer that builds elements, never HTML; only http(s) links become links.
+
+### Backends
+- `OM_AGI_OLLAMA_MODEL` names the local model a chain's fallback uses when a turn names none (D-070). Before this, a
+  turn the egress filter or judge kept off the cloud had no model to fall back to, and nothing answered.
+- A turn's judge reads the question and what recall attached, not the soul (D-071); the filter still reads all of it.
+  Before this, with needles set, the judge kept nearly every turn off the cloud.
+
 ## 0.4.1 — 2026-09-25
 
 ### Web

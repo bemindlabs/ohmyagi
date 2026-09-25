@@ -277,8 +277,25 @@ describe("OllamaExec.run — the four ways nothing useful comes back", () => {
     // the reason is still on the record, where a human will read it.
     expect(result.confidence).toBe("silent");
     expect(result.text).toBe("");
-    expect(result.evidence.raw).toBe("no model given and no default configured");
+    expect(result.evidence.raw).toBe("no model given and no default configured — pass --model, or set OM_AGI_OLLAMA_MODEL");
     expect(daemon.calls.length).toBe(0);
+  });
+
+  test("OM_AGI_OLLAMA_MODEL is the default a chain's local fallback uses; an explicit model wins", async () => {
+    const daemon = serve();
+    const before = process.env["OM_AGI_OLLAMA_MODEL"];
+    process.env["OM_AGI_OLLAMA_MODEL"] = "from-env";
+    try {
+      await new OllamaExec({ host: daemon.host }).run(ASK);
+      await new OllamaExec({ host: daemon.host, defaultModel: "explicit" }).run(ASK);
+      process.env["OM_AGI_OLLAMA_MODEL"] = "  ";
+      const blank = await new OllamaExec({ host: daemon.host }).run(ASK);
+      expect(blank.confidence).toBe("silent");
+    } finally {
+      if (before === undefined) delete process.env["OM_AGI_OLLAMA_MODEL"];
+      else process.env["OM_AGI_OLLAMA_MODEL"] = before;
+    }
+    expect(daemon.calls.map((c) => (c as { model?: string }).model)).toEqual(["from-env", "explicit"]);
   });
 
   test("an error status is silence, and its body is evidence rather than an answer", async () => {

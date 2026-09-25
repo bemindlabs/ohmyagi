@@ -105,4 +105,37 @@ describe("S8.3 — personal data does not leave through a turn", () => {
       expect((await run(args)).code, args.join(" ")).toBe(2);
     }
   }, 60_000);
+
+  test("D-071: the judge reads the question, not the soul — so a soul it would flag does not keep a clean turn in", async () => {
+    const { home, run } = await setup();
+    const where = await run(["egress", "needles", "--subject", "example"]);
+    const needles = where.stdout.split("\n")[0]!;
+    await mkdir(join(needles, ".."), { recursive: true });
+    await Bun.write(needles, `${SECRET}\n`);
+    // A judge that calls anything carrying the fixture's name revealing.
+    const judge = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      async fetch(req) {
+        const body = (await req.json()) as { messages: { role: string; content: string }[] };
+        const text = body.messages.at(-1)?.content ?? "";
+        return Response.json({ message: { content: JSON.stringify({ reveals: text.includes("Example Keeper") }) } });
+      },
+    });
+    try {
+      const child = Bun.spawn([BUN, "run", BIN, ...turn("token t5 — how do I close the month?")], {
+        cwd: ROOT,
+        env: { HOME: home, PATH: `${join(home, "bin")}:${await barePath(home)}`, XDG_STATE_HOME: join(home, "state"), XDG_DATA_HOME: join(home, "data"), OLLAMA_HOST: `http://127.0.0.1:${judge.port}`, OM_AGI_EGRESS_JUDGE: "stub" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const stdout = await new Response(child.stdout).text();
+      await child.exited;
+      expect(stdout).toContain("from claude");
+      expect(await Bun.file(join(home, "claude-was-called")).exists()).toBe(true);
+    } finally {
+      judge.stop(true);
+    }
+  }, 60_000);
 });
+

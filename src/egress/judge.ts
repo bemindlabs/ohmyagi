@@ -103,6 +103,17 @@ export async function judgeEgress(
   }
 }
 
+/**
+ * What a turn's judge reads (D-071): the question and what recall attached —
+ * not the soul. The soul is the agent's own identity, the same every turn and
+ * written by the owner on purpose; read alongside the needles, it made the
+ * judge keep nearly every turn in. The filter still screens all of it, soul
+ * included, so a needle written into a soul is still caught.
+ */
+export function judgeInput(prompt: string, recall: string | undefined): string {
+  return recall === undefined || recall === "" ? prompt : `${prompt}\n${recall}`;
+}
+
 /** A verdict as findings the egress path already knows how to keep in and record. */
 export function verdictFindings(verdict: Verdict): readonly EgressFinding[] {
   if (verdict.kind === "clear") return [];

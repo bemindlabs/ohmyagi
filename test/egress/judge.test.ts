@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test";
 import type { Availability, ExecBackend, TurnRequest, TurnResult } from "../../src/exec/backend.ts";
 import { AnnouncedExec } from "../../src/exec/egress.ts";
 import { describeFindings } from "../../src/egress/filter.ts";
-import { judgeConfig, judgeEgress, judgePrompt, readVerdict, verdictFindings } from "../../src/egress/judge.ts";
+import { judgeConfig, judgeEgress, judgeInput, judgePrompt, readVerdict, verdictFindings } from "../../src/egress/judge.ts";
 import { subjectId } from "../../src/types.ts";
 import { RESTRAINED } from "../support/restraint.ts";
 
@@ -129,5 +129,13 @@ describe("in the egress path", () => {
 
     const clear = new AnnouncedExec(cloud(log), { origin: cloud(log), write: () => {}, screen: () => [], judge: async () => [] });
     expect((await clear.run(REQUEST)).text).toBe("hi");
+  });
+});
+
+describe("D-071 — what a turn's judge reads", () => {
+  test("the question and the recall, and nothing of the soul", () => {
+    expect(judgeInput("hi", undefined)).toBe("hi");
+    expect(judgeInput("hi", "")).toBe("hi");
+    expect(judgeInput("hi", "## recalled\nnotes")).toBe("hi\n## recalled\nnotes");
   });
 });

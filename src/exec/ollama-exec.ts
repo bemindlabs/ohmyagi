@@ -26,6 +26,9 @@ import { tokenCount, type Usage } from "../types.ts";
 const DEFAULT_HOST = "http://127.0.0.1:11434";
 const DEFAULT_TIMEOUT_MS = 300_000;
 
+/** The model the local backend uses when a turn names none (D-070). */
+export const OLLAMA_MODEL_ENV = "OM_AGI_OLLAMA_MODEL";
+
 export interface OllamaOptions {
   /** Base URL. Falls back to `OLLAMA_HOST`, then localhost. */
   readonly host?: string;
@@ -100,7 +103,11 @@ export class OllamaExec implements ExecBackend {
 
   constructor(options: OllamaOptions = {}) {
     this.host = (options.host ?? process.env["OLLAMA_HOST"] ?? DEFAULT_HOST).replace(/\/$/, "");
-    this.defaultModel = options.defaultModel;
+    // A chain like `claude,codex,ollama` names no model, and the model a vendor
+    // wants is not one ollama has — so the local fallback needs its own:
+    // OM_AGI_OLLAMA_MODEL, when nothing more specific was given.
+    const fromEnv = process.env[OLLAMA_MODEL_ENV]?.trim();
+    this.defaultModel = options.defaultModel ?? (fromEnv === undefined || fromEnv === "" ? undefined : fromEnv);
   }
 
   /** Is the daemon answering? Lists tags, which loads no model and costs nothing. */
@@ -135,7 +142,7 @@ export class OllamaExec implements ExecBackend {
       // left this process. That is a failure to have run, which is what
       // `silent` means — and it is the caller's input that was missing, not a
       // programmer error, so it is reported rather than thrown.
-      return this.result(request, "", "no model given and no default configured", 0);
+      return this.result(request, "", `no model given and no default configured — pass --model, or set ${OLLAMA_MODEL_ENV}`, 0);
     }
 
     const messages = [

@@ -15,7 +15,7 @@ import {
   removeRunRecord,
   writeRunRecord,
 } from "../../src/decide/runs.ts";
-import { judgeConfig, judgeEgress, loadLexicon, recordBlocked, screen, verdictFindings } from "../../src/egress/index.ts";
+import { judgeConfig, judgeEgress, judgeInput, loadLexicon, recordBlocked, screen, verdictFindings } from "../../src/egress/index.ts";
 import { RecordingExec, canAppend, type RecordingOptions } from "../../src/ledger/index.ts";
 import {
   AUTONOMY_FILE,
@@ -362,12 +362,13 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
         // attached — are screened before anything leaves this machine.
         screen: (request) => screen(`${request.prompt}\n${request.system ?? ""}`, lexicon),
         // D-061: a model on this machine reads meaning the filter cannot, when
-        // the owner named one. Unsure keeps the prompt in.
+        // the owner named one. Unsure keeps the prompt in. D-071: it reads the
+        // question and the recall, not the soul — the filter above reads all.
         ...(judge === undefined
           ? {}
           : {
               judge: async (request) =>
-                verdictFindings(await judgeEgress(`${request.prompt}\n${request.system ?? ""}`, lexicon.needles, judge)),
+                verdictFindings(await judgeEgress(judgeInput(request.prompt, attachment?.block), lexicon.needles, judge)),
             }),
         onBlocked: (backendId, findings) => {
           blocked.push(

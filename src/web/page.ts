@@ -7,6 +7,7 @@
  * server put on the page with `textContent`, never as HTML.
  */
 
+import { MARKDOWN_CSS, MARKDOWN_JS } from "./markdown.ts";
 import { MASCOT_DATA_URI } from "./mascot.ts";
 
 export const PAGE_HTML = `<!doctype html>
@@ -20,6 +21,7 @@ export const PAGE_HTML = `<!doctype html>
 @media (prefers-color-scheme:dark){:root{--bg:#0f131a;--card:#171c25;--ink:#e8ebf1;--muted:#9aa3b5;--line:#262d3a;--brand:#f0a830;--ok:#56c28f;--okbg:#12291f;--warn:#ff7a6e;--warnbg:#2e1614;--care:#f0b95a;--carebg:#2a2112;--calmbg:#1d2431}}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
+${MARKDOWN_CSS}
 body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
 main{max-width:980px;margin:0 auto;padding:20px 16px 48px}
 header{display:flex;gap:14px;align-items:center;margin-bottom:18px}
@@ -209,7 +211,7 @@ select{font:inherit;border:1px solid var(--line);border-radius:10px;padding:7px 
     </section>
     <section aria-labelledby="h-memview">
       <h2 id="h-memview">Read</h2>
-      <p class="small" id="memPath">Pick a memory on the left.</p>
+      <div class="row" style="justify-content:space-between;margin-top:0"><p class="small" id="memPath" style="margin:0">Pick a memory on the left.</p><label class="small"><input type="checkbox" id="memRaw"> show as written</label></div>
       <div class="notes" id="memText" style="max-height:70vh" hidden></div>
       <p class="hint">Read-only here. To remove one: <code>ohmyagi memory forget</code> in a terminal — it shows what it will touch first.</p>
     </section>
@@ -260,6 +262,7 @@ select{font:inherit;border:1px solid var(--line);border-radius:10px;padding:7px 
 </main>
 <div class="toast" id="toast" role="status"></div>
 <script>
+${MARKDOWN_JS}
 (() => {
   const hashParams = new URLSearchParams(location.hash.slice(1));
   const token = hashParams.get("t") || sessionStorage.getItem("ohmyagi-t") || "";
@@ -338,7 +341,7 @@ select{font:inherit;border:1px solid var(--line);border-radius:10px;padding:7px 
   function bubble(cls, text, small) {
     const b = el("div", "msg " + cls);
     if (cls === "it" && agentName) b.append(el("div", "small", agentName + " · AI"));
-    b.append(document.createTextNode(text));
+    if (cls === "it") { b.style.whiteSpace = "normal"; b.append(md(text)); } else b.append(document.createTextNode(text));
     if (small) b.append(el("div", "small", small));
     $("chat").append(b); $("chat").scrollTop = 1e9;
   }
@@ -401,7 +404,7 @@ select{font:inherit;border:1px solid var(--line);border-radius:10px;padding:7px 
     const stat = (n, label) => { const d = el("span", "stat"); d.append(el("b", "", String(n)), el("span", "small", label)); st.append(d); };
     stat(a.stats.memories, "memories"); stat(a.stats.turns, "records in the ledger"); stat(a.stats.lastTurn || "—", "last one");
     renderList("byBackend", a.stats.byBackend, (b) => el("li", "", b.backend + " — " + b.turns), "Nothing recorded yet.");
-    $("roleNotes").textContent = a.roleNotes || "(empty)"; $("personNotes").textContent = a.personNotes || "(empty)";
+    for (const [id, text] of [["roleNotes", a.roleNotes], ["personNotes", a.personNotes]]) { const box = $(id); box.replaceChildren(); box.style.whiteSpace = "normal"; box.append(text ? md(text) : document.createTextNode("(empty)")); }
   }
   let mems = []; let memShown = "";
   function drawMemories() {
@@ -421,8 +424,16 @@ select{font:inherit;border:1px solid var(--line);border-radius:10px;padding:7px 
   async function openMemory(path) {
     memShown = path; drawMemories(); $("memPath").textContent = path; $("memText").hidden = false; $("memText").textContent = "Loading…";
     let r; try { r = await api("/api/memory?path=" + encodeURIComponent(path)); } catch { return; }
-    $("memText").textContent = r.error ? r.error : r.text;
+    memLast = r.error ? "" : r.text; showMem(r.error || "");
   }
+  let memLast = "";
+  function showMem(error) {
+    const box = $("memText"); box.replaceChildren();
+    if (error) { box.textContent = error; return; }
+    if ($("memRaw").checked) { box.style.whiteSpace = "pre-wrap"; box.textContent = memLast; }
+    else { box.style.whiteSpace = "normal"; box.append(md(memLast)); }
+  }
+  $("memRaw").addEventListener("change", () => { if (memLast) showMem(""); });
   async function loadMemories() {
     try { mems = await api("/api/memories"); } catch { return; }
     const sel = $("memType"); const keep = sel.value; sel.replaceChildren(el("option", "", "All kinds")); sel.firstChild.value = "";
