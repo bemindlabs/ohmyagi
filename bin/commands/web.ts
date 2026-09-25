@@ -17,6 +17,9 @@ import { startWeb, tailnetNames } from "../../src/web/server.ts";
 import { ago, excerpt, levelSentence, remoteForPage, triageChips, type AgentInfo, type SettingsState, type ViewState } from "../../src/web/view.ts";
 import { listMemories, readMemoryFile } from "../../src/web/memories.ts";
 import { loadOrCreateKey } from "../../src/web/key.ts";
+import { profileOf } from "../../src/soul/profile.ts";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { a2aDirFor, readPeers } from "../../src/a2a/peers.ts";
 import { chatDirFor, contactKey, readChatState } from "../../src/connectors/users.ts";
 import { judgeConfig, loadLexicon } from "../../src/egress/index.ts";
@@ -249,6 +252,22 @@ export async function cmdWeb(argv: readonly string[]): Promise<number> {
       agent: () => gatherAgent(absolute, id),
       memories: () => listMemories(absolute),
       memory: (path) => readMemoryFile(absolute, path),
+      profile: async () => {
+        const loaded = await loadSoul(absolute, id);
+        return loaded.ok ? { ok: true as const, profile: profileOf(loaded.soul) } : { ok: false as const, reason: loaded.issues.map((i) => i.message).join("; ") };
+      },
+      editProfile: async (profile, write) => {
+        // Handed to the command as a file that lives only as long as the call.
+        const dir = await mkdtemp(join(tmpdir(), "ohmyagi-profile-"));
+        try {
+          const file = join(dir, "profile.json");
+          await writeFile(file, JSON.stringify(profile), { mode: 0o600 });
+          const out = await runGuarded([...engineCommand().argv, "soul", "edit", absolute, "--subject", id, "--profile", file, ...(write ? ["--yes"] : [])]);
+          return { code: out.code, stdout: new TextDecoder().decode(out.stdout), stderr: out.stderr };
+        } finally {
+          await rm(dir, { recursive: true, force: true });
+        }
+      },
       run: async (args) => {
         const out = await runGuarded([...engineCommand().argv, ...args]);
         return { code: out.code, stdout: new TextDecoder().decode(out.stdout), stderr: out.stderr };

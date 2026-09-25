@@ -17,6 +17,7 @@
  */
 
 import type { MemoryEntry } from "./memories.ts";
+import { readProfile, type Profile } from "../soul/profile.ts";
 import type { AgentInfo, SettingsState, ViewState } from "./view.ts";
 import { PAGE_HTML } from "./page.ts";
 
@@ -28,6 +29,10 @@ export interface WebDeps {
   readonly agent: () => Promise<AgentInfo>;
   readonly memories: () => Promise<readonly MemoryEntry[]>;
   readonly memory: (path: string) => Promise<{ readonly ok: true; readonly text: string } | { readonly ok: false; readonly reason: string }>;
+  /** The soul on every axis, or why it does not load. */
+  readonly profile: () => Promise<{ readonly ok: true; readonly profile: Profile } | { readonly ok: false; readonly reason: string }>;
+  /** `soul edit` with this profile — a dry run unless `write`. */
+  readonly editProfile: (profile: Profile, write: boolean) => Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string }>;
   /** Run this engine with arguments; the result of the child. */
   readonly run: (args: readonly string[]) => Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string }>;
   /** The agent directory and subject every action is about. */
@@ -105,6 +110,7 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[]) 
     if (req.method === "GET" && url.pathname === "/api/state") return json(await deps.state());
     if (req.method === "GET" && url.pathname === "/api/settings") return json(await deps.settings());
     if (req.method === "GET" && url.pathname === "/api/agent") return json(await deps.agent());
+    if (req.method === "GET" && url.pathname === "/api/profile") return json(await deps.profile());
     if (req.method === "GET" && url.pathname === "/api/memories") return json(await deps.memories());
     if (req.method === "GET" && url.pathname === "/api/memory") {
       const read = await deps.memory(url.searchParams.get("path") ?? "");
@@ -177,6 +183,14 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[]) 
       if (typeof name !== "string" || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(name)) return json({ error: "no such peer" }, 400);
       const out = await deps.run(["a2a", "remove", name, "--subject", deps.subject]);
       return json({ ok: out.code === 0, message: said(out.stdout) || said(out.stderr) });
+    }
+    // D-074: the Profile wizard. `soul edit` checks the result loads — the
+    // firewall included — and writes only when asked to.
+    if (url.pathname === "/api/profile") {
+      const read = readProfile(body["profile"]);
+      if (!read.ok) return json({ ok: false, message: read.problems.join("\n") }, 400);
+      const out = await deps.editProfile(read.profile, body["write"] === true);
+      return json({ ok: out.code === 0, message: said(out.stdout) || said(out.stderr), problems: out.code === 0 ? "" : said(out.stderr) });
     }
     // Search by meaning is `memory search`: both indexes, each hit saying which found it.
     if (url.pathname === "/api/memory-search") {

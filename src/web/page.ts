@@ -86,6 +86,12 @@ nav.tabs button[aria-selected=true]{background:var(--ink);color:var(--bg);border
 .lock{font-size:.8rem;color:var(--muted);margin-left:8px}
 select{font:inherit;border:1px solid var(--line);border-radius:10px;padding:7px 10px;background:var(--bg);color:var(--ink)}
 .field{display:grid;gap:4px;margin-top:10px}
+.steps{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px}
+.steps button{font-size:.82rem;padding:4px 10px;border-radius:99px}
+.steps button[aria-current=step]{background:var(--brand);color:#fff;border-color:var(--brand)}
+.steps button.done{border-color:var(--ok);color:var(--ok)}
+.wiz label{display:block;font-weight:600;margin:12px 0 2px}.wiz .hint{margin:0 0 6px}
+.wiz textarea{min-height:90px}.wiz textarea.long{min-height:260px;font-family:ui-monospace,monospace;font-size:.85rem}
 .on{color:var(--ok);font-weight:600}.off{color:var(--muted);font-weight:600}
 </style>
 </head>
@@ -102,6 +108,7 @@ select{font:inherit;border:1px solid var(--line);border-radius:10px;padding:7px 
   <nav class="tabs" role="tablist">
     <button role="tab" id="tabHome" aria-selected="true" aria-controls="home">Home</button>
     <button role="tab" id="tabAgent" aria-selected="false" aria-controls="agent">Agent</button>
+    <button role="tab" id="tabProfile" aria-selected="false" aria-controls="profile">Profile</button>
     <button role="tab" id="tabMemories" aria-selected="false" aria-controls="memories">Memories</button>
     <button role="tab" id="tabSettings" aria-selected="false" aria-controls="settings">Settings</button>
   </nav>
@@ -198,6 +205,16 @@ select{font:inherit;border:1px solid var(--line);border-radius:10px;padding:7px 
       <p class="small">role.md — the job</p><div class="notes" id="roleNotes"></div>
       <p class="small" style="margin-top:12px">person.md — the person</p><div class="notes" id="personNotes"></div>
       <p class="hint">To change who it is, edit <code>soul/role.md</code> or <code>soul/person.md</code> and run <code>ohmyagi soul check</code>.</p>
+    </section>
+  </div>
+
+  <div class="set" id="profile" role="tabpanel" aria-labelledby="tabProfile" hidden>
+    <section class="wiz" aria-labelledby="h-wiz">
+      <h2 id="h-wiz">Set up this agent</h2>
+      <p class="hint">Every axis of who it is, one step at a time. Nothing is saved until the last step, and what is saved must still pass every check a soul goes through — the AI disclosure is built in and cannot be edited.</p>
+      <nav class="steps" id="wizSteps" aria-label="Steps"></nav>
+      <div id="wizBody"></div>
+      <div class="row" style="margin-top:16px"><button id="wizBack">Back</button><button class="primary" id="wizNext">Next</button><span class="small" id="wizNote"></span></div>
     </section>
   </div>
 
@@ -374,7 +391,7 @@ ${MARKDOWN_JS}
   function choice() { return { backend: store.get("ohmyagi-backend"), model: store.get("ohmyagi-model") }; }
   const CATS = [["read", "Read", "look at files and folders"], ["write", "Write", "change or create files"], ["run", "Run", "run commands on this computer"], ["reach", "Reach", "contact other services and agents"]];
   const LEVELS = ["Never", "Ask me first", "Do it, then tell me"];
-  const TABS = ["home", "agent", "memories", "settings"];
+  const TABS = ["home", "agent", "profile", "memories", "settings"];
   function showTab(which) {
     if (!TABS.includes(which)) which = "home";
     for (const t of TABS) {
@@ -385,6 +402,7 @@ ${MARKDOWN_JS}
     if (which === "settings") loadSettings();
     if (which === "agent") loadAgent();
     if (which === "memories") loadMemories();
+    if (which === "profile") loadProfile();
   }
   for (const t of TABS) $("tab" + t[0].toUpperCase() + t.slice(1)).onclick = () => showTab(t);
   const kv = (id, rows) => { const dl = $(id); dl.replaceChildren(); for (const [k, v] of rows) { if (v === null || v === undefined || v === "") continue; const dd = el("dd"); if (v instanceof Node) dd.append(v); else dd.textContent = v; dl.append(el("dt", "", k), dd); } };
@@ -406,6 +424,90 @@ ${MARKDOWN_JS}
     renderList("byBackend", a.stats.byBackend, (b) => el("li", "", b.backend + " — " + b.turns), "Nothing recorded yet.");
     for (const [id, text] of [["roleNotes", a.roleNotes], ["personNotes", a.personNotes]]) { const box = $(id); box.replaceChildren(); box.style.whiteSpace = "normal"; box.append(text ? md(text) : document.createTextNode("(empty)")); }
   }
+
+  // ── Profile wizard (D-074) ──
+  const WIZ = [
+    { title: "Identity", fields: [["name", "text", "Its name", "What people call it. Never the name of a real person it learned from."], ["role", "text", "Its job", "One sentence: what it is for."]] },
+    { title: "Scope", fields: [["does", "area", "What it does", "The work that is its job."], ["doesNot", "area", "What it does not do", "Where its job stops."]] },
+    { title: "Never", fields: [["prohibitions", "list", "It never…", "One per line. At least one."]] },
+    { title: "Voice", fields: [["tone", "list", "Tone", "A word or two per line — plain, warm, brief…"], ["addressesUserAs", "text", "What it calls you", ""], ["refersToSelfAs", "list", "What it calls itself", "One per line."]] },
+    { title: "Principles", fields: [["principles", "list", "How it works", "One per line."]] },
+    { title: "Knowledge from", fields: [["inheritsFrom", "list", "Whose knowledge it carries", "People whose work it learned from, one per line. These names are personal: they stay in person.md, are screened from anything that leaves, and can never be its own name."]] },
+    { title: "Autonomy", autonomy: true },
+    { title: "Notes", fields: [["roleNotes", "long", "About the job (role.md)", "Markdown. Knowledge that belongs to the job, not the person."], ["personNotes", "long", "About the person (person.md)", "Markdown. Voice and manner only."]] },
+    { title: "Review", review: true },
+  ];
+  let wizStep = 0, wizDraft = null, wizOrig = null, wizLevels = null, wizLevelsOrig = null;
+  const toLines = (v) => v.split("\\n").map((x) => x.trim()).filter(Boolean);
+  function wizCollect() {
+    for (const f of (WIZ[wizStep].fields || [])) {
+      const input = document.getElementById("wiz-" + f[0]); if (!input) continue;
+      wizDraft[f[0]] = f[1] === "list" ? toLines(input.value) : f[1] === "text" ? input.value.trim() : input.value;
+    }
+  }
+  function wizRender() {
+    const nav = $("wizSteps"); nav.replaceChildren();
+    WIZ.forEach((st, i) => { const b = el("button", i < wizStep ? "done" : "", (i + 1) + ". " + st.title); if (i === wizStep) b.setAttribute("aria-current", "step"); b.onclick = () => { wizCollect(); wizStep = i; wizRender(); }; nav.append(b); });
+    const body = $("wizBody"); body.replaceChildren(); $("wizNote").textContent = "";
+    const st = WIZ[wizStep];
+    for (const f of (st.fields || [])) {
+      const [key, kind, label, hint] = f;
+      const l = el("label", "", label); l.htmlFor = "wiz-" + key; body.append(l);
+      if (hint) body.append(el("p", "hint", hint));
+      const input = kind === "text" ? el("input") : el("textarea", kind === "long" ? "long" : "");
+      if (kind === "text") input.type = "text";
+      input.id = "wiz-" + key;
+      const v = wizDraft[key]; input.value = Array.isArray(v) ? v.join("\\n") : (v || "");
+      body.append(input);
+    }
+    if (st.autonomy) {
+      body.append(el("p", "hint", "What it may do without asking. “On its own” (3) is only set in a terminal, with a typed phrase."));
+      for (const [key, name, what] of CATS) {
+        const row = el("div", "cat"); const label = el("div"); label.append(el("div", "what", name), el("div", "small", "May it " + what + "?"));
+        const seg = el("div", "seg");
+        LEVELS.forEach((word, level) => { const b = el("button", "", word); b.setAttribute("aria-pressed", String(wizLevels[key] === level)); b.onclick = () => { wizLevels[key] = level; wizRender(); }; seg.append(b); });
+        const right = el("div"); right.append(seg); if (wizLevels[key] === 3) right.append(el("span", "lock", "now 3 — lowering it here is fine"));
+        row.append(label, right); body.append(row);
+      }
+    }
+    if (st.review) {
+      const changedLv = CATS.filter(([k]) => wizLevels[k] !== wizLevelsOrig[k]).map(([k, n]) => n + " → " + LEVELS[wizLevels[k]]);
+      const box = el("div", "notes"); box.textContent = "Checking…"; body.append(box);
+      api("/api/profile", { profile: wizDraft, write: false }).then((r) => {
+        const lines = [r.ok ? (r.message || "") : "Not saveable yet:\\n" + (r.problems || r.message || "")];
+        if (changedLv.length) lines.push("autonomy: " + changedLv.join(", "));
+        box.textContent = lines.filter(Boolean).join("\\n") || "Nothing changes.";
+        $("wizNext").disabled = !r.ok && !changedLv.length;
+      }).catch(() => { box.textContent = "Could not check."; });
+    }
+    $("wizBack").disabled = wizStep === 0;
+    $("wizNext").disabled = false;
+    $("wizNext").textContent = st.review ? "Save" : "Next";
+  }
+  async function loadProfile() {
+    let p; try { p = await api("/api/profile"); } catch { return; }
+    if (!p.ok) { $("wizBody").textContent = "The soul does not load: " + p.reason; return; }
+    let s; try { s = await api("/api/settings"); } catch { return; }
+    wizOrig = p.profile; wizDraft = JSON.parse(JSON.stringify(p.profile));
+    wizLevelsOrig = Object.assign({}, s.levels); wizLevels = Object.assign({}, s.levels);
+    wizStep = 0; wizRender();
+  }
+  $("wizBack").onclick = () => { wizCollect(); if (wizStep > 0) { wizStep--; wizRender(); } };
+  $("wizNext").onclick = async () => {
+    wizCollect();
+    if (!WIZ[wizStep].review) { wizStep++; wizRender(); return; }
+    $("wizNext").disabled = true; $("wizNote").textContent = "Saving…";
+    const notes = [];
+    const r = await api("/api/profile", { profile: wizDraft, write: true });
+    if (r.ok) notes.push(r.message); else if (!/Nothing differs/.test(r.message || "")) notes.push("Soul not saved: " + (r.problems || r.message));
+    for (const [key, name] of CATS) {
+      if (wizLevels[key] === wizLevelsOrig[key] || wizLevels[key] > 2) continue;
+      const a = await api("/api/autonomy", { category: key, level: wizLevels[key] });
+      notes.push(a.ok ? name + " set to " + LEVELS[wizLevels[key]] : (a.message || a.error || name + " not set"));
+    }
+    toast(notes.filter(Boolean).join("\\n") || "Nothing to save.");
+    await refresh(); await loadProfile();
+  };
   let mems = []; let memShown = "";
   function drawMemories() {
     const q = $("memFilter").value.trim().toLowerCase(); const kind = $("memType").value;

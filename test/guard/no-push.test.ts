@@ -446,6 +446,10 @@ describe("C. behaviour — every command, watched by a git that writes down its 
       ["a2a", "inbox", "--subject", SUBJECT],
       // D-066's: reads the allowlist; polls and answers nobody.
       ["chat", "users", "--subject", SUBJECT],
+      // D-072's: shows the drafts there are (none); reads no artifact, asks no model.
+      ["persona", "show", "--subject", SUBJECT],
+      // D-073's: with no agent named it prints its usage and runs no turn.
+      ["eval"],
       // D-065's: a stray word is a usage error before anything is asked of GitHub.
       ["update", "wat"],
       // `stop` writes the brake into this sandbox's XDG_STATE_HOME and zeroes
@@ -529,6 +533,8 @@ describe("C. behaviour — every command, watched by a git that writes down its 
       "web",
       "a2a",
       "chat",
+      "persona",
+      "eval",
       "update",
       // S5.2's. Run in sequence above rather than in the flat list, because
       // `decide` needs the id `new` printed.

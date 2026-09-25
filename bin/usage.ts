@@ -49,6 +49,11 @@ Usage:
                                         Validate the soul in <dir> — a soul directory or an agent repository (D-033) — with line numbers
   ohmyagi soul import <agent-dir> --subject <id> --map <file> --out <dir>
                                         Convert a bwoc agent directory into a soul
+  ohmyagi soul edit <dir> --subject <id> (--profile <file.json> [--yes] | --print)
+                                        The soul from a flat JSON profile (what
+                                        the web Profile wizard sends): says which
+                                        fields change, writes only with --yes, and
+                                        only a soul that still loads.
   ohmyagi soul apply <dir> --subject <id> [--backend a,b] [--apply]
                                         Render an identity into each backend.
                                         Prints a diff and writes nothing unless
@@ -354,6 +359,25 @@ Usage:
                                         Send one message to a peer, screened
                                         like a turn; kept in means not sent.
   ohmyagi a2a inbox --subject <id>      What peers have sent.
+  ohmyagi persona extract <dir> --subject <id> --from <path,…> [--model <m>] [--max-chunks <n>]
+                                        Draft a soul from real artifacts with a
+                                        model on this machine. Every claim must
+                                        quote its source; one whose quote is not
+                                        there is cut. Kept in personal/.
+  ohmyagi persona review <dir> --subject <id> [--draft <id>]
+                                        Answer yes or no to each claim, at a
+                                        terminal.
+  ohmyagi persona show --subject <id> [--draft <id>]
+                                        The draft and what was decided.
+  ohmyagi persona adopt <dir> --subject <id> [--draft <id>] [--yes]
+                                        Write only the yeses into role.md and
+                                        person.md; the soul must still load.
+  ohmyagi eval <dir> --subject <id> [--set <file>] [--only <id,…>] [--backend <b>] [--model <m>] [--json]
+                                        Run the job's task set (evals.md, at
+                                        least 20 real tasks) with the soul alone
+                                        and with recall, grade each answer by
+                                        its phrases, and say which kinds of work
+                                        it cannot do yet. Turns held at level 1.
   ohmyagi chat users --subject <id>       Who the agent answers in chat apps.
   ohmyagi chat allow <platform> <user-id> --subject <id> [--label <name>]
                                         Let one person be answered: typed at a

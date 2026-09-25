@@ -44,6 +44,9 @@ import {
   whichOnPath,
 } from "../../src/soul/index.ts";
 import { mapNonEmpty, nonEmpty, subjectId } from "../../src/types.ts";
+import { parseSoul, resolveSoulDir } from "../../src/soul/load.ts";
+import { applyProfile, changedFields, profileOf, readProfile } from "../../src/soul/profile.ts";
+import { readFile, writeFile } from "node:fs/promises";
 import { ENGINE_CHECKOUT, bold, dim, indent, parseArgs, report, usageError } from "../shared.ts";
 
 /**
@@ -652,6 +655,69 @@ async function cmdSoulCard(argv: readonly string[]): Promise<number> {
   return 0;
 }
 
+/**
+ * `ohmyagi soul edit <dir> --subject <id> --profile <file.json> [--yes]` — the
+ * soul from a flat profile (D-074): what the web page's Profile wizard runs.
+ * Says which fields change; writes only with --yes, and only a soul that
+ * still loads — the firewall and every other check included.
+ */
+const SOUL_EDIT_BOOLEANS: readonly string[] = ["yes", "print"];
+
+async function cmdSoulEdit(argv: readonly string[]): Promise<number> {
+  const usage = "usage: ohmyagi soul edit <dir> --subject <id> --profile <file.json> [--yes]";
+  const { positional, options } = parseArgs(argv, SOUL_EDIT_BOOLEANS);
+  const dir = positional[0];
+  const subject = options.get("subject");
+  if (dir === undefined || positional.length > 1 || subject === undefined || subject === "") return usageError(usage);
+  let id;
+  try {
+    id = subjectId(subject);
+  } catch (error) {
+    return usageError(error instanceof Error ? error.message : String(error));
+  }
+  const loaded = await loadSoul(dir, id);
+  if (!loaded.ok) return report(loaded.issues);
+  if (options.has("print")) {
+    console.log(JSON.stringify(profileOf(loaded.soul), null, 2));
+    return 0;
+  }
+  const file = options.get("profile");
+  if (file === undefined || file === "") return usageError(usage);
+  let body: unknown;
+  try {
+    body = JSON.parse(await readFile(file, "utf8"));
+  } catch (error) {
+    console.error(`ohmyagi: ${file} is not a JSON profile: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
+  const read = readProfile(body);
+  if (!read.ok) {
+    for (const problem of read.problems) console.error(`ohmyagi: ${problem}`);
+    return 1;
+  }
+  const changed = changedFields(profileOf(loaded.soul), read.profile);
+  if (changed.length === 0) {
+    console.log("Nothing differs from the soul as it is — nothing to write.");
+    return 0;
+  }
+  const serialized = serializeSoul(applyProfile(loaded.soul, read.profile));
+  const checked = parseSoul(serialized.role, serialized.person, id);
+  if (!checked.ok) {
+    console.error("ohmyagi: with these values the soul would not load, so nothing was written:");
+    return report(checked.issues);
+  }
+  console.log(`would change: ${changed.join(", ")}`);
+  if (!options.has("yes")) {
+    console.log(dim("Nothing was changed. Run again with --yes to write it; the diff is yours to commit."));
+    return 0;
+  }
+  const where = await resolveSoulDir(dir);
+  await writeFile(join(where, ROLE_FILE), serialized.role);
+  await writeFile(join(where, PERSON_FILE), serialized.person);
+  console.log(bold(`Written: ${changed.join(", ")}. \`git diff\` in ${dir} shows it; nothing was committed.`));
+  return 0;
+}
+
 export async function cmdSoul(argv: readonly string[]): Promise<number> {
   const [sub, ...rest] = argv;
   switch (sub) {
@@ -667,9 +733,11 @@ export async function cmdSoul(argv: readonly string[]): Promise<number> {
       return cmdSoulRevoke(rest);
     case "card":
       return cmdSoulCard(rest);
+    case "edit":
+      return cmdSoulEdit(rest);
     default:
       return usageError(
-        `unknown soul subcommand ${JSON.stringify(sub ?? "")} — try "check", "import", "apply", "verify", "revoke" or "card"`,
+        `unknown soul subcommand ${JSON.stringify(sub ?? "")} — try "check", "import", "apply", "verify", "revoke", "card" or "edit"`,
       );
   }
 }

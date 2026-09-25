@@ -1065,6 +1065,9 @@ export const NORMALISERS: readonly Normaliser[] = [
   },
 ];
 
+/** The duration rule alone, for {@link record}'s size line. */
+const DURATION_IN_FILE = new RegExp(NORMALISERS.find((n) => n.name === "duration")!.pattern.source, "gm");
+
 /** Normalise, and say how many times each normaliser fired. */
 export function normalise(text: string): { readonly text: string; readonly counts: ReadonlyMap<string, number> } {
   const counts = new Map<string, number>();
@@ -1209,6 +1212,8 @@ export const SCENARIOS: readonly Scenario[] = [
       { argv: ["web"] },
       { argv: ["a2a"] },
       { argv: ["chat"] },
+      { argv: ["persona"] },
+      { argv: ["eval"] },
       { argv: ["update", "wat"] },
       { argv: ["ledger", "wat"] },
       { argv: ["ledger"] },
@@ -1679,7 +1684,12 @@ async function record(dir: string, prefix = ""): Promise<string[]> {
     } else {
       const bytes = await Bun.file(path).arrayBuffer();
       const text = new TextDecoder("utf8", { fatal: false }).decode(bytes);
-      lines.push(`file ${rel}  (${bytes.byteLength} bytes before normalising)`);
+      // A duration changes the byte count with its digit count (9 ms → 10 ms),
+      // which is the timing the normaliser exists to hide: two runs of one
+      // revision disagreed on a ledger file's size by one byte. A file the
+      // duration rule fires in says so instead of a number.
+      const timed = (text.match(DURATION_IN_FILE) ?? []).length > 0;
+      lines.push(`file ${rel}  (${timed ? "<varies>" : bytes.byteLength} bytes before normalising)`);
       for (const line of text.split("\n")) lines.push(`  | ${line}`);
     }
   }

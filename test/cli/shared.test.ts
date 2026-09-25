@@ -377,3 +377,24 @@ describe("printPlaceNotices — AC4, the five places and what deleting cannot re
     expect(counted).toBeGreaterThan(3);
   });
 });
+
+describe("readTerminalLine — one line per call, however the lines arrive (D-072)", () => {
+  test("three answers piped at once come back as three answers, then empty at the end", async () => {
+    const script = `import { readTerminalLine } from ${JSON.stringify(join(import.meta.dir, "..", "..", "bin", "shared.ts"))};
+for (let i = 0; i < 4; i++) console.log(JSON.stringify(await readTerminalLine()));`;
+    const child = Bun.spawn([process.execPath, "-e", script], { stdin: new TextEncoder().encode("y\nn\nq\n"), stdout: "pipe", stderr: "pipe" });
+    const out = await new Response(child.stdout).text();
+    await child.exited;
+    expect(out.trim().split("\n")).toEqual(['"y"', '"n"', '"q"', '""']);
+  });
+});
+
+describe("lineReader, in process", () => {
+  test("lines split across chunks, several in one chunk, and the tail at the end", async () => {
+    const chunks = ["ye", "s\nno\nma", "ybe", ""];
+    const stream = () => new ReadableStream<Uint8Array>({ pull(c) { const next = chunks.shift(); if (next === undefined) c.close(); else c.enqueue(new TextEncoder().encode(next)); } });
+    const { lineReader } = await import("../../bin/shared.ts");
+    const read = lineReader(stream);
+    expect([await read(), await read(), await read(), await read()]).toEqual(["yes", "no", "maybe", ""]);
+  });
+});

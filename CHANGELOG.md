@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 0.5.0 — 2026-09-25
+
+### Web
+- A Profile tab: a nine-step wizard over every axis of the agent (D-074). The steps are identity, scope, prohibitions,
+  voice, principles, whose knowledge it carries, autonomy 0–2, notes, then review and save. It saves through the new
+  `ohmyagi soul edit --profile <file> [--yes]`, which says which fields change and writes only a soul that still
+  loads, firewall included.
+
+### Identity (E6)
+- `ohmyagi persona extract|review|show|adopt` (S6.1, D-072) drafts a soul from real artifacts with a model on this
+  machine. Every claim must quote its source, and a claim whose quote is not there is cut as made up. The owner answers
+  yes or no to each claim at a terminal, and only the yeses are written: role knowledge with its source to `role.md`,
+  personal traits to `person.md`. The soul must still load afterwards. Drafts stay in `personal/`.
+- `ohmyagi eval` (S6.5, D-073) runs the job's task set in `evals.md` (20 real tasks or more) twice: the soul alone
+  and soul + recall. Each answer is graded by required and forbidden phrases, not by a model. It reports percentages
+  by configuration and by kind of work, and names the kinds it cannot do yet.
+
 ## 0.4.2 — 2026-09-25
 
 ### Web

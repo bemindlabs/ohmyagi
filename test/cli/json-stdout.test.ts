@@ -222,6 +222,15 @@ const ROWS: readonly Row[] = [
     build: async () => ["observe", "actions", "--subject", SUBJECT, "--json"],
   },
   {
+    file: "eval.ts",
+    id: "eval --json (no task set)",
+    code: 1,
+    // No evals.md beside the fixture soul: the refusal goes to stderr and
+    // stdout stays empty rather than half a document.
+    stdout: "empty",
+    build: async () => ["eval", SOUL, "--subject", SUBJECT, "--json"],
+  },
+  {
     file: "proposal.ts",
     id: "proposal list --json",
     code: 0,

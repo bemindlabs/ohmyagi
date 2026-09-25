@@ -8,11 +8,11 @@
 
 *Capability that stays with the person, not the organization.*
 
-[![Status](https://img.shields.io/badge/status-v0.4.2-green)](.scrum/backlog.md)
+[![Status](https://img.shields.io/badge/status-v0.5.0-green)](.scrum/backlog.md)
 [![Runtime](https://img.shields.io/badge/runtime-Bun-black?logo=bun)](.scrum/decisions.md#d-004)
 [![Protocol](https://img.shields.io/badge/agent--to--agent-A2A%201.0.0-blue)](.scrum/decisions.md#d-016)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](#license)
-[![Decisions](https://img.shields.io/badge/decisions-D--001%20→%20D--071-informational)](.scrum/decisions.md)
+[![Decisions](https://img.shields.io/badge/decisions-D--001%20→%20D--074-informational)](.scrum/decisions.md)
 
 <img src="docs/assets/hero.jpg" alt="An agent of light standing on a terminal, tied to a git branch, a local server and a padlock" width="720">
 
@@ -20,7 +20,7 @@
 
 ---
 
-> **v0.4.2.** The full MVP is met (since v0.1.0): identity, isolation, a git repository per
+> **v0.5.0.** The full MVP is met (since v0.1.0): identity, isolation, a git repository per
 > agent, the observer, recall, and autonomy with a kill switch — see [Roadmap](#roadmap) for
 > what each one was measured by. It is a 0.x: file formats and flags may still change, and
 > anything below marked `not built yet` describes what Oh My AGI is *designed* to do, not what it
@@ -52,7 +52,7 @@
 
 ```bash
 # pick the release and the file for your machine, e.g. Linux x86_64
-V=v0.4.2-alpha
+V=v0.5.0-alpha
 curl -LO https://github.com/bemindlabs/ohmyagi/releases/download/$V/ohmyagi-linux-x64
 curl -LO https://github.com/bemindlabs/ohmyagi/releases/download/$V/SHA256SUMS
 sha256sum -c SHA256SUMS --ignore-missing          # macOS: shasum -a 256 -c SHA256SUMS --ignore-missing
@@ -344,10 +344,18 @@ ohmyagi a2a send         one message to an allowed peer, screened like a turn; k
 ohmyagi a2a allow        allow a peer — typed at a terminal, never by a flag (S8.4)
 ohmyagi a2a peers        who this agent may talk to
 ohmyagi a2a inbox        what peers have sent
+ohmyagi persona extract  draft a soul from real artifacts with a local model — every claim quotes its source,
+                         one whose quote is not there is cut (S6.1, D-072)
+ohmyagi persona review   answer yes or no to each drafted claim, at a terminal
+ohmyagi persona adopt    write only the yeses into the soul; it must still load
+ohmyagi eval             how much of the job it does: the task set in evals.md, soul alone vs soul + recall,
+                         graded by phrase, by kind of work (S6.5, D-073)
 ohmyagi chat serve       answer allowed people on Telegram — a level-1 turn, screened by the filter and the
                          local judge, says it is an AI first; anyone else gets no answer (E9, D-066)
 ohmyagi chat allow       let one person be answered — typed at a terminal, never by a flag (S9.2)
 ohmyagi chat users       who the agent answers in chat apps
+ohmyagi soul edit        the soul from a flat JSON profile — what the web Profile wizard sends; --yes writes,
+                         and only a soul that still loads (D-074)
 ohmyagi web              a page in your browser: what it may do, what waits for your yes or no, a chat,
                          the brake — every button a command; loopback, one-time key (D-060)
 ohmyagi observe interests your projects ranked by how much and how recently you worked in them —
@@ -445,9 +453,9 @@ Full detail: [`.scrum/backlog.md`](.scrum/backlog.md) · every decision and its 
 
 ## Status
 
-v0.4.2. 10 epics · 43 stories · 4 spikes · 71 recorded decisions.
+v0.5.0. 10 epics · 43 stories · 4 spikes · 74 recorded decisions.
 The full MVP is met (`.scrum/backlog.md` §7) as of v0.1.0: Phases A and B, the observer, the autonomy core and
-recall (E4). v0.2.0 added scheduled triggers (S5.3), the `ohmyagi` name, `ohmyagi setup` and a macOS installer; v0.3.0 the pattern miner (S3.3); v0.4.0 adds agent-to-agent over A2A (E8), a chat connector for Telegram (E9), the web page, the local egress judge, proposal triage, the interest tracker (S3.4) and `ohmyagi update`; v0.4.1 grows the web page (Settings, Agent, Memories, the mascot, https behind tailscale serve, a key that survives restarts); v0.4.2 renders markdown, gives the local fallback a default model, and has the judge read the question rather than the soul. Next: identity inheritance (E6).
+recall (E4). v0.2.0 added scheduled triggers (S5.3), the `ohmyagi` name, `ohmyagi setup` and a macOS installer; v0.3.0 the pattern miner (S3.3); v0.4.0 adds agent-to-agent over A2A (E8), a chat connector for Telegram (E9), the web page, the local egress judge, proposal triage, the interest tracker (S3.4) and `ohmyagi update`; v0.4.1 grows the web page (Settings, Agent, Memories, the mascot, https behind tailscale serve, a key that survives restarts); v0.4.2 renders markdown, gives the local fallback a default model, and has the judge read the question rather than the soul; v0.5.0 starts identity inheritance (E6) — `persona` drafts a soul from real artifacts with every line tied to its source (S6.1), `eval` measures how much of the job an agent does (S6.5) — and adds a Profile wizard to the web page. Next: the owner's review of both, then S6.2.
 
 Those four numbers are counted out of `.scrum/` by `test/docs/readme-counts.test.ts`
 every time the suite runs, because a number in a README is the thing nobody comes

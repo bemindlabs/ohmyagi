@@ -36,6 +36,8 @@ const AGENT: AgentInfo = {
   roleNotes: "r", personNotes: "q", stats: { memories: 1, turns: 0, lastTurn: null, byBackend: [] },
 };
 
+const PROFILE = { name: "Keeper", role: "keeps", does: "d", doesNot: "n", prohibitions: ["never lies"], tone: ["warm"], addressesUserAs: "you", refersToSelfAs: ["I"], principles: [], inheritsFrom: [], roleNotes: "", personNotes: "" };
+
 function fakeDeps() {
   const runs: (readonly string[])[] = [];
   const deps: WebDeps = {
@@ -47,6 +49,11 @@ function fakeDeps() {
     agent: async () => AGENT,
     memories: async () => [{ path: "memory/a.md", title: "A", description: "d", type: "project", bytes: 10, modified: "t" }],
     memory: async (path) => (path === "memory/a.md" ? { ok: true, text: "hello" } : { ok: false, reason: "not a memory file" }),
+    profile: async () => ({ ok: true, profile: PROFILE }),
+    editProfile: async (profile, write) => {
+      runs.push(["soul", "edit", write ? "--yes" : "(dry)", profile.name]);
+      return { code: 0, stdout: write ? "Written: name." : "would change: name", stderr: "" };
+    },
     run: async (args) => {
       runs.push(args);
       if (args[0] === "turn") return { code: 0, stdout: JSON.stringify({ text: "hi", route: "answered by ollama", proposals: [] }), stderr: "" };
@@ -306,5 +313,21 @@ describe("Agent and Memories (read-only)", () => {
     const { MASCOT_SVG, MASCOT_DATA_URI } = await import("../../src/web/mascot.ts");
     expect(MASCOT_SVG).toBe(await Bun.file(new URL("../../docs/assets/mascot.svg", import.meta.url)).text());
     expect(PAGE_HTML).toContain(MASCOT_DATA_URI);
+  });
+});
+
+describe("Profile wizard (D-074)", () => {
+  const post = (body: unknown) => req("/api/profile", { method: "POST", body: JSON.stringify(body) });
+  test("GET the profile; POST is `soul edit`, a dry run unless write is true; a malformed profile runs nothing", async () => {
+    const { deps, runs } = fakeDeps();
+    const h = handler(deps, "tok", HOSTS);
+    expect(((await (await h(req("/api/profile"))).json()) as { profile: { name: string } }).profile.name).toBe("Keeper");
+    expect(((await (await h(post({ profile: { ...PROFILE, name: "Two" } }))).json()) as { message: string }).message).toBe("would change: name");
+    await h(post({ profile: { ...PROFILE, name: "Two" }, write: true }));
+    expect(runs).toEqual([["soul", "edit", "(dry)", "Two"], ["soul", "edit", "--yes", "Two"]]);
+    expect((await h(post({ profile: { ...PROFILE, disclosesAi: false } }))).status).toBe(400);
+    expect((await h(post({ profile: "x" }))).status).toBe(400);
+    expect(runs).toHaveLength(2);
+    expect(PAGE_HTML).toContain('id="tabProfile"');
   });
 });

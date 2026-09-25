@@ -221,16 +221,43 @@ export function report(issues: readonly SoulIssue[]): number {
  * can be, and everything a case could want to check about *what the phrase is*
  * lives in pure functions elsewhere.
  */
-export async function readTerminalLine(): Promise<string> {
+/**
+ * A line reader over one stream, keeping what it read past a newline for the
+ * next call. One per process for stdin: a second question (`persona review`
+ * asks many) must get the second line — opening the stream anew each time lost
+ * everything already buffered, and every answer after the first came back
+ * empty (D-072). The reader's lock is released after each line, so a command
+ * that asks once still exits with the terminal open.
+ */
+export function lineReader(open: () => ReadableStream<Uint8Array>): () => Promise<string> {
+  let stream: ReadableStream<Uint8Array> | undefined;
+  let pending = "";
   const decoder = new TextDecoder();
-  let buffer = "";
-  for await (const chunk of Bun.stdin.stream()) {
-    buffer += decoder.decode(chunk as Uint8Array, { stream: true });
-    const newline = buffer.indexOf("\n");
-    if (newline !== -1) return buffer.slice(0, newline);
-  }
-  return buffer;
+  return async () => {
+    const reader = (stream ??= open()).getReader();
+    try {
+      for (;;) {
+        const newline = pending.indexOf("\n");
+        if (newline !== -1) {
+          const line = pending.slice(0, newline);
+          pending = pending.slice(newline + 1);
+          return line;
+        }
+        const { done, value } = await reader.read();
+        if (done || value === undefined) {
+          const rest = pending;
+          pending = "";
+          return rest;
+        }
+        pending += decoder.decode(value, { stream: true });
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  };
 }
+
+export const readTerminalLine: () => Promise<string> = lineReader(() => Bun.stdin.stream() as ReadableStream<Uint8Array>);
 
 export function usageError(message: string): number {
   console.error(`ohmyagi: ${message}`);
