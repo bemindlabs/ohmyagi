@@ -84,7 +84,7 @@ Usage:
                                         (S8.3) exists.
   ohmyagi turn <dir> --subject <id> (--prompt <text> | --prompt-file <path>)
              [--backend a,b,c] [--model <m>] [--private] [--proposal <id>]
-             [--no-recall] [--recall-chars <n>] [--json]
+             [--no-recall] [--recall-chars <n>] [--history-json <[{role,text}]>] [--json]
                                         Run one turn wearing this soul. Tries
                                         each backend in order until one really
                                         answers. Records one ledger line per

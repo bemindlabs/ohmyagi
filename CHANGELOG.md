@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## 0.7.1 — 2026-09-26
+
+### Turns — the chat keeps its context, and a personal line no longer holds a whole turn back (D-095)
+- **Why the web chat could not act:** a recalled note carrying a personal word (a needle) or an email held the whole
+  turn back from claude and codex, so it fell to the local model — text only, no tools. On the owner's memory 20 of
+  82 notes carry one, so nearly every turn did. Now recall is chosen twice: everything for a backend on this machine,
+  and only the pieces that pass the filter for a cloud backend, the room refilled with the next clean piece. What the
+  person types is screened as before — a needle there still keeps the turn in.
+- **Why the chat forgot:** each message was a turn of its own. The page now sends the last six exchanges;
+  `turn --history-json` puts them in the system prompt under "This conversation so far" (the ledger's "asked" stays
+  what was typed), each message screened on its own for a cloud backend.
+
+### Web — phone audit (D-094)
+- Measured on 360, 390 and 430 wide, every tab and each open state (picker, "/" menu, reader, editor, import, facts):
+  no page scrolls sideways; now also no text under 11px (tab bar, tags, footer, code, the line under the box), every
+  control at least 36px to touch (Clear, Edit tags, the backend chip, wizard steps; the footer is 32px), long paths
+  wrap (Privacy), and the "/" menu wraps long arguments. The tag box no longer shows in Import or the editor.
+
 ## 0.7.0 — 2026-09-26
 
 ### Memory — facts drawn out of memory, confirmed one by one (D-093)

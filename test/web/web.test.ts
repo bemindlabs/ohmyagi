@@ -656,6 +656,28 @@ describe("Memories CRUD (D-081)", () => {
     for (const id of ["factStart", "factAdopt", "factList"]) expect(PAGE_HTML).toContain(`id="${id}"`);
   });
 
+  test("phone audit (D-094): long words wrap, and the phone rules come after the phone layout they correct", () => {
+    expect(PAGE_HTML).toContain("#capLines li,ul.plain li,.notes,.md{overflow-wrap:anywhere}");
+    const audit = PAGE_HTML.indexOf("/* Phone audit (D-094");
+    expect(audit).toBeGreaterThan(PAGE_HTML.indexOf("nav.tabs{position:fixed;left:0;right:0;bottom:var(--foot)"));
+    const rules = PAGE_HTML.slice(audit, PAGE_HTML.indexOf("</style>"));
+    for (const r of ["nav.tabs button{font-size:.76rem}", ".linkish{min-height:36px", ".pickchip{min-height:36px}", ".steps button{min-height:36px", ".composer #sending{font-size:.76rem}"]) expect(rules).toContain(r);
+    expect(PAGE_HTML).toContain('$("memTagBox").hidden = editing || !memShown;');
+  });
+
+  test("the conversation goes with a message (D-095): the last twelve well-formed ones, as --history-json", async () => {
+    const { deps, runs } = fakeDeps();
+    const h = handler(deps, "tok", HOSTS);
+    const history = [{ role: "you", text: "a" }, { role: "agent", text: "b" }, { role: "system", text: "no" }, "junk", ...Array.from({ length: 14 }, (_, i) => ({ role: "you", text: `m${i}` }))];
+    await h(req("/api/turn", { method: "POST", body: JSON.stringify({ prompt: "next", history }) }));
+    await h(req("/api/turn", { method: "POST", body: JSON.stringify({ prompt: "alone" }) }));
+    const turns = runs.filter((r) => r[0] === "turn");
+    const sent = JSON.parse(turns[0]![turns[0]!.indexOf("--history-json") + 1]!) as { text: string }[];
+    expect(sent.map((m) => m.text)).toEqual(Array.from({ length: 12 }, (_, i) => `m${i + 2}`));
+    expect(turns[1]).not.toContain("--history-json");
+    expect(PAGE_HTML).toContain("if (talk.length) body.history = talk;");
+  });
+
   test("a refused delete shows the plan and the reason, not the plan alone", async () => {
     const { deps } = fakeDeps();
     const h = handler({ ...deps, run: async () => ({ code: 1, stdout: "1 file(s) would go\n", stderr: "ohmyagi: cannot reach the vectors. Nothing was removed\n" }) }, "tok", HOSTS);

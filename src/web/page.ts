@@ -260,6 +260,21 @@ footer{color:var(--muted);font-size:.8rem;margin-top:22px}
   .memlist{max-height:none}
   .toast{bottom:calc(84px + var(--foot))}
 }
+/* Phone audit (D-094, 2026-09-26, 360/390/430 wide): no text under 11px, every control at least 36px to touch, long words wrap. */
+#capLines li,ul.plain li,.notes,.md{overflow-wrap:anywhere}
+@media (max-width:760px){
+  nav.tabs button{font-size:.76rem}
+  .badge{font-size:.74rem}.tag{font-size:.75rem}.upper{font-size:.76rem}
+  code{font-size:max(.86em,11px)}
+  .linkish{min-height:36px;padding:0 8px}
+  .pickchip{min-height:36px}
+  .steps button{min-height:36px;font-size:.82rem}
+  .bulk button{min-height:36px}
+  :root{--foot:calc(32px + env(safe-area-inset-bottom))}
+  .foot{font-size:.76rem}.footver{min-height:32px}
+  .composer #sending{font-size:.76rem}
+  .cmdmenu button{flex-wrap:wrap;row-gap:0}.cmdmenu b{white-space:normal;overflow-wrap:anywhere}.cmdmenu .small{white-space:normal;flex-basis:100%}
+}
 ${MARKDOWN_CSS}
 </style>
 </head>
@@ -728,6 +743,9 @@ ${MARKDOWN_JS}
     $("sending").replaceChildren(mini, document.createTextNode("Thinking…")); document.body.classList.add("thinking");
     try {
       const body = proposal ? { prompt: text, proposal } : { prompt: text };
+      // D-095: the last six exchanges of this chat go with it — not the page's own notes, not this message.
+      const talk = chatLog.slice(0, -1).filter((m) => m.cls === "me" || m.cls === "it").slice(-12).map((m) => ({ role: m.cls === "me" ? "you" : "agent", text: m.text.slice(0, 4000) }));
+      if (talk.length) body.history = talk;
       const pick = choice(); if (pick.backend) body.backend = pick.backend; if (pick.model) body.model = pick.model;
       const r = await api("/api/turn", body);
       if (r.error) bubble("it", r.error);
@@ -1173,7 +1191,7 @@ ${MARKDOWN_JS}
   const MEM_TEMPLATE = "---\\nname: \\ndescription: \\nmetadata:\\n  type: reference\\n---\\n\\n";
   let memEditing = null; // null = not editing; "" = new; path = editing that file
   function memMode(editing) {
-    $("memImport").hidden = true; $("memEditor").hidden = !editing; $("memText").hidden = editing || !memShown; $("memActions").hidden = editing || !memShown;
+    $("memImport").hidden = true; $("memEditor").hidden = !editing; $("memText").hidden = editing || !memShown; $("memTagBox").hidden = editing || !memShown; $("memActions").hidden = editing || !memShown;
   }
   function openEditor(path, text) {
     memEditing = path;
@@ -1531,7 +1549,7 @@ ${MARKDOWN_JS}
     drawQueue();
   }
   $("memImp").onclick = () => {
-    memEditing = null; $("memEditor").hidden = true; $("memText").hidden = true; $("memActions").hidden = true;
+    memEditing = null; $("memEditor").hidden = true; $("memText").hidden = true; $("memActions").hidden = true; $("memTagBox").hidden = true;
     $("memImport").hidden = false; $("memPath").textContent = "Import into memory"; drawQueue();
     if (window.matchMedia("(max-width: 860px)").matches) $("h-memview").scrollIntoView({ behavior: "smooth", block: "start" });
   };

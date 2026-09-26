@@ -91,6 +91,20 @@ function renderBlock(hits: readonly RecallHit[]): string {
 }
 
 /** The soul and the block, as one system prompt. The soul is unchanged when nothing fits. */
+/**
+ * The same hits chosen twice (D-095): everything, for a backend on this machine, and only the clean ones
+ * for a backend that is not — a hit that trips the egress filter is left out of the cloud's copy and its
+ * room goes to the next clean hit, instead of one personal line holding the whole turn on this machine.
+ */
+export function splitForCloud(hits: readonly RecallHit[], ceiling: number, clean: (text: string) => boolean): { readonly local: Attachment; readonly cloud: Attachment; readonly held: number } {
+  const local = attachWithin(hits, ceiling);
+  const allowed = hits.filter((hit) => clean(hit.text));
+  const cloud = attachWithin(allowed, ceiling);
+  const shownLocally = new Set(local.attached.map((a) => `${a.path}#${a.heading}`));
+  const held = hits.filter((hit) => !clean(hit.text) && shownLocally.has(`${hit.path}#${hit.heading}`)).length;
+  return { local, cloud, held };
+}
+
 export function withRecall(system: string, attachment: Attachment): string {
   return attachment.block === "" ? system : `${system}\n\n${attachment.block}`;
 }

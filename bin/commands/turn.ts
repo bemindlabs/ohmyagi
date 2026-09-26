@@ -37,8 +37,10 @@ import {
   writeProposal,
   type StoredProposal,
 } from "../../src/decide/index.ts";
+import { conversationBlock, forCloud, parseHistory, type Exchange } from "../../src/exec/conversation.ts";
+import { asLocal } from "../../src/exec/local.ts";
 import {
-  attachWithin,
+  splitForCloud,
   DEFAULT_RECALL_CHARS,
   RECALL_HITS,
   describeAttachment,
@@ -104,7 +106,7 @@ async function readPromptFrom(path: string): Promise<string> {
 const TURN_USAGE =
   "usage: ohmyagi turn <dir> --subject <id> (--prompt <text> | --prompt-file <path>) " +
   "[--backend a,b,c] [--model <m>] [--private] [--proposal <id>] [--no-recall] " +
-  "[--recall-chars <n>] [--json]";
+  "[--recall-chars <n>] [--history-json <[{role,text}]>] [--json]";
 
 /**
  * The approval `--proposal` names, or the exit code that stops the turn.
@@ -232,6 +234,14 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
     return usageError(error instanceof Error ? error.message : String(error));
   }
 
+  // D-095: the conversation this turn belongs to, sent by the web page's chat.
+  let history: readonly Exchange[] = [];
+  const historyRaw = options.get("history-json");
+  if (historyRaw !== undefined && historyRaw !== "") {
+    const parsedHistory = parseHistory(historyRaw);
+    if (!parsedHistory.ok) return usageError(`${TURN_USAGE} — ${parsedHistory.reason}`);
+    history = parsedHistory.items;
+  }
   const recallChars = Number(options.get("recall-chars") ?? String(DEFAULT_RECALL_CHARS));
   if (!Number.isInteger(recallChars) || recallChars < 0) {
     return usageError(`${TURN_USAGE} — --recall-chars is a whole number of characters, 0 or more`);
@@ -320,13 +330,24 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
   // S4.3 (D-039) — recall is asked after every refusal above and before
   // anything is sent, and printed before it goes, because "what was attached"
   // is worth nothing once the backend already has it (AC3).
-  const attachment = options.has("no-recall") || recallChars === 0
-    ? undefined
-    : await recallFor(dir, id, prompt, recallChars);
-  const recalled = attachment === undefined ? soulText : withRecall(soulText, attachment);
+  // D-095 — the filter's own test, asked of each recalled piece and each earlier message on its own, so what
+  // would stop a cloud turn is left out of the cloud's copy instead of stopping the turn.
+  const { lexicon } = await loadLexicon(dialEnv(), id, loaded.soul.person.inherits_from);
+  const clean = (text: string) => screen(text, lexicon).length === 0;
+  const split = options.has("no-recall") || recallChars === 0 ? undefined : await recallFor(dir, id, prompt, recallChars, clean);
+  const attachment = split?.local;
+  const cloudAttachment = split?.cloud;
+  const cloudHistory = forCloud(history, clean);
+  if (split !== undefined && split.held > 0) console.error(dimErr(`ohmyagi: recall: ${split.held} piece(s) stay on this machine — a cloud backend gets the rest (personal words or contact details)`));
+  if (cloudHistory.held > 0) console.error(dimErr(`ohmyagi: conversation: ${cloudHistory.held} earlier message(s) stay on this machine`));
   // D-045 — level 1 is "propose": the vendor is read-only already, and this
   // tells the model where to put what it would have done.
-  const system = verdict.effective.act === 1 ? `${recalled}\n\n${PROPOSE_INSTRUCTION}` : recalled;
+  const compose = (att: Attachment | undefined, talk: string) => {
+    const parts = [att === undefined ? soulText : withRecall(soulText, att), talk].filter((p) => p !== "").join("\n\n");
+    return verdict.effective.act === 1 ? `${parts}\n\n${PROPOSE_INSTRUCTION}` : parts;
+  };
+  const system = compose(attachment, conversationBlock(history));
+  const cloudSystem = compose(cloudAttachment, conversationBlock(cloudHistory.kept, cloudHistory.held));
   const writeFailures: Error[] = [];
   const turnId = crypto.randomUUID();
   const recording: RecordingOptions = {
@@ -350,13 +371,14 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
   // notice goes to stderr, so a `--json` stdout stays parseable, and it is
   // asked of `raw` rather than of the recorder around it: a wrapper copies the
   // id it wraps, and a copied id is no evidence of where a turn goes.
-  const { lexicon } = await loadLexicon(dialEnv(), id, loaded.soul.person.inherits_from);
   const judge = judgeConfig(process.env);
   const blocked: Promise<void>[] = [];
   const chain = turnChain(
     backendIds.map((backendId) => {
       const raw = buildBackend(backendId, model === undefined || model === "" ? {} : { model });
-      return new AnnouncedExec(new RecordingExec(raw, recording), {
+      // A backend not on this machine is handed the cloud's copy of the system prompt (D-095).
+      const cloud = asLocal(raw) === undefined;
+      const announced = new AnnouncedExec(new RecordingExec(raw, recording), {
         origin: raw,
         write: (line) => console.error(dimErr(line)),
         // S8.3 (D-048): prompt and system — the soul and whatever recall
@@ -369,7 +391,7 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
           ? {}
           : {
               judge: async (request) =>
-                verdictFindings(await judgeEgress(judgeInput(request.prompt, attachment?.block), lexicon.needles, judge)),
+                verdictFindings(await judgeEgress(judgeInput(request.prompt, [cloudAttachment?.block ?? "", conversationBlock(cloudHistory.kept)].filter((b) => b !== "").join("\n\n")), lexicon.needles, judge)),
             }),
         onBlocked: (backendId, findings) => {
           blocked.push(
@@ -380,6 +402,7 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
           );
         },
       });
+      return cloud ? withSystem(announced, cloudSystem) : announced;
     }),
   );
 
@@ -597,7 +620,8 @@ async function recallFor(
   subject: SubjectId,
   prompt: string,
   ceiling: number,
-): Promise<Attachment | undefined> {
+  clean: (text: string) => boolean,
+): Promise<ReturnType<typeof splitForCloud> | undefined> {
   const soulDir = await resolveSoulDir(dir);
   const agentDir = soulDir === dir ? dirname(dir) : dir;
   if (!(await Bun.file(ftsPath(agentDir)).exists())) return undefined;
@@ -612,11 +636,28 @@ async function recallFor(
     undefined,
     "any",
   );
-  const attachment = attachWithin(found.hits, ceiling);
+  const split = splitForCloud(found.hits, ceiling, clean);
   if (found.vector !== "ok") console.error(dimErr(`ohmyagi: recall: vector half skipped — ${found.vector.failed}`));
-  for (const line of describeAttachment(attachment)) console.error(dimErr(`ohmyagi: ${line}`));
-  return attachment;
+  for (const line of describeAttachment(split.local)) console.error(dimErr(`ohmyagi: ${line}`));
+  return split;
 }
+
+/**
+ * The same backend, handed a different system prompt (D-095): the cloud's copy, from which what the egress
+ * filter would stop has been left out. Everything else — its id, what it records, what it announces — is
+ * the backend's own.
+ */
+function withSystem<T extends { run: (request: TurnRequestLike) => Promise<TurnResult> }>(exec: T, system: string): T {
+  return new Proxy(exec, {
+    get(target, key, receiver) {
+      if (key === "run") return (request: TurnRequestLike) => target.run({ ...request, system });
+      const value = Reflect.get(target, key, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+type TurnRequestLike = Parameters<AnnouncedExec["run"]>[0];
 
 /**
  * Record that this turn happened, if — and only if — the owner has agreed to

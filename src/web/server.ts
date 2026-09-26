@@ -214,7 +214,15 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[]) 
       const useBackend = backend ?? startedWith("--backend");
       const useModel = model ?? (backend === undefined ? startedWith("--model") : undefined);
       const flags = [...(useBackend === undefined ? [] : ["--backend", useBackend]), ...(useModel === undefined ? [] : ["--model", useModel])];
-      const args = ["turn", ...place, "--prompt", prompt, "--json", ...flags];
+      // D-095: the last exchanges of this chat, so a turn is not alone. Shape-checked here; `turn` checks again.
+      const rawHistory = body["history"];
+      const history = Array.isArray(rawHistory)
+        ? rawHistory
+            .slice(-12)
+            .filter((m): m is { role: "you" | "agent"; text: string } => typeof m === "object" && m !== null && (m.role === "you" || m.role === "agent") && typeof m.text === "string")
+            .map((m) => ({ role: m.role, text: m.text.slice(0, 4000) }))
+        : [];
+      const args = ["turn", ...place, "--prompt", prompt, "--json", ...flags, ...(history.length > 0 ? ["--history-json", JSON.stringify(history)] : [])];
       if (proposal !== undefined) args.push("--proposal", proposal);
       const out = await deps.run(args);
       let answer: Record<string, unknown> | undefined;

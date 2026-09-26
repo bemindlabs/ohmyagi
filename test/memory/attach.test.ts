@@ -5,6 +5,7 @@ import {
   attachWithin,
   describeAttachment,
   RECALL_HEADING,
+  splitForCloud,
   withRecall,
 } from "../../src/memory/attach.ts";
 import { MAX_TERMS, queryTerms } from "../../src/memory/fts.ts";
@@ -91,3 +92,17 @@ describe("stopwords (D-075)", () => {
     expect(STOPWORDS.has("port")).toBe(false);
   });
 });
+
+describe("splitForCloud (D-095)", () => {
+  test("the local copy has everything; the cloud copy leaves out what trips the filter and fills the room with the next clean piece", () => {
+    const hits = [hit("mine", 60), hit("a", 30), hit("b", 30), hit("c", 30)];
+    const clean = (t: string) => t !== hits[0]!.text;
+    const split = splitForCloud(hits, 100, clean);
+    expect(split.local.attached.map((a) => a.path)).toEqual(["memory/mine.md", "memory/a.md"]);
+    expect(split.cloud.attached.map((a) => a.path)).toEqual(["memory/a.md", "memory/b.md", "memory/c.md"]);
+    expect(split.held).toBe(1);
+    // A piece that trips the filter but would not have fitted anyway is not counted as held.
+    expect(splitForCloud([hit("a", 90), hit("mine", 60)], 100, (t) => t.length !== 60).held).toBe(0);
+  });
+});
+

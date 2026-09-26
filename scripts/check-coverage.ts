@@ -374,7 +374,7 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // anything is written, and the approval it names is marked spent immediately
   // before the prompt goes — an approval recorded afterwards is one a crash
   // hands back unused.
-  ["bin/commands/turn.ts", { lines: 459, why: "command — run by spawning the CLI" }],
+  ["bin/commands/turn.ts", { lines: 489, why: "command — run by spawning the CLI" }],
   ["bin/commands/worn.ts", { lines: 66, why: "command — run by spawning the CLI" }],
 ]);
 
@@ -469,7 +469,7 @@ export const PROOFS = new Map<string, Proof>([
       provedOn: "2026-09-24",
       by: "npm run demo -- --model <a local model>",
       result:
-        "15/15 criteria passed on 2026-09-26 on the tree released as 0.7.0 (run 1c88d842, table kept in notes/2026-09-26_demo-v0.7.0.txt), on 0.6.1 the same day (run 3eaea63f, table kept in notes/2026-09-26_demo-v0.6.1.txt), on 0.6.0 the same day (run 1972948d, table kept in notes/2026-09-26_demo-v0.6.0.txt), on 0.5.1 on 2026-09-25 (run caa68c60, table kept in notes/2026-09-25_demo-v0.5.1.txt), on 0.5.0 the same day (run 5e5f6903, table kept in notes/2026-09-25_demo-v0.5.0.txt), on 0.4.2 the same day (run fbad84d0, table kept in notes/2026-09-25_demo-v0.4.2.txt), on 0.4.1 the same day (run 8a52848c, table kept in notes/2026-09-25_demo-v0.4.1.txt), on 0.4.0 the day before (run 065c6900, table kept in notes/2026-09-24_demo-v0.4.0.txt), on 0.3.0 the same day (run cbeda900, " +
+        "15/15 criteria passed on 2026-09-26 on the tree released as 0.7.1 (run 0eaea0cf, table kept in notes/2026-09-26_demo-v0.7.1.txt), on 0.7.0 the same day (run 1c88d842, table kept in notes/2026-09-26_demo-v0.7.0.txt), on 0.6.1 the same day (run 3eaea63f, table kept in notes/2026-09-26_demo-v0.6.1.txt), on 0.6.0 the same day (run 1972948d, table kept in notes/2026-09-26_demo-v0.6.0.txt), on 0.5.1 on 2026-09-25 (run caa68c60, table kept in notes/2026-09-25_demo-v0.5.1.txt), on 0.5.0 the same day (run 5e5f6903, table kept in notes/2026-09-25_demo-v0.5.0.txt), on 0.4.2 the same day (run fbad84d0, table kept in notes/2026-09-25_demo-v0.4.2.txt), on 0.4.1 the same day (run 8a52848c, table kept in notes/2026-09-25_demo-v0.4.1.txt), on 0.4.0 the day before (run 065c6900, table kept in notes/2026-09-24_demo-v0.4.0.txt), on 0.3.0 the same day (run cbeda900, " +
         "table kept in notes/2026-09-24_demo-v0.3.0.txt), on 0.2.0 the same day (run fd433912, " +
         "table kept in notes/2026-09-24_demo-v0.2.0.txt), and earlier that day on the tree released as 0.1.0 (run 2ddacb38, " +
         "table kept in notes/2026-09-24_demo-v0.1.0.txt). Before that, " +

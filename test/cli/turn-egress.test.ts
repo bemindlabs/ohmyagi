@@ -5,7 +5,7 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { barePath, BUN } from "../support/bare-path.ts";
@@ -137,5 +137,48 @@ describe("S8.3 — personal data does not leave through a turn", () => {
       judge.stop(true);
     }
   }, 60_000);
-});
 
+  test("D-095: an earlier message with a needle stays on this machine; claude still answers, with the rest", async () => {
+    const { home, run } = await setup();
+    const where = await run(["egress", "needles", "--subject", "example"]);
+    const needles = where.stdout.split("\n")[0]!;
+    await mkdir(join(needles, ".."), { recursive: true });
+    await Bun.write(needles, `${SECRET}\n`);
+    const history = JSON.stringify([
+      { role: "you", text: `I am ${SECRET}` },
+      { role: "agent", text: "Noted." },
+      { role: "you", text: "Which port does the vault use?" },
+      { role: "agent", text: "The vault listens on 8200." },
+    ]);
+    const result = await run([...turn("token t6 — and restart it?"), "--history-json", history]);
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stdout).toContain("from claude");
+    const argv = await Bun.file(join(home, "claude-was-called")).text();
+    expect(argv).toContain("The vault listens on 8200.");
+    expect(argv).toContain("## This conversation so far");
+    expect(argv).not.toContain(SECRET);
+    expect(result.stderr).toContain("1 earlier message(s) stay on this machine");
+    expect((await run([...turn("x"), "--history-json", "{not json"])).code).toBe(2);
+  }, 60_000);
+
+  test("D-095: a recalled note with a needle goes to the local model only; claude gets the clean notes, not the whole turn held back", async () => {
+    const { home, run } = await setup();
+    const where = await run(["egress", "needles", "--subject", "example"]);
+    const needles = where.stdout.split("\n")[0]!;
+    await mkdir(join(needles, ".."), { recursive: true });
+    await Bun.write(needles, `${SECRET}\n`);
+    const agent = join(home, "agent");
+    await cp(SOUL, join(agent, "soul"), { recursive: true });
+    await mkdir(join(agent, "memory"), { recursive: true });
+    await Bun.write(join(agent, "memory", "vault.md"), "# Vault\n\nThe vault restarts with systemctl restart vault.\n");
+    await Bun.write(join(agent, "memory", "owner.md"), `# Owner\n\nThe vault belongs to ${SECRET}.\n`);
+    expect((await run(["memory", "index", agent, "--subject", "example"])).code).toBe(0);
+    const result = await run(["turn", agent, "--subject", "example", "--backend", "claude,ollama", "--model", "stub", "--prompt", "token t7 — how do I restart the vault?"]);
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stdout).toContain("from claude");
+    const argv = await Bun.file(join(home, "claude-was-called")).text();
+    expect(argv).toContain("systemctl restart vault");
+    expect(argv).not.toContain(SECRET);
+    expect(result.stderr).toContain("1 piece(s) stay on this machine");
+  }, 60_000);
+});
