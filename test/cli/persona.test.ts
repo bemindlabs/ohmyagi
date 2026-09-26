@@ -53,6 +53,9 @@ async function setup() {
   await mkdir(docs, { recursive: true });
   await writeFile(join(docs, "ops.md"), "# Ops\n\nWe never restart the database between 9 and 17.\n");
   const model = stubModel();
+  // S7.3: a basis for "persona" is on record for the subject.
+  await mkdir(join(home, "state", "om-agi", "basis", "example"), { recursive: true });
+  await writeFile(join(home, "state", "om-agi", "basis", "example", "records.json"), JSON.stringify([{ id: "b1", subject: "example", basis: "owner", approvedBy: "test", at: "2026-09-25T00:00:00Z", uses: ["persona"], expires: null, note: "", revokedAt: null }]));
   const env = { HOME: home, PATH: await barePath(home), XDG_STATE_HOME: join(home, "state"), XDG_DATA_HOME: join(home, "data"), OLLAMA_HOST: model.url, OM_AGI_NO_UPDATE_CHECK: "1" };
   const run = async (args: readonly string[], extra: Record<string, string> = {}) => {
     const child = Bun.spawn([BUN, "run", BIN, ...args], { cwd: ROOT, env: { ...env, ...extra }, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
@@ -86,9 +89,14 @@ describe("ohmyagi persona", () => {
     // Nothing answered yet: nothing to write.
     expect((await t.run(["persona", "adopt", t.agent, "--subject", "example", "--yes"])).stdout).toContain("Nothing answered yes");
 
-    const draft = JSON.parse(await readFile(path, "utf8"));
-    draft.claims[0].decision = "yes";
-    await writeFile(path, JSON.stringify(draft));
+    // The web page's way to answer: persona show --json, then persona decide.
+    const shown = JSON.parse((await t.run(["persona", "show", "--subject", "example", "--json"])).stdout) as { draft: { claims: { id: string; decision: string | null }[] } };
+    const claimId = shown.draft.claims[0]!.id;
+    expect((await t.run(["persona", "decide", claimId, "--subject", "example", "--yes"])).code).toBe(0);
+    expect(JSON.parse(await readFile(path, "utf8")).claims[0].decision).toBe("yes");
+    expect((await t.run(["persona", "decide", "nope1234", "--subject", "example", "--no"])).code).toBe(1);
+    expect((await t.run(["persona", "decide", claimId, "--subject", "example", "--yes", "--no"])).code).toBe(2);
+    expect((await t.run(["persona", "decide", claimId, "--subject", "example"])).code).toBe(2);
     const dry = await t.run(["persona", "adopt", t.agent, "--subject", "example"]);
     expect(dry.stdout).toContain("would write 1 claim(s)");
     expect(await readFile(join(t.agent, "soul", "role.md"), "utf8")).not.toContain("business hours");
@@ -111,4 +119,14 @@ describe("ohmyagi persona", () => {
       expect((await t.run(args)).code, args.join(" ")).toBe(2);
     }
   }, 60_000);
+
+  test("S7.3: without a basis for persona, no artifact is read and no model is asked", async () => {
+    const t = await setup();
+    await writeFile(join(t.home, "state", "om-agi", "basis", "example", "records.json"), JSON.stringify([{ id: "b1", subject: "example", basis: "owner", approvedBy: "test", at: "2026-09-25T00:00:00Z", uses: ["memory"], expires: null, note: "", revokedAt: null }]));
+    const out = await t.run(["persona", "extract", t.agent, "--subject", "example", "--from", t.docs, "--model", "stub"]);
+    expect(out.code).toBe(1);
+    expect(out.stderr).toContain("allows memory — not persona");
+    expect(t.model.asked).toEqual([]);
+  }, 60_000);
 });
+

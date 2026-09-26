@@ -23,13 +23,15 @@ import { loadSoul, parseSoul, resolveSoulDir } from "../../src/soul/load.ts";
 import { PERSON_FILE, ROLE_FILE } from "../../src/soul/schema.ts";
 import { serializePerson, serializeRole } from "../../src/soul/serialize.ts";
 import { subjectId, type SubjectId } from "../../src/types.ts";
+import { basisDirFor, basisFor, readBasis, refusalLine } from "../../src/consent/basis.ts";
 import { dialEnv } from "../dial.ts";
 import { bold, dim, parseArgs, readTerminalLine, report, usageError } from "../shared.ts";
 
 const USAGE =
   "usage: ohmyagi persona extract <dir> --subject <id> --from <path,…> [--model <m>] [--max-chunks <n>]\n" +
   "       ohmyagi persona review <dir> --subject <id> [--draft <id>]\n" +
-  "       ohmyagi persona show --subject <id> [--draft <id>]\n" +
+  "       ohmyagi persona show --subject <id> [--draft <id>] [--json]\n" +
+  "       ohmyagi persona decide <claim-id> --subject <id> (--yes | --no) [--draft <id>]\n" +
   "       ohmyagi persona adopt <dir> --subject <id> [--draft <id>] [--yes]";
 
 const DRAFTS = "persona";
@@ -92,6 +94,12 @@ async function cmdExtract(argv: readonly string[]): Promise<number> {
   if (dir === undefined || from.length === 0) return usageError(USAGE);
   const loaded = await loadSoul(dir, s.id);
   if (!loaded.ok) return report(loaded.issues);
+  // S7.3 (D-077): drafting a persona reads the subject's artifacts — it needs a basis for "persona".
+  const allowed = basisFor(await readBasis(basisDirFor(dialEnv(), s.id)), "persona", new Date());
+  if (!allowed.ok) {
+    console.error(`ohmyagi: ${refusalLine(s.id, "persona", allowed.reason)}`);
+    return 1;
+  }
   const model = options.get("model") || process.env[OLLAMA_MODEL_ENV]?.trim() || "";
   if (model === "") return usageError(`name the local model: --model <m>, or set ${OLLAMA_MODEL_ENV}`);
   // The artifacts are the owner's: only a model on this machine may read them.
@@ -188,10 +196,14 @@ async function cmdReview(argv: readonly string[]): Promise<number> {
 }
 
 async function cmdShow(argv: readonly string[]): Promise<number> {
-  const { options } = parseArgs(argv);
+  const { options } = parseArgs(argv, SHOW_BOOLEANS);
   const s = subjectOf(options);
   if (!s.ok) return s.code;
   const found = await loadDraft(s.id, options.get("draft"));
+  if (options.has("json")) {
+    console.log(JSON.stringify(found.ok ? { draft: found.draft } : { draft: null, reason: found.reason }, null, 2));
+    return 0;
+  }
   if (!found.ok) {
     console.log(found.reason);
     return 0;
@@ -200,6 +212,36 @@ async function cmdShow(argv: readonly string[]): Promise<number> {
   console.log(bold(`draft ${d.id.slice(0, 8)} · ${d.at} · ${d.model} · ${d.sources.length} artifact(s) · ${d.chunks} piece(s) read · ${d.cut} cut`));
   for (const c of d.claims) console.log(`${c.decision === "yes" ? "✓" : c.decision === "no" ? "✗" : "·"} ${describeClaim(c)}`);
   if (d.skipped.length > 0) console.log(dim(`${d.skipped.length} artifact(s) skipped: ${d.skipped.slice(0, 5).join(" · ")}${d.skipped.length > 5 ? " …" : ""}`));
+  return 0;
+}
+
+const SHOW_BOOLEANS: readonly string[] = ["json"];
+const DECIDE_BOOLEANS: readonly string[] = ["yes", "no"];
+
+/**
+ * `persona decide <claim-id> --yes|--no` — one answer, for the web page's
+ * review (D-079). The same record `review` writes at a terminal; the owner's
+ * key to the page is what stands between it and anyone else.
+ */
+async function cmdDecide(argv: readonly string[]): Promise<number> {
+  const { positional, options } = parseArgs(argv, DECIDE_BOOLEANS);
+  const s = subjectOf(options);
+  if (!s.ok) return s.code;
+  const claimId = positional[0];
+  const yes = options.has("yes");
+  if (claimId === undefined || yes === options.has("no")) return usageError(USAGE);
+  const found = await loadDraft(s.id, options.get("draft"));
+  if (!found.ok) {
+    console.error(`ohmyagi: ${found.reason}`);
+    return 1;
+  }
+  if (!found.draft.claims.some((c) => c.id === claimId)) {
+    console.error(`ohmyagi: no claim ${claimId} in draft ${found.draft.id.slice(0, 8)}`);
+    return 1;
+  }
+  const draft: Draft = { ...found.draft, claims: found.draft.claims.map((c) => (c.id === claimId ? { ...c, decision: yes ? "yes" : "no" } : c)) };
+  await saveDraft(found.dir, draft);
+  console.log(`${claimId}: ${yes ? "yes" : "no"}`);
   return 0;
 }
 
@@ -255,6 +297,8 @@ export async function cmdPersona(argv: readonly string[]): Promise<number> {
       return cmdShow(rest);
     case "adopt":
       return cmdAdopt(rest);
+    case "decide":
+      return cmdDecide(rest);
     default:
       return usageError(`unknown persona subcommand ${JSON.stringify(sub ?? "")}\n${USAGE}`);
   }

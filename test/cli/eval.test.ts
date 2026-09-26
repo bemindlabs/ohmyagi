@@ -52,7 +52,8 @@ async function setup() {
     },
   });
   servers.push(server);
-  const env = { HOME: home, PATH: await barePath(home), XDG_STATE_HOME: join(home, "state"), XDG_DATA_HOME: join(home, "data"), OLLAMA_HOST: `http://127.0.0.1:${server.port}`, OM_AGI_NO_UPDATE_CHECK: "1" };
+  // A dead Qdrant: `memory index` below must never write into the machine's real one.
+  const env = { HOME: home, PATH: await barePath(home), XDG_STATE_HOME: join(home, "state"), XDG_DATA_HOME: join(home, "data"), OLLAMA_HOST: `http://127.0.0.1:${server.port}`, OM_AGI_QDRANT_URL: "http://127.0.0.1:9", OM_AGI_NO_UPDATE_CHECK: "1" };
   const run = async (args: readonly string[]) => {
     const child = Bun.spawn([BUN, "run", BIN, ...args], { cwd: ROOT, env, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
     const stdout = await new Response(child.stdout).text();

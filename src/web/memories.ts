@@ -1,5 +1,5 @@
 /**
- * `ohmyagi web` — the agent's memory, to read (D-068).
+ * `ohmyagi web` — the agent's memory, to read (D-068), and as a map (D-082).
  *
  * The files are `memory/**\/*.md` in the agent's own repository: what recall
  * is built from (D-037), and what a person should be able to look at without
@@ -101,4 +101,78 @@ export async function readMemoryFile(agentDir: string, path: string): Promise<{ 
   } catch {
     return { ok: false, reason: "no such memory" };
   }
+}
+
+/** One memory as a neuron: its place in the list, what it is, how big. */
+export interface MemoryNode {
+  readonly path: string;
+  readonly title: string;
+  readonly type: string;
+  readonly bytes: number;
+}
+
+/**
+ * The memories as a graph for the page's map (D-082): a neuron per file, a
+ * synapse per link between two of them — `[[name]]` (by file name or
+ * front-matter name) or a markdown link to another `.md` under memory/. A link
+ * both ways is one synapse, `weight` counting the links in it. `dangling`
+ * counts the links that name no memory here, so a broken one is visible.
+ */
+export interface MemoryGraph {
+  readonly nodes: readonly MemoryNode[];
+  /** `[from, to, weight]`, indexes into `nodes`, `from < to`. */
+  readonly edges: readonly (readonly [number, number, number])[];
+  readonly dangling: number;
+}
+
+const key = (s: string) => s.trim().toLowerCase().replace(/\.md$/, "");
+
+/** The links a memory's text makes: wiki names and relative `.md` targets, as written. */
+export function memoryLinks(text: string): { readonly names: readonly string[]; readonly files: readonly string[] } {
+  const names = [...text.matchAll(/\[\[([^\]|#\n]+)(?:[#|][^\]\n]*)?\]\]/g)].map((m) => m[1]!.trim()).filter((n) => n !== "");
+  const files = [...text.matchAll(/\]\(\s*([^)\s#]+\.md)(?:#[^)\s]*)?\s*\)/g)].map((m) => m[1]!).filter((f) => !/^[a-z]+:/i.test(f));
+  return { names, files };
+}
+
+/** Resolve a markdown link written in `from` against the agent directory, `/`-separated. */
+function resolveFile(from: string, target: string): string {
+  const parts = target.startsWith("memory/") ? [] : from.split("/").slice(0, -1);
+  for (const part of target.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") parts.pop();
+    else parts.push(part);
+  }
+  return parts.join("/");
+}
+
+export async function memoryGraph(agentDir: string): Promise<MemoryGraph> {
+  const entries = await listMemories(agentDir);
+  const byName = new Map<string, number>();
+  const byPath = new Map<string, number>();
+  entries.forEach((m, i) => {
+    byPath.set(m.path, i);
+    byName.set(key(m.title), i);
+  });
+  // A file name wins over another file's front-matter name that happens to match it.
+  entries.forEach((m, i) => byName.set(key(m.path.split("/").pop()!), i));
+  const weights = new Map<string, number>();
+  let dangling = 0;
+  for (const [i, m] of entries.entries()) {
+    const read = await readMemoryFile(agentDir, m.path);
+    if (!read.ok) continue;
+    const { names, files } = memoryLinks(read.text);
+    const targets = [...names.map((n) => byName.get(key(n))), ...files.map((f) => byPath.get(resolveFile(m.path, f)))];
+    for (const j of targets) {
+      if (j === undefined) dangling += 1;
+      else if (j !== i) {
+        const id = i < j ? `${i}:${j}` : `${j}:${i}`;
+        weights.set(id, (weights.get(id) ?? 0) + 1);
+      }
+    }
+  }
+  const edges = [...weights].map(([id, w]) => {
+    const [a, b] = id.split(":").map(Number) as [number, number];
+    return [a, b, w] as const;
+  });
+  return { nodes: entries.map((m) => ({ path: m.path, title: m.title, type: m.type, bytes: m.bytes })), edges, dangling };
 }

@@ -7,6 +7,7 @@
  * server put on the page with `textContent`, never as HTML.
  */
 
+import { FONT_CSS, FONT_STACK } from "./fonts.ts";
 import { MARKDOWN_CSS, MARKDOWN_JS } from "./markdown.ts";
 import { MASCOT_DATA_URI } from "./mascot.ts";
 
@@ -17,160 +18,303 @@ export const PAGE_HTML = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Oh My AGI</title>
 <style>
-:root{--bg:#f6f7f9;--card:#fff;--ink:#1d2330;--muted:#5d6678;--line:#e3e6ec;--brand:#c77d0a;--ok:#1f7a4d;--okbg:#e7f5ee;--warn:#b42318;--warnbg:#fdecea;--care:#8a5a00;--carebg:#fff4de;--calmbg:#eef2f7;--focus:#2f6feb}
-@media (prefers-color-scheme:dark){:root{--bg:#0f131a;--card:#171c25;--ink:#e8ebf1;--muted:#9aa3b5;--line:#262d3a;--brand:#f0a830;--ok:#56c28f;--okbg:#12291f;--warn:#ff7a6e;--warnbg:#2e1614;--care:#f0b95a;--carebg:#2a2112;--calmbg:#1d2431}}
+${FONT_CSS}
+/* D-078: a control console for one agent — the chat in front, what it may do and who answers always in view. */
+:root{
+  --bg:#f4f5f8;--bg2:#eceef3;--card:#ffffff;--card2:#f8f9fb;--ink:#141821;--muted:#5b6475;--line:#e2e5ec;
+  --brand:#e08a00;--brand2:#f5b53d;--onbrand:#1a1200;--mint:#0f9d8a;--minbg:#e3f6f2;
+  --ok:#1f7a4d;--okbg:#e6f5ec;--warn:#c0342b;--warnbg:#fdecea;--care:#8a5a00;--carebg:#fff3dc;--calmbg:#eef1f6;--focus:#2f6feb;
+  --shadow:0 1px 2px rgba(16,24,40,.05),0 8px 24px -12px rgba(16,24,40,.12);--radius:16px
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0a0d14;--bg2:#0f131c;--card:#121826;--card2:#171e2e;--ink:#e7ebf3;--muted:#8d97ab;--line:#222a3b;
+  --brand:#f5a524;--brand2:#ffcb6b;--onbrand:#1a1200;--mint:#5eead4;--minbg:#0f2a28;
+  --ok:#4fd197;--okbg:#10271e;--warn:#ff6b61;--warnbg:#2c1413;--care:#f5b95a;--carebg:#2a2112;--calmbg:#1a2132;--focus:#7aa2ff;
+  --shadow:0 1px 0 rgba(255,255,255,.03) inset,0 10px 30px -18px rgba(0,0,0,.8)
+}}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
-${MARKDOWN_CSS}
-body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
-main{max-width:980px;margin:0 auto;padding:20px 16px 48px}
-header{display:flex;gap:14px;align-items:center;margin-bottom:18px}
-.logo{width:64px;height:70px;flex:none}
+html{-webkit-text-size-adjust:100%;font-size:15px}
+body{margin:0;background:var(--bg);color:var(--ink);font:1rem/1.55 ${FONT_STACK}}
+@media (prefers-color-scheme:dark){body{background:radial-gradient(1200px 600px at 80% -10%,rgba(245,165,36,.07),transparent 60%),radial-gradient(900px 500px at -10% 110%,rgba(94,234,212,.05),transparent 60%),var(--bg);background-attachment:fixed}}
+code,.mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+code{background:var(--calmbg);padding:1px 6px;border-radius:6px;font-size:.86em}
+
+/* shell */
+.app{display:grid;grid-template-columns:260px 1fr;min-height:100vh}
+.rail{position:sticky;top:0;height:100vh;overflow:auto;padding:18px 14px;border-right:1px solid var(--line);background:var(--bg2);display:flex;flex-direction:column;gap:14px}
+.brand{display:flex;align-items:center;gap:10px;padding:2px 6px}
+.logo{width:44px;height:48px;flex:none}
+.brand b{font-size:1.02rem;letter-spacing:.2px}.brand .small{display:block}
+.agentcard{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px}
+.agentcard h1{font-size:1.05rem;margin:0;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.badge{font-size:.68rem;font-weight:600;letter-spacing:.3px;text-transform:uppercase;padding:2px 7px;border-radius:99px;background:var(--minbg);color:var(--mint)}
+.sub{color:var(--muted);margin:6px 0 0;font-size:.86rem;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer}
+.sub.open{display:block}
+.statusline{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:.85rem;font-weight:600}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--muted);box-shadow:0 0 0 3px var(--calmbg)}
+.dot.ask{background:var(--brand);box-shadow:0 0 0 3px var(--carebg)}.dot.act{background:var(--ok);box-shadow:0 0 0 3px var(--okbg)}.dot.stop{background:var(--warn);box-shadow:0 0 0 3px var(--warnbg)}
+nav.tabs{display:flex;flex-direction:column;gap:2px}
+nav.tabs button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:0;background:none;color:var(--muted);padding:9px 10px;border-radius:10px;font-weight:500}
+nav.tabs button svg{width:18px;height:18px;flex:none;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+nav.tabs button:hover{background:var(--card);color:var(--ink)}
+nav.tabs button[aria-selected=true]{background:var(--card);color:var(--ink);box-shadow:inset 3px 0 0 var(--brand)}
+.engine{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;font-size:.84rem}
+.engine h3,.panelhead h3{margin:0 0 8px;font-size:.72rem;letter-spacing:.8px;text-transform:uppercase;color:var(--muted)}
+.chain{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
+.chain span.b{font-family:ui-monospace,monospace;font-size:.78rem;padding:2px 7px;border-radius:7px;background:var(--calmbg)}
+.chain span.b.local{background:var(--minbg);color:var(--mint)}
+.chain i{color:var(--muted);font-style:normal;font-size:.75rem}
+.engine dl{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;margin:10px 0 0}.engine dt{color:var(--muted)}.engine dd{margin:0;font-family:ui-monospace,monospace;font-size:.78rem;word-break:break-all}
+.railfoot{margin-top:auto;color:var(--muted);font-size:.75rem;padding:0 6px}
+main{padding:22px 28px 60px;width:100%;min-width:0}
+
+/* panels */
+section{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:18px;box-shadow:var(--shadow)}
+h2{font-size:1rem;margin:0 0 10px;letter-spacing:.1px}
+.hint{color:var(--muted);font-size:.86rem;margin:4px 0 0}
+.small{font-size:.8rem;color:var(--muted)}
+.card{border:1px solid var(--line);background:var(--card2);border-radius:12px;padding:12px;margin-top:10px}
+.what{font-weight:600;margin:0 0 4px}.meta{color:var(--muted);font-size:.86rem;margin:2px 0}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
+button{font:inherit;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:8px 14px;cursor:pointer;min-height:38px}
+button:hover{border-color:var(--muted)}
+button:focus-visible,textarea:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+button.primary{background:linear-gradient(180deg,var(--brand2),var(--brand));border-color:transparent;color:var(--onbrand);font-weight:600}
+button.danger{background:transparent;border-color:var(--warn);color:var(--warn);font-weight:600}
+button.danger:hover{background:var(--warnbg)}
+button:disabled{opacity:.5;cursor:default}
+input[type=text],textarea,select{font:inherit;width:100%;border:1px solid var(--line);border-radius:10px;padding:9px 11px;background:var(--bg2);color:var(--ink)}
+textarea{min-height:70px;resize:vertical}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+.chip{font-size:.76rem;padding:2px 9px;border-radius:99px}
+.chip.calm{background:var(--calmbg);color:var(--muted)}.chip.care{background:var(--carebg);color:var(--care)}.chip.warn{background:var(--warnbg);color:var(--warn)}
+.pill{font-weight:600;padding:4px 12px;border-radius:99px;display:inline-block}
+.pill.ask{background:var(--carebg);color:var(--care)}.pill.act{background:var(--okbg);color:var(--ok)}.pill.stop{background:var(--warnbg);color:var(--warn)}
+ul.plain{list-style:none;padding:0;margin:0}ul.plain li{padding:8px 0;border-top:1px solid var(--line)}ul.plain li:first-child{border-top:0}
+.empty{color:var(--muted);font-style:italic}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:12px;max-width:90vw;white-space:pre-wrap;display:none;z-index:50;box-shadow:var(--shadow)}
+footer{color:var(--muted);font-size:.8rem;margin-top:22px}
+
+/* home: full width — status across the top, the chat and what waits side by side, the rest beneath */
+.grid{display:grid;gap:18px;align-items:start;grid-template-columns:minmax(0,1.7fr) minmax(0,1fr);
+  grid-template-areas:"chat status" "chat wait" "chat recent" "chat sched" "chat term"}
+.a-status{grid-area:status}.a-chat{grid-area:chat}.a-wait{grid-area:wait}.a-recent{grid-area:recent}.a-sched{grid-area:sched}.a-term{grid-area:term}
+.upper{text-transform:uppercase;letter-spacing:.8px;font-size:.72rem;margin:0 0 6px}
+.statusbar{display:flex;align-items:center;gap:14px 22px;flex-wrap:wrap;padding:14px 18px}
+.sb-main{flex:1 1 100%;min-width:0}.sb-level{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.sb-level .hint{margin:0}
+.sb-next{flex:1 1 200px}.sb-next div{font-size:.86rem}
+.sb-stop{display:flex;align-items:center;gap:12px}.sb-stop .hint{margin:0}
+.waitpanel{display:flex;flex-direction:column;max-height:70vh}
+.waitscroll{overflow:auto;flex:1;margin:0 -6px;padding:0 6px}
+.waitbar{display:grid;grid-template-columns:1fr auto;gap:6px;margin:10px 0 4px}.waitbar input{grid-column:1/-1}.waitbar input,.waitbar select{padding:6px 9px}.waitbar button{min-height:34px;padding:6px 10px;font-size:.84rem}
+.bulk{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:8px;margin:6px 0;border:1px solid var(--brand);border-radius:12px;background:var(--carebg)}
+.bulk .small{flex:1;color:var(--care);font-weight:600}.bulk button{min-height:32px;padding:5px 10px;font-size:.84rem}
+.card .pick{display:flex;align-items:center;gap:8px;float:right;margin:-2px -2px 0 8px}.card .pick input{width:18px;height:18px;accent-color:var(--brand)}
+/* A (D-080): the chat stays put while the column beside it scrolls. */
+.chatpanel{display:flex;flex-direction:column;position:sticky;top:16px;height:calc(100vh - 32px);min-height:420px}
+.panelhead{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:8px}
+.engineline{font-size:.78rem;color:var(--muted);font-family:ui-monospace,monospace;text-align:right}
+.chat{flex:1;display:flex;flex-direction:column;gap:10px;min-height:0;overflow:auto;padding:4px 2px 10px}
+.chat:empty::before{content:"Ask it about this machine, its services, or what it remembers.";color:var(--muted);font-size:.9rem;margin:auto;text-align:center;padding:40px 10px}
+.msg{padding:10px 13px;border-radius:14px;max-width:min(88%,62rem);white-space:pre-wrap;word-wrap:break-word}
+.me{align-self:flex-end;background:linear-gradient(180deg,var(--brand2),var(--brand));color:var(--onbrand);border-bottom-right-radius:4px}
+.it{align-self:flex-start;background:var(--card2);border:1px solid var(--line);border-bottom-left-radius:4px}
+.composer{border:1px solid var(--line);border-radius:14px;background:var(--bg2);padding:8px;margin-top:6px}
+.composer textarea{border:0;background:transparent;min-height:56px;padding:6px}
+.composer textarea:focus-visible{outline:none}
+.composer:focus-within{border-color:var(--brand)}
+.composer .row{margin-top:4px;justify-content:space-between}
+.status{display:flex;gap:14px;align-items:center;justify-content:space-between;flex-wrap:wrap}
 .thinking .logo,.think img{animation:bob .9s ease-in-out infinite}
 @keyframes bob{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-4px) scale(1.06)}}
-.think{display:inline-flex;align-items:center;gap:6px}.think img{width:28px;height:30px}
+.think{display:inline-flex;align-items:center;gap:6px}.think img{width:26px;height:28px}
 @media (prefers-reduced-motion:reduce){.thinking .logo,.think img{animation:none}}
-.kv{display:grid;grid-template-columns:max-content 1fr;gap:6px 14px;margin:0}.kv dt{color:var(--muted)}.kv dd{margin:0;word-break:break-word}
-.notes{white-space:pre-wrap;font-size:.92rem;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px;max-height:320px;overflow:auto;margin:6px 0 0}
-.memgrid{display:grid;grid-template-columns:1fr;gap:16px}
-@media (min-width:860px){.memgrid{grid-template-columns:.9fr 1.1fr}}
+
+/* other tabs */
+/* Cards flow into columns like a masonry wall: a short card no longer leaves a hole below it (2K audit). */
+.set{columns:30rem;column-gap:18px}
+.set>section,.set>.card,.set>p{break-inside:avoid;margin:0 0 18px;display:block}
+.set>section:last-child{margin-bottom:0}
+#profile.set{columns:auto;display:grid;grid-template-columns:minmax(0,64rem);gap:18px}
+#profile.set>section{margin:0}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:6px 16px;margin:0}.kv dt{color:var(--muted)}.kv dd{margin:0;word-break:break-word}
+.notes{white-space:pre-wrap;font-size:.9rem;background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:12px;max-height:340px;overflow:auto;margin:6px 0 0}
+.memgrid{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);gap:18px;align-items:start}
 .memlist{max-height:70vh;overflow:auto}
-.mem{display:block;width:100%;text-align:left;border:0;border-top:1px solid var(--line);border-radius:0;padding:9px 4px;background:none}
-.mem:first-child{border-top:0}.mem:hover,.mem[aria-current=true]{background:var(--calmbg)}
-.tag{font-size:.72rem;padding:1px 7px;border-radius:99px;background:var(--calmbg);color:var(--muted);margin-left:6px}
-.stat{display:inline-block;margin:0 16px 8px 0}.stat b{font-size:1.3rem;display:block}
-h1{font-size:1.4rem;margin:0}
-.sub{color:var(--muted);margin:0}
-.badge{display:inline-block;font-size:.75rem;padding:1px 8px;border-radius:99px;background:var(--calmbg);color:var(--muted);margin-left:6px;vertical-align:middle}
-.grid{display:grid;grid-template-columns:1fr;gap:16px}
-@media (min-width:860px){.grid{grid-template-columns:1.15fr .85fr}}
-section{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
-h2{font-size:1.05rem;margin:0 0 10px}
-.hint{color:var(--muted);font-size:.9rem;margin:4px 0 0}
-.status{display:flex;gap:14px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap}
-.pill{font-weight:600;padding:4px 12px;border-radius:99px}
-.pill.ask{background:var(--carebg);color:var(--care)}.pill.act{background:var(--okbg);color:var(--ok)}.pill.stop{background:var(--warnbg);color:var(--warn)}
-button{font:inherit;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:8px 14px;cursor:pointer}
-button:focus-visible,textarea:focus-visible,input:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
-button.primary{background:var(--ok);border-color:var(--ok);color:#fff}
-button.danger{background:var(--warn);border-color:var(--warn);color:#fff;font-weight:600}
-button:disabled{opacity:.55;cursor:default}
-.card{border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:10px}
-.what{font-weight:600;margin:0 0 4px}
-.meta{color:var(--muted);font-size:.88rem;margin:2px 0}
-.chips{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
-.chip{font-size:.8rem;padding:2px 9px;border-radius:99px}
-.chip.calm{background:var(--calmbg);color:var(--muted)}.chip.care{background:var(--carebg);color:var(--care)}.chip.warn{background:var(--warnbg);color:var(--warn)}
-.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
-input[type=text],textarea{font:inherit;width:100%;border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:var(--bg);color:var(--ink)}
-textarea{min-height:70px;resize:vertical}
-.chat{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow:auto;padding:4px 2px;margin-bottom:10px}
-.msg{padding:9px 12px;border-radius:12px;max-width:92%;white-space:pre-wrap;word-wrap:break-word}
-.me{align-self:flex-end;background:var(--calmbg)}.it{align-self:flex-start;border:1px solid var(--line)}
-.small{font-size:.8rem;color:var(--muted)}
-ul.plain{list-style:none;padding:0;margin:0}ul.plain li{padding:7px 0;border-top:1px solid var(--line)}ul.plain li:first-child{border-top:0}
-.empty{color:var(--muted);font-style:italic}
-.toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;max-width:90vw;white-space:pre-wrap;display:none}
-footer{color:var(--muted);font-size:.85rem;margin-top:22px}
-code{background:var(--calmbg);padding:1px 5px;border-radius:6px;font-size:.88em}
-nav.tabs{display:flex;gap:6px;margin:0 0 16px}
-nav.tabs button{border-radius:99px;padding:6px 16px}
-nav.tabs button[aria-selected=true]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
-.set{display:grid;grid-template-columns:1fr;gap:16px;max-width:760px}
-.cat{display:flex;gap:12px;justify-content:space-between;align-items:center;flex-wrap:wrap;padding:10px 0;border-top:1px solid var(--line)}
+/* D-082: the memories as neurons and the links between them as synapses, turning in 3D. */
+.memmap{grid-column:1/-1}
+/* D-084: import — drop files or paste a link; each is checked before anything is written. */
+.drop{display:block;border:2px dashed var(--line);border-radius:14px;padding:22px 14px;text-align:center;cursor:pointer;background:var(--bg2)}
+.drop.over,.drop:focus-within{border-color:var(--brand);background:var(--carebg)}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.queue li{padding:10px 0;border-top:1px solid var(--line)}.queue li:first-child{border-top:0}
+.queue .msg{white-space:pre-wrap;font-size:.8rem;color:var(--muted);margin-top:4px;font-family:ui-monospace,monospace}
+.mapwrap{position:relative;height:clamp(320px,54vh,780px);border-radius:14px;overflow:hidden;border:1px solid var(--line);background:radial-gradient(ellipse at 50% 42%,var(--card2),var(--bg2) 72%);touch-action:pan-y}
+.mapwrap canvas{width:100%;height:100%;display:block;cursor:grab}.mapwrap canvas.grabbing{cursor:grabbing}
+.maptip{position:absolute;pointer-events:none;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px 10px;font-size:.82rem;box-shadow:var(--shadow);max-width:300px;z-index:2}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:8px;font-size:.8rem;color:var(--muted)}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.mem{display:block;width:100%;text-align:left;border:0;border-top:1px solid var(--line);border-radius:0;padding:10px 6px;background:none;min-height:0}
+.mem:first-child{border-top:0}.mem:hover,.mem[aria-current=true]{background:var(--calmbg);border-radius:10px}
+.tag{font-size:.7rem;padding:1px 7px;border-radius:99px;background:var(--minbg);color:var(--mint);margin-left:6px;font-weight:600}
+.stat{display:inline-block;margin:0 22px 10px 0}.stat b{font-size:1.5rem;display:block;font-family:ui-monospace,monospace}
+.cat{display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:12px 0;border-top:1px solid var(--line)}
 .cat:first-of-type{border-top:0}
-.seg{display:inline-flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
-.seg button{border:0;border-radius:0;border-left:1px solid var(--line);padding:6px 10px;font-size:.88rem}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:11px;overflow:hidden;background:var(--bg2)}
+.seg button{border:0;border-radius:0;border-left:1px solid var(--line);padding:7px 11px;font-size:.86rem;background:none;min-height:36px}
 .seg button:first-child{border-left:0}
-.seg button[aria-pressed=true]{background:var(--brand);color:#fff;font-weight:600}
-.lock{font-size:.8rem;color:var(--muted);margin-left:8px}
-select{font:inherit;border:1px solid var(--line);border-radius:10px;padding:7px 10px;background:var(--bg);color:var(--ink)}
+.seg button[aria-pressed=true]{background:linear-gradient(180deg,var(--brand2),var(--brand));color:var(--onbrand);font-weight:600}
+.lock{font-size:.78rem;color:var(--muted);margin-left:8px}
 .field{display:grid;gap:4px;margin-top:10px}
-.steps{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px}
-.steps button{font-size:.82rem;padding:4px 10px;border-radius:99px}
-.steps button[aria-current=step]{background:var(--brand);color:#fff;border-color:var(--brand)}
-.steps button.done{border-color:var(--ok);color:var(--ok)}
-.wiz label{display:block;font-weight:600;margin:12px 0 2px}.wiz .hint{margin:0 0 6px}
-.wiz textarea{min-height:90px}.wiz textarea.long{min-height:260px;font-family:ui-monospace,monospace;font-size:.85rem}
 .on{color:var(--ok);font-weight:600}.off{color:var(--muted);font-weight:600}
+.steps{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px}
+.steps button{font-size:.8rem;padding:4px 10px;border-radius:99px;min-height:30px}
+.steps button[aria-current=step]{background:linear-gradient(180deg,var(--brand2),var(--brand));color:var(--onbrand);border-color:transparent}
+.steps button.done{border-color:var(--ok);color:var(--ok)}
+.wiz label{display:block;font-weight:600;margin:14px 0 2px}.wiz .hint{margin:0 0 6px}
+.wiz textarea{min-height:90px}.wiz textarea.long{min-height:260px;font-family:ui-monospace,monospace;font-size:.84rem}
+.clamp2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.more{margin-top:10px;width:100%}
+.linkish{border:0;background:none;color:var(--muted);font-size:.78rem;font-weight:500;padding:0 6px;min-height:0;text-decoration:underline;cursor:pointer}
+.recentitem{cursor:pointer;border-radius:8px;padding:8px 6px!important}.recentitem:hover{background:var(--calmbg)}
+.recentitem .detail{margin-top:8px;cursor:auto}.recentitem .detail .notes{max-height:260px}
+#expired{border-color:var(--warn)}
+
+/* large screens: type and chrome grow with the screen (2K audit) */
+@media (min-width:1920px){html{font-size:16px}.app{grid-template-columns:290px 1fr}main{padding:28px 36px 60px}
+  #profile.set{grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);align-items:start}}
+@media (min-width:2400px){html{font-size:17.5px}.app{grid-template-columns:320px 1fr}}
+/* narrow desktop */
+@media (max-width:1000px){.app{grid-template-columns:220px 1fr}.grid{grid-template-columns:1fr;grid-template-areas:"status" "chat" "wait" "recent" "sched" "term"}.chatpanel{height:auto;min-height:0}.chat{max-height:60vh;min-height:260px}.waitpanel{max-height:none}.set{columns:1}}
+
+/* phone: a top bar, the chat first, and a bottom tab bar */
+@media (max-width:760px){
+  body{font-size:15px}
+  .app{display:block}
+  .rail{position:sticky;top:0;z-index:20;height:auto;overflow:visible;flex-direction:row;align-items:center;gap:10px;padding:8px 14px;border-right:0;border-bottom:1px solid var(--line)}
+  .brand .small,.brand b,.engine,.railfoot{display:none}
+  .logo{width:36px;height:40px}
+  .agentcard{background:none;border:0;padding:0;flex:1;min-width:0}
+  .agentcard h1{font-size:1rem;flex-wrap:nowrap}
+  .agentcard h1 #name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sub{-webkit-line-clamp:1;margin-top:0;font-size:.8rem}
+  .statusline{margin-top:2px;font-size:.78rem}
+  nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:30;flex-direction:row;justify-content:space-around;gap:0;padding:6px 4px calc(6px + env(safe-area-inset-bottom));background:var(--bg2);border-top:1px solid var(--line);backdrop-filter:blur(12px)}
+  nav.tabs button{flex-direction:column;gap:2px;width:auto;flex:1;padding:6px 2px;font-size:.68rem;text-align:center;min-height:0}
+  nav.tabs button svg{width:22px;height:22px}
+  nav.tabs button[aria-selected=true]{background:none;box-shadow:none;color:var(--brand)}
+  main{padding:14px 14px 96px}
+  section{padding:14px;border-radius:14px}
+  .grid{gap:14px;grid-template-areas:"chat" "status" "wait" "recent" "sched" "term"}
+  .memgrid{grid-template-columns:1fr;gap:14px}
+  .mapwrap{height:clamp(260px,46vh,520px)}
+  .statusbar{gap:12px}.sb-stop{width:100%;justify-content:space-between}
+  .chatpanel{position:static;height:auto;min-height:0}
+  .chat{max-height:none;min-height:120px}
+  /* C (D-080): the message box sits above the tab bar, like a messenger. */
+  .composer{position:fixed;left:0;right:0;bottom:calc(62px + env(safe-area-inset-bottom));z-index:25;margin:0;border-radius:14px 14px 0 0;border-width:1px 0 0;padding:8px 10px;background:var(--bg2);box-shadow:0 -8px 24px -16px rgba(0,0,0,.5)}
+  .composer textarea{min-height:42px;max-height:30vh}
+  .composer .row{margin-top:2px}
+  .composer #sending{font-size:.72rem}
+  main.homeon{padding-bottom:190px}
+  .engineline{text-align:left}
+  .panelhead{flex-direction:column}
+  .cat>div:last-child{width:100%}
+  .seg{display:flex;width:100%}.seg button{flex:1 1 0;padding:9px 4px;font-size:.82rem}
+  .kv{grid-template-columns:1fr;gap:0}.kv dt{margin-top:8px;font-size:.82rem}
+  .msg{max-width:94%}
+  .memlist{max-height:none}
+  .toast{bottom:84px}
+}
+${MARKDOWN_CSS}
 </style>
 </head>
 <body>
-<main>
-  <header>
-    <img class="logo" src="${MASCOT_DATA_URI}" alt="" aria-hidden="true">
-    <div>
-      <h1><span id="name">Your agent</span><span class="badge">AI agent</span></h1>
+<div class="app">
+  <aside class="rail">
+    <div class="brand"><img class="logo" src="${MASCOT_DATA_URI}" alt="" aria-hidden="true"><div><b>Oh My AGI</b><span class="small">agent console</span></div></div>
+    <div class="agentcard">
+      <h1><span id="name">Your agent</span><span class="badge">AI</span></h1>
       <p class="sub" id="role">Loading…</p>
+      <div class="statusline"><span class="dot" id="statusDot"></span><span id="statusText">…</span></div>
     </div>
-  </header>
-
-  <nav class="tabs" role="tablist">
-    <button role="tab" id="tabHome" aria-selected="true" aria-controls="home">Home</button>
-    <button role="tab" id="tabAgent" aria-selected="false" aria-controls="agent">Agent</button>
-    <button role="tab" id="tabProfile" aria-selected="false" aria-controls="profile">Profile</button>
-    <button role="tab" id="tabMemories" aria-selected="false" aria-controls="memories">Memories</button>
-    <button role="tab" id="tabSettings" aria-selected="false" aria-controls="settings">Settings</button>
-  </nav>
-
+    <nav class="tabs" role="tablist" aria-label="Sections">
+      <button role="tab" id="tabHome" aria-selected="true" aria-controls="home"><svg viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v10h14V10"/></svg><span>Home</span></button>
+      <button role="tab" id="tabAgent" aria-selected="false" aria-controls="agent"><svg viewBox="0 0 24 24"><rect x="5" y="7" width="14" height="11" rx="3"/><path d="M12 3v4M9 12h.01M15 12h.01M9.5 15.5h5"/></svg><span>Agent</span></button>
+      <button role="tab" id="tabProfile" aria-selected="false" aria-controls="profile"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c1.2-3.6 4-5.5 7-5.5s5.8 1.9 7 5.5"/></svg><span>Profile</span></button>
+      <button role="tab" id="tabMemories" aria-selected="false" aria-controls="memories"><svg viewBox="0 0 24 24"><path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 2 5 3 3 0 0 0 6 1V4.5A2.5 2.5 0 0 0 9 4Z"/><path d="M15 4a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-2 5 3 3 0 0 1-6 1"/></svg><span>Memories</span></button>
+      <button role="tab" id="tabPrivacy" aria-selected="false" aria-controls="privacy"><svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.5 3 8.3 7 10 4-1.7 7-5.5 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-4"/></svg><span>Privacy</span></button>
+      <button role="tab" id="tabSettings" aria-selected="false" aria-controls="settings"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg><span>Settings</span></button>
+    </nav>
+    <div class="engine" aria-labelledby="h-engine">
+      <h3 id="h-engine">Engine</h3>
+      <div class="chain" id="engChain"></div>
+      <dl>
+        <dt>Local</dt><dd id="engLocal">—</dd>
+        <dt>Judge</dt><dd id="engJudge">—</dd>
+        <dt>Last</dt><dd id="engLast">—</dd>
+      </dl>
+    </div>
+    <p class="railfoot">Everything here stays on this computer. A message goes only to the backend named under its answer.</p>
+  </aside>
+<main class="homeon">
   <div id="expired" class="card" style="display:none;border-color:var(--warn)">
     <p style="margin:0 0 8px">This page needs the full link that <code>ohmyagi web</code> printed — the part after <code>#t=</code> is its key. Paste the link (or just the key) here:</p>
     <div class="row" style="margin:0"><input type="text" id="keyIn" placeholder="https://…#t=…" autocomplete="off" aria-label="Link or key" style="flex:1;min-width:220px"><button class="primary" id="keyGo">Open</button></div>
   </div>
 
   <div class="grid" id="home" role="tabpanel" aria-labelledby="tabHome">
-    <div>
-      <section aria-labelledby="h-status">
-        <div class="status">
-          <div>
-            <h2 id="h-status">On its own, it…</h2>
-            <span class="pill" id="level">…</span>
-            <p class="hint" id="levelDetail"></p>
-          </div>
-          <div style="text-align:right">
-            <button class="danger" id="stopBtn" title="Stops every running turn and sets every category to 0">Stop everything</button>
-            <p class="hint">Safe to press any time.</p>
-          </div>
-        </div>
-      </section>
+    <section class="a-status statusbar" aria-labelledby="h-status">
+      <div class="sb-main">
+        <h2 id="h-status" class="small upper">On its own, it…</h2>
+        <div class="sb-level"><span class="pill" id="level">…</span><span class="hint" id="levelDetail"></span></div>
+      </div>
+      <div class="sb-next"><h2 class="small upper">Next scheduled</h2><div id="nextRun" class="mono">—</div></div>
+      <div class="sb-stop"><button class="danger" id="stopBtn" title="Stops every running turn and sets every category to 0">Stop everything</button><span class="hint">Safe to press any time.</span></div>
+    </section>
 
-      <section aria-labelledby="h-wait" style="margin-top:16px">
-        <h2 id="h-wait">Waiting for you <span class="small" id="waitCount"></span></h2>
-        <p class="hint">Things it would like to do. Nothing happens until you say yes — and a yes is good for one run.</p>
-        <div id="waiting"></div>
-        <div id="approved"></div>
-      </section>
-
-      <section aria-labelledby="h-chat" style="margin-top:16px">
-        <h2 id="h-chat">Talk to it</h2>
-        <div class="chat" id="chat" aria-live="polite"></div>
-        <label class="small" for="prompt">Your message</label>
+    <section class="a-chat chatpanel" aria-labelledby="h-chat">
+      <div class="panelhead"><h2 id="h-chat">Talk to it <button class="linkish" id="chatClear" title="Clear this browser's copy of the conversation">Clear</button></h2><div class="engineline" id="engineLine"></div></div>
+      <div class="chat" id="chat" aria-live="polite"></div>
+      <div class="composer">
+        <label class="small" for="prompt" style="position:absolute;left:-9999px">Your message</label>
         <textarea id="prompt" placeholder="Ask a question, or tell it what you'd like done…"></textarea>
-        <div class="row"><button class="primary" id="send">Send</button><span class="small think" id="sending"></span></div>
-      </section>
-    </div>
+        <div class="row"><span class="small think" id="sending">Ctrl+Enter to send</span><button class="primary" id="send">Send</button></div>
+      </div>
+    </section>
 
-    <div>
-      <section aria-labelledby="h-sched">
-        <h2 id="h-sched">On a schedule</h2>
-        <ul class="plain" id="triggers"></ul>
-        <p class="hint">Scheduled work only ever makes suggestions — they land in “Waiting for you”.</p>
-      </section>
-      <section aria-labelledby="h-recent" style="margin-top:16px">
-        <h2 id="h-recent">Recently</h2>
-        <ul class="plain" id="recent"></ul>
-      </section>
-      <section aria-labelledby="h-term" style="margin-top:16px">
-        <h2 id="h-term">Only in the terminal</h2>
-        <p class="hint">These need you to type a phrase yourself, on purpose:</p>
-        <ul class="plain small">
-          <li>Let it act without asking — <code>ohmyagi autonomy set … 3</code></li>
-          <li>Let it learn what you do — <code>ohmyagi observe enable</code></li>
-          <li>Release the brake — <code>ohmyagi autonomy resume</code></li>
-          <li>Delete your data — <code>ohmyagi erase</code></li>
-        </ul>
-      </section>
-    </div>
+    <section class="a-wait waitpanel" aria-labelledby="h-wait">
+      <h2 id="h-wait">Waiting for you <span class="small" id="waitCount"></span></h2>
+      <p class="hint">Nothing happens until you say yes — and a yes is good for one run.</p>
+      <div class="waitbar">
+        <input type="text" id="waitFilter" placeholder="Filter…" aria-label="Filter what is waiting" autocomplete="off">
+        <select id="waitWho" aria-label="Who suggested it"><option value="">Everyone</option><option value="agent">By the agent</option><option value="you">By you</option></select>
+        <button id="waitSelectAll" title="Select every card shown">Select shown</button>
+      </div>
+      <div class="bulk" id="bulkBar" hidden><span class="small" id="bulkCount"></span><button class="primary" id="bulkYes">Allow once</button><button id="bulkNo">Decline</button><button id="bulkClear">Clear</button></div>
+      <div class="waitscroll"><div id="waiting"></div><div id="approved"></div></div>
+    </section>
+
+    <section class="a-recent" aria-labelledby="h-recent">
+      <h2 id="h-recent">Recently</h2>
+      <ul class="plain" id="recent"></ul>
+    </section>
+    <section class="a-sched" aria-labelledby="h-sched">
+      <h2 id="h-sched">On a schedule</h2>
+      <ul class="plain" id="triggers"></ul>
+      <p class="hint">Scheduled work only ever makes suggestions — they land in “Waiting for you”.</p>
+    </section>
+    <section class="a-term" aria-labelledby="h-term">
+      <h2 id="h-term">Only in the terminal</h2>
+      <p class="hint">These need you to type a phrase yourself, on purpose:</p>
+      <ul class="plain small">
+        <li>Let it act without asking — <code>ohmyagi autonomy set … 3</code></li>
+        <li>Let it learn what you do — <code>ohmyagi observe enable</code></li>
+        <li>Release the brake — <code>ohmyagi autonomy resume</code></li>
+        <li>Delete your data — <code>ohmyagi erase</code></li>
+      </ul>
+    </section>
   </div>
   <div class="set" id="agent" role="tabpanel" aria-labelledby="tabAgent" hidden>
     <p id="agentProblems" class="card" style="display:none;border-color:var(--warn)"></p>
@@ -216,21 +360,70 @@ select{font:inherit;border:1px solid var(--line);border-radius:10px;padding:7px 
       <div id="wizBody"></div>
       <div class="row" style="margin-top:16px"><button id="wizBack">Back</button><button class="primary" id="wizNext">Next</button><span class="small" id="wizNote"></span></div>
     </section>
+    <section aria-labelledby="h-drafts">
+      <h2 id="h-drafts">Drafts from real work <span class="small" id="draftCount"></span></h2>
+      <p class="hint">What a model on this machine drew from the artifacts you gave it (<code>ohmyagi persona extract</code>). Each claim quotes its source; answer whether it is true of the job. Only the yeses can be written into the soul.</p>
+      <div class="waitbar"><select id="draftShow" aria-label="Which claims"><option value="open">Not answered yet</option><option value="yes">Answered yes</option><option value="no">Answered no</option><option value="all">All</option></select><button id="draftAdopt">Write the yeses…</button></div>
+      <div id="draftList"></div>
+    </section>
   </div>
 
   <div class="memgrid" id="memories" role="tabpanel" aria-labelledby="tabMemories" hidden>
+    <section class="memmap" aria-labelledby="h-map">
+      <div class="panelhead"><h2 id="h-map">Memory map <span class="small" id="mapStats"></span></h2><div class="row" style="margin:0"><button id="mapSpin" aria-pressed="true">Spin</button><button id="mapReset">Reset view</button><button id="mapToggle" aria-expanded="true">Hide map</button></div></div>
+      <div id="mapBody">
+        <div class="mapwrap"><canvas id="mapCanvas" role="img" aria-label="Memory map: each memory is a dot, each link between two memories a line. The list below holds the same memories."></canvas><div class="maptip" id="mapTip" hidden></div></div>
+        <div class="legend" id="mapLegend"></div>
+        <p class="hint">Each dot is a memory, sized by how many others it links to; each line is a <code>[[link]]</code> between two of them, with signals running along it. Drag to turn it, scroll to zoom, click a dot to read it. The filter below dims what does not match.</p>
+      </div>
+    </section>
     <section aria-labelledby="h-mem">
-      <h2 id="h-mem">Memories <span class="small" id="memCount"></span></h2>
+      <div class="panelhead"><h2 id="h-mem">Memories <span class="small" id="memCount"></span></h2><div class="row" style="margin:0"><button id="memImp">Import…</button><button class="primary" id="memNew">New memory</button></div></div>
       <label class="small" for="memFilter">Filter by words</label>
       <input type="text" id="memFilter" placeholder="Type to narrow the list…" autocomplete="off">
       <div class="row"><select id="memType" aria-label="Kind"><option value="">All kinds</option></select><button id="memSearch" title="Ask recall — the same search a turn uses">Search by meaning</button></div>
       <div class="memlist" id="memList" style="margin-top:10px"></div>
     </section>
     <section aria-labelledby="h-memview">
-      <h2 id="h-memview">Read</h2>
+      <div class="panelhead"><h2 id="h-memview">Read</h2><div class="row" style="margin:0" id="memActions" hidden><button id="memEdit">Edit</button><button class="danger" id="memDelete">Delete…</button></div></div>
       <div class="row" style="justify-content:space-between;margin-top:0"><p class="small" id="memPath" style="margin:0">Pick a memory on the left.</p><label class="small"><input type="checkbox" id="memRaw"> show as written</label></div>
       <div class="notes" id="memText" style="max-height:70vh" hidden></div>
-      <p class="hint">Read-only here. To remove one: <code>ohmyagi memory forget</code> in a terminal — it shows what it will touch first.</p>
+      <div id="memEditor" hidden>
+        <label class="small" for="memEdPath">File</label>
+        <input type="text" id="memEdPath" autocomplete="off" spellcheck="false">
+        <label class="small" for="memEdText" style="display:block;margin-top:10px">Markdown</label>
+        <textarea id="memEdText" class="mono" spellcheck="false" style="min-height:48vh;font-size:.86rem"></textarea>
+        <div class="notes" id="memEdPreview" hidden style="white-space:normal;max-height:48vh"></div>
+        <div class="row"><button class="primary" id="memEdSave">Save</button><button id="memEdPrev">Preview</button><button id="memEdCancel">Cancel</button><span class="small" id="memEdNote"></span></div>
+      </div>
+      <div id="memImport" hidden>
+        <label class="drop" id="memDrop"><input type="file" class="vh" id="memFiles" multiple accept=".md,.markdown,.txt,.html,.htm,.pdf,.docx,.doc,.odt,.rtf,.pptx,.ppt,.odp,.epub,.xlsx,.xls,.ods,.csv,.json,.yaml,.yml"><b>Drop files here, or choose them</b><br><span class="small">Markdown, text, PDF, Word, PowerPoint, Excel, OpenDocument, HTML, CSV, JSON — up to 20 MB each</span></label>
+        <label class="small" for="memUrl" style="display:block;margin-top:12px">…or a web link</label>
+        <div class="row" style="margin-top:4px"><input type="text" id="memUrl" placeholder="https://…" inputmode="url" autocomplete="off" spellcheck="false"><button id="memUrlAdd">Add</button></div>
+        <ul class="plain queue" id="memQueue"></ul>
+        <div class="row"><button class="primary" id="memImpGo" disabled>Import</button><button id="memImpClose">Close</button><span class="small" id="memImpNote"></span></div>
+        <p class="hint">Each one is read into markdown and checked first — where it would go, how it was read — and nothing is written until you press Import. Then it runs <code>ohmyagi memory import</code>: the same credential scan and basis as saving, and a long document is cut into parts.</p>
+      </div>
+      <p class="hint">Saving runs <code>ohmyagi memory write</code>: the text must pass the credential scan, a basis for memory must be on record, and both indexes are rebuilt. Deleting runs <code>memory forget</code>. Nothing is committed — git still holds what it was given.</p>
+    </section>
+  </div>
+
+  <div class="set" id="privacy" role="tabpanel" aria-labelledby="tabPrivacy" hidden>
+    <section aria-labelledby="h-capture">
+      <h2 id="h-capture">Learning what you do <span class="pill" id="capPill">…</span></h2>
+      <ul class="plain small mono" id="capLines"></ul>
+      <p class="hint">Consent is typed by you: <code>ohmyagi observe enable</code> · stop: <code>ohmyagi observe disable</code> · delete it all: <code>ohmyagi observe purge</code></p>
+    </section>
+    <section aria-labelledby="h-kept">
+      <h2 id="h-kept">Kept on this machine <span class="small" id="keptCount"></span></h2>
+      <p class="hint" id="keptGuards"></p>
+      <ul class="plain small" id="keptList" style="max-height:55vh;overflow:auto"></ul>
+      <p class="hint">Each line is a message the filter or the local judge would not let leave. The words are never recorded — only the rule.</p>
+    </section>
+    <section aria-labelledby="h-basis">
+      <h2 id="h-basis">Why data may come in</h2>
+      <ul class="plain" id="basisList"></ul>
+      <p class="hint">A basis is recorded in a terminal, by typing a phrase: <code>ohmyagi basis record owner --subject <span class="subj"></span> --uses memory,persona</code>. Revoking here stops what comes in next.</p>
     </section>
   </div>
 
@@ -275,13 +468,14 @@ select{font:inherit;border:1px solid var(--line);border-radius:10px;padding:7px 
     </section>
   </div>
 
-  <footer>Everything on this page stays on this computer. A message you send goes only to the backend named under its answer.</footer>
 </main>
+</div>
 <div class="toast" id="toast" role="status"></div>
 <script>
 ${MARKDOWN_JS}
 (() => {
   const hashParams = new URLSearchParams(location.hash.slice(1));
+  document.getElementById("role").addEventListener("click", (e) => e.currentTarget.classList.toggle("open"));
   const token = hashParams.get("t") || sessionStorage.getItem("ohmyagi-t") || "";
   const startTab = hashParams.get("tab") || sessionStorage.getItem("ohmyagi-tab") || "home";
   if (token) { sessionStorage.setItem("ohmyagi-t", token); history.replaceState(null, "", location.pathname); }
@@ -294,6 +488,9 @@ ${MARKDOWN_JS}
     return res.json();
   }
   let canTriage = false;
+  let restored = false;
+  let lastRecentSig = "";
+  let waitAll = false;
   $("keyGo").onclick = () => {
     const raw = $("keyIn").value.trim(); const m = /(?:#t=|^)([0-9a-f]{32,64})/.exec(raw);
     if (!m) { toast("That is not the link or the key — it ends in #t= and a long code."); return; }
@@ -302,12 +499,37 @@ ${MARKDOWN_JS}
   };
   $("keyIn").addEventListener("keydown", (e) => { if (e.key === "Enter") $("keyGo").click(); });
 
-  function renderWaiting(items) {
+  let waitItems = [], waitSig = "";
+  const picked = new Set();
+  function waitShown() {
+    const q = $("waitFilter").value.trim().toLowerCase(), who = $("waitWho").value;
+    return waitItems.filter((p) => (!who || (who === "agent") === p.byAgent) && (!q || (p.what + " " + p.why + " " + p.impact).toLowerCase().includes(q)));
+  }
+  function renderBulk() {
+    for (const id of [...picked]) if (!waitItems.some((p) => p.id === id)) picked.delete(id);
+    $("bulkBar").hidden = picked.size === 0;
+    $("bulkCount").textContent = picked.size + " selected";
+  }
+  function renderWaiting(items, force) {
+    // Re-render only when something changed: the page polls every few seconds,
+    // and a redraw would throw away a note being typed and the selection.
+    const sig = JSON.stringify(items.map((p) => [p.id, p.chips.length, p.filed]));
+    if (items !== waitItems) waitItems = items;
+    if (!force && sig === waitSig) return;
+    waitSig = sig;
     const box = $("waiting"); box.replaceChildren();
     $("waitCount").textContent = items.length ? "(" + items.length + ")" : "";
+    renderBulk();
     if (!items.length) { box.append(el("p", "empty", "Nothing is waiting. You're all caught up.")); return; }
-    for (const p of items) {
+    const list = waitShown();
+    if (!list.length) { box.append(el("p", "empty", "Nothing matches the filter.")); return; }
+    const filtering = $("waitFilter").value.trim() !== "" || $("waitWho").value !== "";
+    const shown = waitAll || filtering ? list : list.slice(0, 3);
+    for (const p of shown) {
       const c = el("div", "card");
+      const pick = el("label", "pick"); const cb = el("input"); cb.type = "checkbox"; cb.checked = picked.has(p.id); cb.setAttribute("aria-label", "Select: " + p.what);
+      cb.onchange = () => { cb.checked ? picked.add(p.id) : picked.delete(p.id); renderBulk(); };
+      pick.append(cb); c.append(pick);
       c.append(el("p", "what", p.what));
       c.append(el("p", "meta", "Why: " + p.why));
       c.append(el("p", "meta", "What it affects: " + p.impact));
@@ -317,13 +539,34 @@ ${MARKDOWN_JS}
       const yes = el("button", "primary", "Yes, allow once");
       const no = el("button", "", "No, thanks");
       const busy = (b) => { yes.disabled = no.disabled = b; };
-      yes.onclick = async () => { busy(true); const r = await api("/api/proposals/" + p.id + "/approve", { note: note.value }); toast(r.ok ? "Allowed once. Use “Do it now” when you're ready." : (r.message || "That did not work.")); await refresh(); };
-      no.onclick = async () => { busy(true); const r = await api("/api/proposals/" + p.id + "/refuse", { note: note.value }); toast(r.ok ? "Declined — it won't ask this again unless something changes." : (r.message || "That did not work.")); await refresh(); };
+      yes.onclick = async () => { busy(true); const r = await api("/api/proposals/" + p.id + "/approve", { note: note.value }); toast(r.ok ? "Allowed once. Use “Do it now” when you're ready." : (r.message || "That did not work.")); picked.delete(p.id); await refresh(true); };
+      no.onclick = async () => { busy(true); const r = await api("/api/proposals/" + p.id + "/refuse", { note: note.value }); toast(r.ok ? "Declined — it won't ask this again unless something changes." : (r.message || "That did not work.")); picked.delete(p.id); await refresh(true); };
       const row = el("div", "row"); row.append(yes, no);
-      if (canTriage && !p.chips.length) { const t = el("button", "", "Check risk"); t.title = "Ask TypeSafe's Jev what kind of action this is (sends the text above)"; t.onclick = async () => { t.disabled = true; const r = await api("/api/proposals/" + p.id + "/triage", {}); toast(r.ok ? "Checked." : (r.message || "Could not check.")); await refresh(); }; row.append(t); }
+      if (canTriage && !p.chips.length) { const t = el("button", "", "Check risk"); t.title = "Ask TypeSafe's Jev what kind of action this is (sends the text above)"; t.onclick = async () => { t.disabled = true; const r = await api("/api/proposals/" + p.id + "/triage", {}); toast(r.ok ? "Checked." : (r.message || "Could not check.")); await refresh(true); }; row.append(t); }
       c.append(note, row); box.append(c);
     }
+    if (!filtering && list.length > 3) {
+      const more = el("button", "more", waitAll ? "Show fewer" : "Show all " + list.length);
+      more.onclick = () => { waitAll = !waitAll; renderWaiting(waitItems, true); };
+      box.append(more);
+    }
   }
+  $("waitFilter").addEventListener("input", () => renderWaiting(waitItems, true));
+  $("waitWho").addEventListener("change", () => renderWaiting(waitItems, true));
+  $("waitSelectAll").onclick = () => { for (const p of waitShown()) picked.add(p.id); renderWaiting(waitItems, true); };
+  $("bulkClear").onclick = () => { picked.clear(); renderWaiting(waitItems, true); };
+  async function bulk(action) {
+    const ids = [...picked]; if (!ids.length) return;
+    if (action === "refuse" && !confirm("Decline " + ids.length + " suggestion(s)?")) return;
+    $("bulkYes").disabled = $("bulkNo").disabled = true;
+    let ok = 0;
+    for (const id of ids) { const r = await api("/api/proposals/" + id + "/" + action, {}); if (r.ok) { ok++; picked.delete(id); } }
+    $("bulkYes").disabled = $("bulkNo").disabled = false;
+    toast((action === "approve" ? "Allowed once: " : "Declined: ") + ok + " of " + ids.length);
+    await refresh(true);
+  }
+  $("bulkYes").onclick = () => bulk("approve");
+  $("bulkNo").onclick = () => bulk("refuse");
   function renderApproved(items) {
     const box = $("approved"); box.replaceChildren();
     if (!items.length) return;
@@ -342,20 +585,73 @@ ${MARKDOWN_JS}
     if (!items.length) { ul.append(el("li", "empty", empty)); return; }
     for (const it of items) ul.append(line(it));
   }
-  async function refresh() {
+  async function refresh(force) {
     let s; try { s = await api("/api/state"); } catch { return; }
     canTriage = s.canTriage;
-    $("name").textContent = s.agent.name; $("role").textContent = s.agent.role; subject = s.agent.subject; agentName = s.agent.name;
+    $("name").textContent = s.agent.name; $("role").textContent = s.agent.role; $("role").title = s.agent.role; subject = s.agent.subject; agentName = s.agent.name;
+    if (!restored) { restored = true; for (const m of chatLog) bubble(m.cls, m.text, m.small, true); }
     $("prompt").placeholder = "Ask " + s.agent.name + " a question, or say what you'd like done…";
     document.title = s.agent.name + " · Oh My AGI";
     const lv = $("level"); lv.textContent = s.autonomy.title; lv.className = "pill " + s.autonomy.tone;
+    $("statusDot").className = "dot " + s.autonomy.tone; $("statusText").textContent = s.autonomy.title;
+    renderEngine(s.engine);
     $("levelDetail").textContent = s.autonomy.detail;
-    renderWaiting(s.waiting); renderApproved(s.approved);
+    renderWaiting(s.waiting, force === true); renderApproved(s.approved);
+    $("nextRun").textContent = s.triggers.length ? s.triggers.map((t) => t.id + " · " + t.next).join("  ·  ") : "nothing scheduled";
     renderList("triggers", s.triggers, (t) => { const li = el("li"); li.append(el("div", "", t.id), el("div", "small", "every " + t.every + " · next " + t.next)); return li; }, "No schedule. Add one in soul/triggers.md.");
-    renderList("recent", s.recent, (r) => { const li = el("li"); li.append(el("div", "", r.asked), el("div", "small", r.when + " · " + r.backend + (r.ok ? "" : " · no answer"))); return li; }, "Nothing yet — say hello.");
+    const recentSig = JSON.stringify(s.recent.map((r) => [r.id, r.when]));
+    if (recentSig !== lastRecentSig) { lastRecentSig = recentSig;
+    const openIds = new Set([...document.querySelectorAll("#recent .recentitem.open")].map((x) => x.dataset.id));
+    renderList("recent", s.recent, (r) => {
+      const li = el("li", "recentitem"); li.dataset.id = r.id; li.tabIndex = 0; li.setAttribute("role", "button"); li.setAttribute("aria-expanded", "false");
+      li.append(el("div", "", r.asked), el("div", "small", r.when + " · " + r.backend + (r.ok ? "" : " · no answer")));
+      const open = async () => {
+        if (li.classList.contains("open")) { li.classList.remove("open"); li.setAttribute("aria-expanded", "false"); li.querySelector(".detail")?.remove(); return; }
+        li.classList.add("open"); li.setAttribute("aria-expanded", "true");
+        const d = el("div", "detail"); d.onclick = (e) => e.stopPropagation(); d.append(el("div", "small", "Loading…")); li.append(d);
+        let t; try { t = await api("/api/turn-detail?id=" + encodeURIComponent(r.id)); } catch { return; }
+        d.replaceChildren();
+        if (t.error) { d.append(el("div", "small", t.error)); return; }
+        if (t.content !== "full") { d.append(el("div", "small", "Only its size was kept for this one — the words were not recorded.")); return; }
+        const q = el("div", "notes"); q.textContent = t.asked || ""; d.append(el("div", "small", "Asked"), q);
+        const a = el("div", "notes"); a.style.whiteSpace = "normal"; a.append(t.answer ? md(t.answer) : document.createTextNode("(no answer)")); d.append(el("div", "small", "Answered by " + t.backend + (t.model ? " · " + t.model : "") + " · " + t.when), a);
+        const again = el("button", "", "Ask again"); again.onclick = () => { $("prompt").value = t.asked || ""; showTab("home"); $("prompt").focus(); };
+        const row = el("div", "row"); row.append(again); d.append(row);
+      };
+      li.onclick = open; li.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } };
+      if (openIds.has(r.id)) setTimeout(open, 0);
+      return li;
+    }, "Nothing yet — say hello."); }
   }
   let agentName = "";
-  function bubble(cls, text, small) {
+  let engine = null;
+  function renderEngine(e) {
+    if (e) engine = e;
+    if (!engine) return;
+    const pick = choice();
+    const chain = pick.backend ? pick.backend.split(",") : engine.chain;
+    const box = $("engChain"); box.replaceChildren();
+    chain.forEach((b, i) => {
+      if (i) box.append(el("i", "", "→"));
+      const local = b === "ollama";
+      box.append(el("span", "b" + (local ? " local" : ""), local ? "ollama · " + (pick.model || engine.localModel || "no model") : b));
+    });
+    $("engLocal").textContent = pick.model || engine.localModel || "not set";
+    $("engJudge").textContent = engine.judge ? engine.judge + " (local)" : "off";
+    $("engLast").textContent = engine.last ? engine.last.backend + (engine.last.model ? " · " + engine.last.model : "") + " · " + engine.last.when : "—";
+    $("engineLine").textContent = "answers: " + chain.join(" → ") + (engine.judge ? " · judge " + engine.judge : "") + (pick.backend || pick.model ? " · this browser's choice" : "");
+  }
+  // Gap 2 (D-079): the conversation survives a reload — in this browser only.
+  const CHAT_KEY = "ohmyagi-chat";
+  let chatLog = [];
+  try { chatLog = JSON.parse(localStorage.getItem(CHAT_KEY) || "[]"); } catch { chatLog = []; }
+  function remember(cls, text, small) {
+    chatLog.push({ cls, text, small: small || "" }); chatLog = chatLog.slice(-60);
+    try { localStorage.setItem(CHAT_KEY, JSON.stringify(chatLog)); } catch {}
+  }
+  $("chatClear").onclick = () => { chatLog = []; try { localStorage.removeItem(CHAT_KEY); } catch {} $("chat").replaceChildren(); };
+  function bubble(cls, text, small, restoring) {
+    if (!restoring) remember(cls, text, small);
     const b = el("div", "msg " + cls);
     if (cls === "it" && agentName) b.append(el("div", "small", agentName + " · AI"));
     if (cls === "it") { b.style.whiteSpace = "normal"; b.append(md(text)); } else b.append(document.createTextNode(text));
@@ -377,7 +673,7 @@ ${MARKDOWN_JS}
         bubble("it", r.text || "(no answer)", (r.route ? "answered by " + r.route : "") + (filed ? " · " + filed + " suggestion(s) waiting for you" : ""));
       }
     } catch (e) { bubble("it", e && e.message === "expired" ? "This page's link has changed — open the link ohmyagi web printed (or the service's key), then send again." : "Could not reach the agent — is ohmyagi web still running?"); }
-    $("send").disabled = false; $("sending").replaceChildren(); document.body.classList.remove("thinking"); refresh();
+    $("send").disabled = false; $("sending").replaceChildren(document.createTextNode("Ctrl+Enter to send")); document.body.classList.remove("thinking"); refresh();
   }
   $("send").onclick = () => send($("prompt").value);
   $("prompt").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) send($("prompt").value); });
@@ -391,18 +687,20 @@ ${MARKDOWN_JS}
   function choice() { return { backend: store.get("ohmyagi-backend"), model: store.get("ohmyagi-model") }; }
   const CATS = [["read", "Read", "look at files and folders"], ["write", "Write", "change or create files"], ["run", "Run", "run commands on this computer"], ["reach", "Reach", "contact other services and agents"]];
   const LEVELS = ["Never", "Ask me first", "Do it, then tell me"];
-  const TABS = ["home", "agent", "profile", "memories", "settings"];
+  const TABS = ["home", "agent", "profile", "memories", "privacy", "settings"];
   function showTab(which) {
     if (!TABS.includes(which)) which = "home";
     for (const t of TABS) {
       $(t).hidden = t !== which;
       $("tab" + t[0].toUpperCase() + t.slice(1)).setAttribute("aria-selected", String(t === which));
     }
+    document.querySelector("main").classList.toggle("homeon", which === "home");
     try { sessionStorage.setItem("ohmyagi-tab", which); } catch {}
     if (which === "settings") loadSettings();
     if (which === "agent") loadAgent();
     if (which === "memories") loadMemories();
-    if (which === "profile") loadProfile();
+    if (which === "profile") { loadProfile(); loadDrafts(); }
+    if (which === "privacy") loadPrivacy();
   }
   for (const t of TABS) $("tab" + t[0].toUpperCase() + t.slice(1)).onclick = () => showTab(t);
   const kv = (id, rows) => { const dl = $(id); dl.replaceChildren(); for (const [k, v] of rows) { if (v === null || v === undefined || v === "") continue; const dd = el("dd"); if (v instanceof Node) dd.append(v); else dd.textContent = v; dl.append(el("dt", "", k), dd); } };
@@ -427,7 +725,7 @@ ${MARKDOWN_JS}
 
   // ── Profile wizard (D-074) ──
   const WIZ = [
-    { title: "Identity", fields: [["name", "text", "Its name", "What people call it. Never the name of a real person it learned from."], ["role", "text", "Its job", "One sentence: what it is for."]] },
+    { title: "Identity", fields: [["name", "text", "Its name", "What people call it. Never the name of a real person it learned from."], ["role", "area", "Its job", "One sentence: what it is for."]] },
     { title: "Scope", fields: [["does", "area", "What it does", "The work that is its job."], ["doesNot", "area", "What it does not do", "Where its job stops."]] },
     { title: "Never", fields: [["prohibitions", "list", "It never…", "One per line. At least one."]] },
     { title: "Voice", fields: [["tone", "list", "Tone", "A word or two per line — plain, warm, brief…"], ["addressesUserAs", "text", "What it calls you", ""], ["refersToSelfAs", "list", "What it calls itself", "One per line."]] },
@@ -508,6 +806,98 @@ ${MARKDOWN_JS}
     toast(notes.filter(Boolean).join("\\n") || "Nothing to save.");
     await refresh(); await loadProfile();
   };
+  async function loadPrivacy() {
+    let p; try { p = await api("/api/privacy"); } catch { return; }
+    const pill = $("capPill"); pill.textContent = p.capture.on ? "on" : "off"; pill.className = "pill " + (p.capture.on ? "act" : "stop");
+    renderList("capLines", p.capture.lines, (l) => el("li", "", l), "No record of it for this subject.");
+    $("keptCount").textContent = p.keptInTotal ? "(" + p.keptInTotal + ")" : "";
+    $("keptGuards").textContent = "Filter: " + p.needles + " personal word(s), plus shapes like phone numbers · local judge: " + (p.judge || "off");
+    renderList("keptList", p.keptIn, (k) => { const li = el("li"); li.append(el("div", "", k.why), el("div", "small", k.when + " · would have gone to " + k.backend)); li.title = k.at; return li; }, "Nothing has been kept in.");
+    document.querySelectorAll(".subj").forEach((e) => e.textContent = subject);
+    renderList("basisList", p.basis, (b) => {
+      const li = el("li"); const row = el("div", "row"); row.style.justifyContent = "space-between"; row.style.marginTop = "0";
+      const who = el("div"); who.append(el("div", "", b.basis + " — " + b.uses.join(", ") + " "), el("div", "small", b.id + " · " + b.state + " · by " + b.approvedBy + " on " + b.at + " · " + (b.expires ? "until " + b.expires : "no end date") + (b.note ? " · " + b.note : "")));
+      row.append(who);
+      if (b.state === "active") {
+        const rv = el("button", "danger", "Revoke");
+        rv.onclick = async () => { if (!confirm("Revoke " + b.id + "?\\n\\nNothing more comes in on it. What already came in stays until erased.")) return; rv.disabled = true; const r = await api("/api/basis/revoke", { id: b.id }); toast(r.ok ? "Revoked." : (r.message || r.error || "That did not work.")); loadPrivacy(); };
+        row.append(rv);
+      }
+      li.append(row); return li;
+    }, "No basis on record — nothing of this subject can be taken in.");
+  }
+  let draftData = null;
+  async function loadDrafts() {
+    let r; try { r = await api("/api/persona"); } catch { return; }
+    draftData = r.draft; drawDrafts();
+  }
+  function drawDrafts() {
+    const box = $("draftList"); box.replaceChildren();
+    if (!draftData) { box.append(el("p", "empty", "No draft yet. Draft one in a terminal: ohmyagi persona extract <dir> --subject " + subject + " --from <folder>")); $("draftCount").textContent = ""; $("draftAdopt").disabled = true; return; }
+    const cl = draftData.claims, open = cl.filter((c) => c.decision === null).length, yes = cl.filter((c) => c.decision === "yes").length;
+    $("draftCount").textContent = "(" + open + " open · " + yes + " yes · " + (cl.length - open - yes) + " no)";
+    $("draftAdopt").disabled = yes === 0;
+    const want = $("draftShow").value;
+    const shown = cl.filter((c) => want === "all" || (want === "open" ? c.decision === null : c.decision === want));
+    if (!shown.length) { box.append(el("p", "empty", "Nothing here.")); return; }
+    for (const c of shown.slice(0, 60)) {
+      const card = el("div", "card");
+      const t = el("p", "what", c.text); t.append(el("span", "tag", c.field)); card.append(t);
+      card.append(el("p", "meta", "“" + c.quote + "” — " + c.source.label + ":" + c.source.line));
+      const row = el("div", "row");
+      const y = el("button", c.decision === "yes" ? "primary" : "", "True of the job"), n = el("button", c.decision === "no" ? "danger" : "", "Not");
+      const answer = async (a) => { y.disabled = n.disabled = true; const r = await api("/api/persona/decide", { claim: c.id, answer: a }); if (!r.ok) toast(r.message || "That did not work."); else { c.decision = a; drawDrafts(); } };
+      y.onclick = () => answer("yes"); n.onclick = () => answer("no");
+      row.append(y, n); card.append(row); box.append(card);
+    }
+  }
+  $("draftShow").addEventListener("change", drawDrafts);
+  $("draftAdopt").onclick = async () => {
+    const dry = await api("/api/persona/adopt", { write: false });
+    if (!dry.ok) { toast(dry.message || "Nothing to write."); return; }
+    if (!confirm((dry.text || "Write the answered-yes claims into the soul?") + "\\n\\nWrite it now? Nothing is committed.")) return;
+    const r = await api("/api/persona/adopt", { write: true });
+    toast(r.ok ? "Written into the soul. git diff shows it." : (r.message || "Not written."));
+    loadDrafts(); refresh(); loadProfile();
+  };
+  // ── Memories: create, edit, delete (D-081) ──
+  const MEM_TEMPLATE = "---\\nname: \\ndescription: \\nmetadata:\\n  type: reference\\n---\\n\\n";
+  let memEditing = null; // null = not editing; "" = new; path = editing that file
+  function memMode(editing) {
+    $("memImport").hidden = true; $("memEditor").hidden = !editing; $("memText").hidden = editing || !memShown; $("memActions").hidden = editing || !memShown;
+  }
+  function openEditor(path, text) {
+    memEditing = path;
+    $("memEdPath").value = path || "memory/notes/" + new Date().toISOString().slice(0, 10) + "-note.md";
+    $("memEdPath").disabled = !!path;
+    $("memEdText").value = text; $("memEdText").hidden = false; $("memEdPreview").hidden = true; $("memEdPrev").textContent = "Preview";
+    $("memEdNote").textContent = ""; $("memPath").textContent = path ? "Editing " + path : "New memory";
+    memMode(true); $("memEdText").focus();
+  }
+  $("memNew").onclick = () => { memShown = ""; drawMemories(); openEditor("", MEM_TEMPLATE); };
+  $("memEdit").onclick = () => { if (memShown) openEditor(memShown, memLast); };
+  $("memEdCancel").onclick = () => { memEditing = null; memMode(false); $("memPath").textContent = memShown || "Pick a memory on the left."; };
+  $("memEdPrev").onclick = () => {
+    const on = $("memEdPreview").hidden;
+    $("memEdPreview").hidden = !on; $("memEdText").hidden = on; $("memEdPrev").textContent = on ? "Edit text" : "Preview";
+    if (on) { $("memEdPreview").replaceChildren(md($("memEdText").value)); }
+  };
+  $("memEdSave").onclick = async () => {
+    const path = $("memEdPath").value.trim(), text = $("memEdText").value;
+    $("memEdSave").disabled = true; $("memEdNote").textContent = "Saving and re-indexing…";
+    let r; try { r = await api("/api/memory/write", { path, content: text }); } catch { $("memEdSave").disabled = false; return; }
+    $("memEdSave").disabled = false; $("memEdNote").textContent = "";
+    if (!r.ok) { toast(r.message || r.error || "Not saved."); return; }
+    toast(r.message || "Saved."); memEditing = null; await loadMemories(); openMemory(path);
+  };
+  $("memDelete").onclick = async () => {
+    const path = memShown; if (!path) return;
+    const plan = await api("/api/memory/delete", { path });
+    if (!plan.ok) { toast(plan.message || "Cannot delete it."); return; }
+    if (!confirm("Delete " + path + "?\\n\\n" + (plan.message || "") + "\\n\\nThe file goes, both indexes are rebuilt. Git history still holds it.")) return;
+    const r = await api("/api/memory/delete", { path, write: true });
+    toast(r.ok ? "Deleted." : (r.message || "Not deleted.")); memShown = ""; memMode(false); $("memPath").textContent = "Pick a memory on the left."; loadMemories();
+  };
   let mems = []; let memShown = "";
   function drawMemories() {
     const q = $("memFilter").value.trim().toLowerCase(); const kind = $("memType").value;
@@ -518,15 +908,17 @@ ${MARKDOWN_JS}
     for (const m of hits) {
       const b = el("button", "mem"); b.setAttribute("aria-current", String(m.path === memShown));
       const t = el("div", "what", m.title); if (m.type) t.append(el("span", "tag", m.type));
-      b.append(t, el("div", "small", m.description), el("div", "small", m.path + " · " + Math.max(1, Math.round(m.bytes / 1024)) + " KB"));
+      b.append(t, el("div", "small clamp2", m.description), el("div", "small", m.path + " · " + Math.max(1, Math.round(m.bytes / 1024)) + " KB"));
       b.onclick = () => openMemory(m.path);
       list.append(b);
     }
   }
   async function openMemory(path) {
     memShown = path; drawMemories(); $("memPath").textContent = path; $("memText").hidden = false; $("memText").textContent = "Loading…";
+    if (window.matchMedia("(max-width: 860px)").matches) $("h-memview").scrollIntoView({ behavior: "smooth", block: "start" });
     let r; try { r = await api("/api/memory?path=" + encodeURIComponent(path)); } catch { return; }
     memLast = r.error ? "" : r.text; showMem(r.error || "");
+    memEditing = null; $("memEditor").hidden = true; $("memImport").hidden = true; $("memActions").hidden = !!r.error;
   }
   let memLast = "";
   function showMem(error) {
@@ -540,8 +932,235 @@ ${MARKDOWN_JS}
     try { mems = await api("/api/memories"); } catch { return; }
     const sel = $("memType"); const keep = sel.value; sel.replaceChildren(el("option", "", "All kinds")); sel.firstChild.value = "";
     for (const k of [...new Set(mems.map((m) => m.type).filter(Boolean))].sort()) { const o = el("option", "", k); o.value = k; sel.append(o); }
-    sel.value = keep; drawMemories();
+    sel.value = keep; drawMemories(); loadMap();
   }
+  // D-082: the memory map — a force layout in 3D, drawn on a canvas by hand (no library: the page ships in the binary).
+  const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const TYPE_VAR = { user: "--brand", feedback: "--mint", project: "--focus" };
+  const map = { nodes: [], edges: [], deg: [], adj: [], index: new Map(), x: [], y: [], z: [], vx: [], vy: [], vz: [], heat: 0, rx: -0.35, ry: 0, zoom: 1, spin: !still, hover: -1, mouse: null, drag: null, pulses: [], raf: 0, last: 0, proj: [] };
+  function mapColor(type, css) { return type === "reference" ? "#a78bfa" : css(TYPE_VAR[type] || "--muted"); }
+  async function loadMap() {
+    let g; try { g = await api("/api/memories/graph"); } catch { return; }
+    const n = g.nodes.length;
+    const old = new Map(map.nodes.map((m, i) => [m.path, [map.x[i], map.y[i], map.z[i]]]));
+    map.nodes = g.nodes; map.edges = g.edges; map.pulses = [];
+    map.deg = g.nodes.map(() => 0); map.adj = g.nodes.map(() => []); map.index = new Map(g.nodes.map((m, i) => [m.path, i]));
+    for (const [a, b] of g.edges) { map.deg[a]++; map.deg[b]++; map.adj[a].push(b); map.adj[b].push(a); }
+    const R = 40 * Math.cbrt(n || 1);
+    for (const k of ["x", "y", "z", "vx", "vy", "vz"]) map[k] = new Array(n).fill(0);
+    for (let i = 0; i < n; i++) {
+      const was = old.get(g.nodes[i].path);
+      if (was) { map.x[i] = was[0]; map.y[i] = was[1]; map.z[i] = was[2]; continue; }
+      const t = Math.acos(1 - 2 * (i + 0.5) / n), p = Math.PI * (1 + Math.sqrt(5)) * i;
+      map.x[i] = R * Math.sin(t) * Math.cos(p); map.y[i] = R * Math.cos(t); map.z[i] = R * Math.sin(t) * Math.sin(p);
+    }
+    map.heat = 1;
+    if (still) { for (let i = 0; i < 400 && map.heat > 0.005; i++) mapStep(); }
+    const loose = map.deg.filter((d) => d === 0).length;
+    $("mapStats").textContent = "(" + n + " neurons · " + g.edges.length + " synapses" + (loose ? " · " + loose + " unlinked" : "") + (g.dangling ? " · " + g.dangling + " broken link" + (g.dangling === 1 ? "" : "s") : "") + ")";
+    const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+    const leg = $("mapLegend"); leg.replaceChildren();
+    for (const type of [...new Set(g.nodes.map((m) => m.type || ""))].sort()) { const s = el("span", "", type || "no kind"); const dot = el("i"); dot.style.background = mapColor(type, css); s.prepend(dot); leg.append(s); }
+    mapStart();
+  }
+  function mapStep() {
+    const n = map.nodes.length; if (!n || map.heat < 0.005) return;
+    const fx = new Float64Array(n), fy = new Float64Array(n), fz = new Float64Array(n);
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+      const dx = map.x[i] - map.x[j], dy = map.y[i] - map.y[j], dz = map.z[i] - map.z[j];
+      const d2 = dx * dx + dy * dy + dz * dz + 0.01, d = Math.sqrt(d2), f = 900 / d2;
+      fx[i] += dx / d * f; fy[i] += dy / d * f; fz[i] += dz / d * f; fx[j] -= dx / d * f; fy[j] -= dy / d * f; fz[j] -= dz / d * f;
+    }
+    for (const [a, b, w] of map.edges) {
+      const dx = map.x[b] - map.x[a], dy = map.y[b] - map.y[a], dz = map.z[b] - map.z[a];
+      // A hub (an index that links everything) pulls weakly on each, or it knots the whole map around itself.
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz) + 0.01, f = (d - 34) * 0.08 * Math.sqrt(Math.min(w, 4)) / Math.sqrt(Math.max(1, Math.min(map.deg[a], map.deg[b])));
+      fx[a] += dx / d * f; fy[a] += dy / d * f; fz[a] += dz / d * f; fx[b] -= dx / d * f; fy[b] -= dy / d * f; fz[b] -= dz / d * f;
+    }
+    for (let i = 0; i < n; i++) {
+      const pull = map.deg[i] ? 0.012 : 0.05;
+      map.vx[i] = (map.vx[i] + fx[i] - map.x[i] * pull) * 0.6; map.vy[i] = (map.vy[i] + fy[i] - map.y[i] * pull) * 0.6; map.vz[i] = (map.vz[i] + fz[i] - map.z[i] * pull) * 0.6;
+      map.x[i] += map.vx[i] * map.heat; map.y[i] += map.vy[i] * map.heat; map.z[i] += map.vz[i] * map.heat;
+    }
+    map.heat *= 0.985;
+  }
+  function mapDraw(dt) {
+    const c = $("mapCanvas"), w = c.clientWidth, h = c.clientHeight; if (!w || !h) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); }
+    const ctx = c.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, w, h);
+    const n = map.nodes.length; if (!n) return;
+    const style = getComputedStyle(document.documentElement), css = (v) => style.getPropertyValue(v).trim();
+    const ink = css("--ink"), brand = css("--brand");
+    // Fit the bulk, not the farthest stray: the 90th-percentile distance fills the frame.
+    const radii = map.x.map((x, i) => Math.hypot(x, map.y[i], map.z[i])).sort((a, b) => a - b);
+    const rmax = Math.max(1, radii[Math.floor((n - 1) * 0.9)]);
+    const scale = Math.min(w, h) * 0.46 / rmax * map.zoom;
+    const cy = Math.cos(map.ry), sy = Math.sin(map.ry), cx = Math.cos(map.rx), sx = Math.sin(map.rx);
+    const P = map.proj = new Array(n);
+    for (let i = 0; i < n; i++) {
+      const x1 = map.x[i] * cy - map.z[i] * sy, z1 = map.x[i] * sy + map.z[i] * cy;
+      const y1 = map.y[i] * cx - z1 * sx, z2 = map.y[i] * sx + z1 * cx;
+      const k = 1 / (1 + z2 / (rmax * 3.2));
+      P[i] = { x: w / 2 + x1 * scale * k, y: h / 2 + y1 * scale * k, z: z2, k, r: (2.6 + Math.sqrt(map.deg[i]) * 1.7) * k * Math.sqrt(map.zoom) };
+    }
+    // What the pointer is on: the nearest dot within reach, front ones first.
+    map.hover = -1;
+    if (map.mouse && !(map.drag && map.drag.moved > 5)) {
+      let best = 1e9;
+      for (let i = 0; i < n; i++) { const d = Math.hypot(P[i].x - map.mouse[0], P[i].y - map.mouse[1]) - P[i].r; if (d < 8 && d + P[i].z * 0.001 < best) { best = d + P[i].z * 0.001; map.hover = i; } }
+    }
+    const q = $("memFilter").value.trim().toLowerCase(), kind = $("memType").value;
+    const match = (m) => (!kind || m.type === kind) && (!q || (m.title + " " + m.path).toLowerCase().includes(q));
+    const sel = map.index.has(memShown) ? map.index.get(memShown) : -1;
+    const focus = map.hover >= 0 ? map.hover : sel;
+    const near = new Set(focus >= 0 ? [focus, ...map.adj[focus]] : []);
+    const lit = (i) => match(map.nodes[i]) && (focus < 0 || near.has(i));
+    // Synapses.
+    ctx.lineCap = "round";
+    for (const [a, b, wt] of map.edges) {
+      const on = focus >= 0 && (a === focus || b === focus);
+      ctx.globalAlpha = on ? 0.85 : (lit(a) && lit(b) ? 0.1 + 0.2 * Math.min(P[a].k, P[b].k) : 0.04);
+      ctx.strokeStyle = on ? brand : ink; ctx.lineWidth = (on ? 1.4 : 0.7) + Math.min(wt, 4) * 0.25;
+      ctx.beginPath(); ctx.moveTo(P[a].x, P[a].y); ctx.lineTo(P[b].x, P[b].y); ctx.stroke();
+    }
+    // Signals running along the synapses.
+    if (!still && map.edges.length) {
+      const rate = Math.min(8, 1 + map.edges.length / 12) * dt / 1000;
+      if (Math.random() < rate) { const e = Math.floor(Math.random() * map.edges.length); map.pulses.push({ e, t: 0, back: Math.random() < 0.5 }); }
+      if (focus >= 0 && Math.random() < dt / 180) { const js = map.adj[focus]; if (js.length) { const j = js[Math.floor(Math.random() * js.length)]; const e = map.edges.findIndex(([a, b]) => (a === focus && b === j) || (b === focus && a === j)); if (e >= 0) map.pulses.push({ e, t: 0, back: map.edges[e][0] !== focus }); } }
+      map.pulses = map.pulses.filter((p) => (p.t += dt / 1100) < 1).slice(-120);
+      for (const p of map.pulses) {
+        const [a, b] = map.edges[p.e]; const from = P[p.back ? b : a], to = P[p.back ? a : b];
+        const x = from.x + (to.x - from.x) * p.t, y = from.y + (to.y - from.y) * p.t;
+        ctx.globalAlpha = Math.sin(p.t * Math.PI) * (lit(a) || lit(b) ? 0.95 : 0.2);
+        ctx.fillStyle = brand; ctx.shadowColor = brand; ctx.shadowBlur = 10;
+        ctx.beginPath(); ctx.arc(x, y, 1.8 * Math.sqrt(map.zoom), 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.shadowBlur = 0;
+    }
+    // Neurons, far ones first.
+    const order = [...P.keys()].sort((a, b) => P[b].z - P[a].z);
+    for (const i of order) {
+      const p = P[i], color = mapColor(map.nodes[i].type, css), on = lit(i);
+      ctx.globalAlpha = on ? 0.35 + 0.65 * Math.min(1, p.k) : 0.12;
+      ctx.fillStyle = color; ctx.shadowColor = color; ctx.shadowBlur = on ? 14 * p.k : 0;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
+      if (i === sel || i === map.hover) { ctx.shadowBlur = 0; ctx.globalAlpha = 1; ctx.strokeStyle = brand; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(p.x, p.y, p.r + 4, 0, Math.PI * 2); ctx.stroke(); }
+    }
+    ctx.shadowBlur = 0;
+    // Names: the hubs, and whatever is in focus.
+    const hubs = [...P.keys()].filter((i) => map.deg[i] > 0).sort((a, b) => map.deg[b] - map.deg[a]).slice(0, w > 700 ? 7 : 4);
+    ctx.font = "600 11px Electrolize, 'IBM Plex Sans Thai', system-ui, sans-serif"; ctx.textAlign = "center";
+    const taken = [];
+    for (const i of [...new Set(focus >= 0 ? [focus, ...near] : hubs)]) {
+      if (!match(map.nodes[i])) continue;
+      const t0 = map.nodes[i].title, t = t0.length > 28 ? t0.slice(0, 27) + "…" : t0;
+      const tw = ctx.measureText(t).width, bx = P[i].x - tw / 2, by = P[i].y - P[i].r - 17;
+      // A name that would sit on another is left off; the focused one always shows.
+      if (i !== focus && taken.some((b) => bx < b[0] + b[2] && b[0] < bx + tw && by < b[1] + 13 && b[1] < by + 13)) continue;
+      taken.push([bx, by, tw]);
+      ctx.globalAlpha = 0.85; ctx.fillStyle = css("--card"); ctx.fillRect(bx - 3, by, tw + 6, 14);
+      ctx.globalAlpha = i === focus ? 1 : 0.8; ctx.fillStyle = ink; ctx.fillText(t, P[i].x, by + 11);
+    }
+    ctx.globalAlpha = 1;
+    const tip = $("mapTip");
+    if (map.hover < 0) tip.hidden = true;
+    else {
+      const m = map.nodes[map.hover]; tip.replaceChildren(el("div", "what", m.title), el("div", "small", (m.type || "no kind") + " · " + map.deg[map.hover] + " link(s) · " + m.path));
+      tip.hidden = false; tip.style.left = Math.min(w - 240, P[map.hover].x + 14) + "px"; tip.style.top = Math.max(4, P[map.hover].y - 12) + "px";
+    }
+    c.style.cursor = map.drag ? "grabbing" : map.hover >= 0 ? "pointer" : "grab";
+  }
+  function mapFrame(now) {
+    map.raf = 0;
+    if ($("memories").hidden || $("mapBody").hidden || document.hidden) return;
+    const dt = map.last ? Math.min(64, now - map.last) : 16; map.last = now;
+    mapStep(); if (map.spin && !map.drag) map.ry += dt * 0.00012;
+    mapDraw(dt);
+    map.raf = requestAnimationFrame(mapFrame);
+  }
+  function mapStart() { if (!map.raf) { map.last = 0; map.raf = requestAnimationFrame(mapFrame); } }
+  document.addEventListener("visibilitychange", mapStart);
+  const cv = $("mapCanvas");
+  const mouseAt = (e) => { const r = cv.getBoundingClientRect(); map.mouse = [e.clientX - r.left, e.clientY - r.top]; };
+  cv.addEventListener("pointerdown", (e) => { mouseAt(e); map.drag = { x: e.clientX, y: e.clientY, moved: 0 }; try { cv.setPointerCapture(e.pointerId); } catch {} });
+  cv.addEventListener("pointermove", (e) => {
+    mouseAt(e);
+    if (!map.drag) return;
+    const dx = e.clientX - map.drag.x, dy = e.clientY - map.drag.y;
+    map.drag.moved += Math.abs(dx) + Math.abs(dy); map.drag.x = e.clientX; map.drag.y = e.clientY;
+    map.ry += dx * 0.008; map.rx = Math.max(-1.5, Math.min(1.5, map.rx + dy * 0.008));
+  });
+  cv.addEventListener("pointerup", (e) => {
+    mouseAt(e); const click = map.drag && map.drag.moved < 6; map.drag = null;
+    if (click && map.hover >= 0) { openMemory(map.nodes[map.hover].path); $("h-memview").scrollIntoView({ behavior: still ? "auto" : "smooth", block: "nearest" }); }
+  });
+  cv.addEventListener("pointercancel", () => { map.drag = null; });
+  cv.addEventListener("pointerleave", () => { if (!map.drag) map.mouse = null; });
+  cv.addEventListener("wheel", (e) => { e.preventDefault(); map.zoom = Math.max(0.4, Math.min(5, map.zoom * Math.exp(-e.deltaY * 0.0012))); }, { passive: false });
+  $("mapSpin").setAttribute("aria-pressed", String(map.spin));
+  $("mapSpin").onclick = () => { map.spin = !map.spin; $("mapSpin").setAttribute("aria-pressed", String(map.spin)); };
+  $("mapReset").onclick = () => { map.rx = -0.35; map.ry = 0; map.zoom = 1; map.heat = 1; };
+  function mapShow(on) { $("mapBody").hidden = !on; $("mapToggle").textContent = on ? "Hide map" : "Show map"; $("mapToggle").setAttribute("aria-expanded", String(on)); $("mapSpin").hidden = $("mapReset").hidden = !on; store.set("ohmyagi-map", on ? "" : "off"); if (on) mapStart(); }
+  $("mapToggle").onclick = () => mapShow($("mapBody").hidden);
+  mapShow(store.get("ohmyagi-map") !== "off");
+  // D-084: import files and links. Each is checked (a dry run) as it is added; Import writes the ones that passed.
+  let queue = [];
+  function drawQueue() {
+    const ul = $("memQueue"); ul.replaceChildren();
+    for (const q of queue) {
+      const li = el("li"); const top = el("div", "row"); top.style.margin = "0"; top.style.justifyContent = "space-between";
+      const state = { checking: ["Reading…", "pill ask"], ready: ["Ready", "pill act"], failed: ["Cannot import", "pill stop"], importing: ["Importing…", "pill ask"], done: ["Imported", "pill act"] }[q.state];
+      top.append(el("span", "what", q.label), el("span", state[1], state[0]));
+      li.append(top); if (q.message) li.append(el("div", "msg", q.message));
+      if (q.state === "ready" || q.state === "failed") { const rm = el("button", "", "Remove"); rm.style.marginTop = "6px"; rm.onclick = () => { queue = queue.filter((x) => x !== q); drawQueue(); }; li.append(rm); }
+      ul.append(li);
+    }
+    $("memImpGo").disabled = !queue.some((q) => q.state === "ready");
+  }
+  async function check(q) {
+    q.state = "checking"; drawQueue();
+    let r; try { r = await api("/api/memory/import", q.body); } catch { r = { ok: false, error: "The server did not answer." }; }
+    q.state = r.ok ? "ready" : "failed"; q.message = r.message || r.error || ""; drawQueue();
+  }
+  function readB64(file) {
+    return new Promise((ok, no) => { const fr = new FileReader(); fr.onload = () => ok(String(fr.result).split(",")[1] || ""); fr.onerror = () => no(fr.error); fr.readAsDataURL(file); });
+  }
+  async function addFiles(files) {
+    for (const f of files) {
+      const q = { label: f.name, state: "checking", message: "" }; queue.push(q);
+      if (f.size > 20 * 1024 * 1024) { q.state = "failed"; q.message = "Over 20 MB."; drawQueue(); continue; }
+      try { q.body = { name: f.name, data: await readB64(f) }; } catch { q.state = "failed"; q.message = "The browser could not read it."; drawQueue(); continue; }
+      check(q);
+    }
+    drawQueue();
+  }
+  $("memImp").onclick = () => {
+    memEditing = null; $("memEditor").hidden = true; $("memText").hidden = true; $("memActions").hidden = true;
+    $("memImport").hidden = false; $("memPath").textContent = "Import into memory"; drawQueue();
+    if (window.matchMedia("(max-width: 860px)").matches) $("h-memview").scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  $("memImpClose").onclick = () => { $("memImport").hidden = true; queue = queue.filter((q) => q.state !== "done"); memMode(false); $("memPath").textContent = memShown || "Pick a memory on the left."; };
+  $("memFiles").addEventListener("change", () => { addFiles([...$("memFiles").files]); $("memFiles").value = ""; });
+  const drop = $("memDrop");
+  drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+  drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); if (e.dataTransfer && e.dataTransfer.files.length) addFiles([...e.dataTransfer.files]); });
+  $("memUrlAdd").onclick = () => {
+    const url = $("memUrl").value.trim(); if (!url) { toast("Paste a link first."); return; }
+    const q = { label: url, state: "checking", message: "", body: { url } }; queue.push(q); $("memUrl").value = ""; check(q);
+  };
+  $("memUrl").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("memUrlAdd").click(); } });
+  $("memImpGo").onclick = async () => {
+    $("memImpGo").disabled = true; let done = 0;
+    for (const q of queue.filter((x) => x.state === "ready")) {
+      q.state = "importing"; drawQueue();
+      let r; try { r = await api("/api/memory/import", Object.assign({}, q.body, { write: true })); } catch { r = { ok: false, error: "The server did not answer." }; }
+      q.state = r.ok ? "done" : "failed"; q.message = r.message || r.error || ""; if (r.ok) done++; drawQueue();
+    }
+    $("memImpNote").textContent = done ? done + " imported." : ""; if (done) { toast(done + " imported."); loadMemories(); }
+  };
   $("memFilter").addEventListener("input", drawMemories);
   $("memType").addEventListener("change", drawMemories);
   $("memSearch").onclick = async () => {
@@ -606,7 +1225,7 @@ ${MARKDOWN_JS}
   }
   let subject = "";
   function showModelNow() { const p = choice(); $("modelNow").textContent = p.backend || p.model ? "Using " + (p.backend || "the default backend") + (p.model ? " · " + p.model : "") : "Using the default."; }
-  $("saveModel").onclick = () => { store.set("ohmyagi-backend", $("backendSel").value); store.set("ohmyagi-model", $("modelIn").value.trim()); showModelNow(); toast("Saved for this browser."); };
+  $("saveModel").onclick = () => { store.set("ohmyagi-backend", $("backendSel").value); store.set("ohmyagi-model", $("modelIn").value.trim()); showModelNow(); renderEngine(); toast("Saved for this browser."); };
   $("checkUpdate").onclick = async () => { $("checkUpdate").disabled = true; const r = await api("/api/update-check", {}); toast(r.message || (r.ok ? "Checked." : "Could not check.")); $("checkUpdate").disabled = false; loadSettings(); };
   refresh().then(() => { if (startTab !== "home") showTab(startTab); }); setInterval(refresh, 5000);
 })();

@@ -307,7 +307,7 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // because the one command that got this wrong, `ohmyagi stop`, was the one
   // where getting it wrong set the brake. See `test/cli/help-does-nothing.test.ts`.
   // 83 since S5.2: one `case` label and one import, for `proposal`.
-  ["bin/om-agi.ts", { lines: 115, why: "entry point — dispatch and process.exit" }],
+  ["bin/om-agi.ts", { lines: 118, why: "entry point — dispatch and process.exit" }],
   // One `export const USAGE = \`…\`` around 240 lines of help text. A test could
   // import it and the floor would read 100% off a single declaration while the
   // text said anything at all; the size is the only honest number here.
@@ -320,7 +320,7 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // three paragraphs that say where proposals are kept and why it is not the
   // ledger (D-029), that the comparison is exact and where that misses, and
   // that om-agi does not turn an agent's own actions into proposals.
-  ["bin/usage.ts", { lines: 528, why: "help text — one declaration, 528 lines of prose" }],
+  ["bin/usage.ts", { lines: 550, why: "help text — one declaration, 550 lines of prose" }],
   // The commands. Each is `cmdX(rest)` returning an exit code, and each reads
   // `process.env`, `homedir()` or `cwd` on its way. Calling them in-process
   // would mean swapping `HOME` inside the test runner; the tests spawn instead.
@@ -346,12 +346,13 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   ["bin/commands/triggers.ts", { lines: 155, why: "command — run by spawning the CLI" }],
   ["bin/commands/setup.ts", { lines: 166, why: "command — run by spawning the CLI" }],
   ["bin/commands/a2a.ts", { lines: 216, why: "command — serve listens until Ctrl-C; its parts are tested in src/a2a" }],
+  ["bin/commands/basis.ts", { lines: 106, why: "command — asks a person at a terminal; its parts are tested in src/consent/basis, and test/cli/basis.test.ts runs it" }],
   ["bin/commands/eval.ts", { lines: 105, why: "command — runs turns as children; its parts are tested in src/soul/evals, and test/cli/eval.test.ts runs it against a stub model" }],
-  ["bin/commands/persona.ts", { lines: 230, why: "command — asks a local model and a person at a terminal; its parts are tested in src/soul/extract, and test/cli/persona.test.ts runs it against a stub model" }],
+  ["bin/commands/persona.ts", { lines: 266, why: "command — asks a local model and a person at a terminal; its parts are tested in src/soul/extract, and test/cli/persona.test.ts runs it against a stub model" }],
   ["bin/commands/chat.ts", { lines: 227, why: "command — serve polls until Ctrl-C; its parts are tested in src/connectors, and test/cli/chat.test.ts runs it against a stub Telegram" }],
   ["bin/commands/update.ts", { lines: 77, why: "command — asks GitHub; its parts are tested in src/update" }],
-  ["bin/commands/web.ts", { lines: 268, why: "command — serves until Ctrl-C; its parts are tested in src/web" }],
-  ["bin/commands/memory.ts", { lines: 215, why: "command — run by spawning the CLI" }],
+  ["bin/commands/web.ts", { lines: 330, why: "command — serves until Ctrl-C; its parts are tested in src/web" }],
+  ["bin/commands/memory.ts", { lines: 343, why: "command — run by spawning the CLI" }],
   ["bin/commands/observe.ts", { lines: 750, why: "command — run by spawning the CLI" }],
   // S5.2. The store itself is `src/decide/proposals.ts`, on the floor and
   // tested there; what is here is the parsing, the four subcommands, and the
@@ -468,7 +469,7 @@ export const PROOFS = new Map<string, Proof>([
       provedOn: "2026-09-24",
       by: "npm run demo -- --model <a local model>",
       result:
-        "15/15 criteria passed on 2026-09-25 on the tree released as 0.5.1 (run caa68c60, table kept in notes/2026-09-25_demo-v0.5.1.txt), on 0.5.0 the same day (run 5e5f6903, table kept in notes/2026-09-25_demo-v0.5.0.txt), on 0.4.2 the same day (run fbad84d0, table kept in notes/2026-09-25_demo-v0.4.2.txt), on 0.4.1 the same day (run 8a52848c, table kept in notes/2026-09-25_demo-v0.4.1.txt), on 0.4.0 the day before (run 065c6900, table kept in notes/2026-09-24_demo-v0.4.0.txt), on 0.3.0 the same day (run cbeda900, " +
+        "15/15 criteria passed on 2026-09-26 on the tree released as 0.6.0 (run 1972948d, table kept in notes/2026-09-26_demo-v0.6.0.txt), on 0.5.1 on 2026-09-25 (run caa68c60, table kept in notes/2026-09-25_demo-v0.5.1.txt), on 0.5.0 the same day (run 5e5f6903, table kept in notes/2026-09-25_demo-v0.5.0.txt), on 0.4.2 the same day (run fbad84d0, table kept in notes/2026-09-25_demo-v0.4.2.txt), on 0.4.1 the same day (run 8a52848c, table kept in notes/2026-09-25_demo-v0.4.1.txt), on 0.4.0 the day before (run 065c6900, table kept in notes/2026-09-24_demo-v0.4.0.txt), on 0.3.0 the same day (run cbeda900, " +
         "table kept in notes/2026-09-24_demo-v0.3.0.txt), on 0.2.0 the same day (run fd433912, " +
         "table kept in notes/2026-09-24_demo-v0.2.0.txt), and earlier that day on the tree released as 0.1.0 (run 2ddacb38, " +
         "table kept in notes/2026-09-24_demo-v0.1.0.txt). Before that, " +
@@ -483,13 +484,15 @@ export const PROOFS = new Map<string, Proof>([
   [
     "scripts/cli-parity.ts",
     {
-      sha256: "964349b14ed47899eae26c401081a6b4c9a1b910849a5b41681527eb8481e324",
+      sha256: "5eeab6f7a1e7acb9a7bc8f0c2ad32dac3b06370e881a4fdf8e50e7fb546a1f3d",
       provedOn: "2026-09-25",
       by: "npm run parity -- --base . --selftest",
       result:
         "exit 0 — control 1 steady, control 2 not blind to a changed character, control 3 not " +
         "blind to an added line, and control 4 refusing a side with no engine in it, over all " +
-        "17 case(s), 187 invocation(s) per side. Re-proved for `eval` (D-073), which added bare `eval` " +
+        "17 case(s), 188 invocation(s) per side. Re-proved for `basis` (D-077), which added bare `basis` " +
+        "to `02-unknown` — control 1 first caught a test that had left a collection in the machine's real " +
+        "Qdrant, which that test no longer can; before that for `eval` (D-073), which added bare `eval` " +
         "to `02-unknown`; before that for `persona` (D-072), which added bare `persona` " +
         "to `02-unknown`, and made a recorded file the duration rule fires in show its size as `<varies>` — " +
         "control 1 had caught two runs of one revision disagreeing on a ledger file by one byte, a 9 ms " +

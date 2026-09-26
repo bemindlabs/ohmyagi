@@ -16,9 +16,12 @@
  * rebinding; and loopback by default.
  */
 
-import type { MemoryEntry } from "./memories.ts";
+import { fontBytes } from "./fonts.ts";
+import type { MemoryEntry, MemoryGraph } from "./memories.ts";
 import { readProfile, type Profile } from "../soul/profile.ts";
-import type { AgentInfo, SettingsState, ViewState } from "./view.ts";
+import { memoryPathProblem } from "../memory/write.ts";
+import { IMPORT_KINDS, MAX_SOURCE_BYTES, urlProblem } from "../memory/import.ts";
+import type { AgentInfo, PrivacyState, SettingsState, ViewState } from "./view.ts";
 import { PAGE_HTML } from "./page.ts";
 
 export const TOKEN_HEADER = "x-ohmyagi-token";
@@ -28,7 +31,18 @@ export interface WebDeps {
   readonly settings: () => Promise<SettingsState>;
   readonly agent: () => Promise<AgentInfo>;
   readonly memories: () => Promise<readonly MemoryEntry[]>;
+  readonly memoryGraph: () => Promise<MemoryGraph>;
   readonly memory: (path: string) => Promise<{ readonly ok: true; readonly text: string } | { readonly ok: false; readonly reason: string }>;
+  readonly privacy: () => Promise<PrivacyState>;
+  /** `memory write` with this text for this path — handed over as a file that lives only for the call. */
+  readonly memoryWrite: (path: string, content: string) => Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string }>;
+  /** `memory import` of an uploaded file or a web link — a plan unless `write` (D-084). */
+  readonly memoryImport: (
+    source: { readonly kind: "file"; readonly name: string; readonly bytes: Uint8Array } | { readonly kind: "url"; readonly url: string },
+    write: boolean,
+  ) => Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string }>;
+  /** One ledger line, asked and answered, or undefined. */
+  readonly turnDetail: (id: string) => Promise<{ readonly asked: string | null; readonly answer: string | null; readonly backend: string; readonly model: string | null; readonly when: string; readonly content: string } | undefined>;
   /** The soul on every axis, or why it does not load. */
   readonly profile: () => Promise<{ readonly ok: true; readonly profile: Profile } | { readonly ok: false; readonly reason: string }>;
   /** `soul edit` with this profile — a dry run unless `write`. */
@@ -104,6 +118,12 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[]) 
         },
       });
     }
+    // D-083: the page's fonts, from inside the binary. Nothing in them is the agent's, so no token.
+    const font = /^\/fonts\/([a-z0-9-]+)\.woff2$/.exec(url.pathname);
+    if (req.method === "GET" && font !== null) {
+      const bytes = fontBytes(font[1]!);
+      if (bytes !== undefined) return new Response(bytes, { headers: { "content-type": "font/woff2", "cache-control": "public, max-age=31536000, immutable" } });
+    }
     if (!url.pathname.startsWith("/api/")) return new Response("not found", { status: 404 });
     if (req.headers.get(TOKEN_HEADER) !== token) return json({ error: "this page's link has expired — open the address `ohmyagi web` printed" }, 401);
 
@@ -111,7 +131,22 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[]) 
     if (req.method === "GET" && url.pathname === "/api/settings") return json(await deps.settings());
     if (req.method === "GET" && url.pathname === "/api/agent") return json(await deps.agent());
     if (req.method === "GET" && url.pathname === "/api/profile") return json(await deps.profile());
+    if (req.method === "GET" && url.pathname === "/api/privacy") return json(await deps.privacy());
+    if (req.method === "GET" && url.pathname === "/api/persona") {
+      const out = await deps.run(["persona", "show", "--subject", deps.subject, "--json"]);
+      try {
+        return json(JSON.parse(out.stdout));
+      } catch {
+        return json({ draft: null, reason: said(out.stderr) || "no draft" });
+      }
+    }
+    if (req.method === "GET" && url.pathname === "/api/turn-detail") {
+      const tid = url.searchParams.get("id") ?? "";
+      const found = ID.test(tid) ? await deps.turnDetail(tid) : undefined;
+      return found === undefined ? json({ error: "no such turn" }, 404) : json(found);
+    }
     if (req.method === "GET" && url.pathname === "/api/memories") return json(await deps.memories());
+    if (req.method === "GET" && url.pathname === "/api/memories/graph") return json(await deps.memoryGraph());
     if (req.method === "GET" && url.pathname === "/api/memory") {
       const read = await deps.memory(url.searchParams.get("path") ?? "");
       return read.ok ? json({ text: read.text }) : json({ error: read.reason }, 404);
@@ -199,6 +234,66 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[]) 
       if (query === "" || query.length > 500) return json({ error: "type what to look for" }, 400);
       const out = await deps.run(["memory", "search", ...place, "--limit", "8", query]);
       return json({ ok: out.code === 0, text: out.stdout.trim(), message: said(out.stderr) });
+    }
+    // D-081: a memory created or edited is `memory write --yes`; a delete is `memory forget`,
+    // shown first unless write is true. The path is checked here and again by the command.
+    if (url.pathname === "/api/memory/write") {
+      const path = body["path"];
+      const content = body["content"];
+      if (typeof path !== "string" || memoryPathProblem(path) !== undefined || typeof content !== "string") return json({ ok: false, error: typeof path === "string" ? memoryPathProblem(path) ?? "no text" : "no path" }, 400);
+      const out = await deps.memoryWrite(path, content);
+      return json({ ok: out.code === 0, message: said(out.stdout) || said(out.stderr) });
+    }
+    // D-084: a file (sent as base64) or a link, into memory as markdown. The command reads and gates it.
+    if (url.pathname === "/api/memory/import") {
+      const write = body["write"] === true;
+      const link = body["url"];
+      const name = body["name"];
+      const data = body["data"];
+      let out;
+      if (typeof link === "string") {
+        const problem = urlProblem(link);
+        if (problem !== undefined) return json({ ok: false, error: problem }, 400);
+        out = await deps.memoryImport({ kind: "url", url: link }, write);
+      } else if (typeof name === "string" && typeof data === "string") {
+        const ext = /\.[A-Za-z0-9]+$/.exec(name)?.[0]?.toLowerCase() ?? "";
+        if (!/^[^/\\\0]{1,200}$/.test(name) || IMPORT_KINDS[ext] === undefined) return json({ ok: false, error: `cannot read ${ext || "a file with no extension"} — ${Object.keys(IMPORT_KINDS).join(" ")}` }, 400);
+        if (data.length > Math.ceil((MAX_SOURCE_BYTES * 4) / 3) + 4) return json({ ok: false, error: `over ${MAX_SOURCE_BYTES / 1024 / 1024} MB` }, 400);
+        let bytes: Uint8Array;
+        try {
+          bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+        } catch {
+          return json({ ok: false, error: "the file did not arrive whole" }, 400);
+        }
+        out = await deps.memoryImport({ kind: "file", name, bytes }, write);
+      } else return json({ ok: false, error: "send a file or a link" }, 400);
+      return json({ ok: out.code === 0, message: [said(out.stdout), said(out.stderr)].filter((m) => m !== "").join("\n") });
+    }
+    if (url.pathname === "/api/memory/delete") {
+      const path = body["path"];
+      if (typeof path !== "string" || memoryPathProblem(path) !== undefined) return json({ ok: false, error: "not a memory file" }, 400);
+      const out = await deps.run(["memory", "forget", ...place, "--file", path, ...(body["write"] === true ? ["--yes"] : [])]);
+      // A refusal is on stderr after the plan on stdout: show both, or the page says "would go" and hides why nothing went.
+      return json({ ok: out.code === 0, message: [said(out.stdout), said(out.stderr)].filter((m) => m !== "").join("\n") });
+    }
+    // Gap 4 (D-079): answer a drafted claim; write the yeses (adopt shows first, writes with write: true).
+    if (url.pathname === "/api/persona/decide") {
+      const cid = body["claim"];
+      const answer = body["answer"];
+      if (typeof cid !== "string" || !/^[0-9a-f-]{8}$/.test(cid) || (answer !== "yes" && answer !== "no")) return json({ error: "no such claim" }, 400);
+      const out = await deps.run(["persona", "decide", cid, "--subject", deps.subject, answer === "yes" ? "--yes" : "--no"]);
+      return json({ ok: out.code === 0, message: said(out.stdout) || said(out.stderr) });
+    }
+    if (url.pathname === "/api/persona/adopt") {
+      const out = await deps.run(["persona", "adopt", deps.dir, "--subject", deps.subject, ...(body["write"] === true ? ["--yes"] : [])]);
+      return json({ ok: out.code === 0, message: said(out.stdout) || said(out.stderr), text: out.stdout.trim() });
+    }
+    // Gap 3: revoking a basis narrows what may come in, so the page may do it; recording one stays typed.
+    if (url.pathname === "/api/basis/revoke") {
+      const rid = body["id"];
+      if (typeof rid !== "string" || !/^[0-9a-f]{8}$/.test(rid)) return json({ error: "no such record" }, 400);
+      const out = await deps.run(["basis", "revoke", rid, "--subject", deps.subject]);
+      return json({ ok: out.code === 0, message: said(out.stdout) || said(out.stderr) });
     }
     if (url.pathname === "/api/update-check") {
       const out = await deps.run(["update", "--check"]);

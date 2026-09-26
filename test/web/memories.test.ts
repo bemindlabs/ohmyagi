@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { listMemories, memoryMeta, readMemoryFile } from "../../src/web/memories.ts";
+import { listMemories, memoryGraph, memoryLinks, memoryMeta, readMemoryFile } from "../../src/web/memories.ts";
 
 const scratch: string[] = [];
 afterEach(async () => {
@@ -49,5 +49,26 @@ describe("memories on the page", () => {
       expect(read.ok, path).toBe(false);
     }
     expect((await listMemories(dir)).map((m) => m.path)).not.toContain("memory/link.md");
+  });
+});
+
+describe("the memory map (D-082)", () => {
+  test("wiki names and relative .md links, not web links", () => {
+    expect(memoryLinks("see [[ports]] and [[Server notes|notes]] and [[a#h]]; [x](../y.md) [z](memory/z.md#top) [w](https://e.com/w.md)")).toEqual({
+      names: ["ports", "Server notes", "a"],
+      files: ["../y.md", "memory/z.md"],
+    });
+  });
+
+  test("a neuron per file, one synapse per linked pair, broken links counted", async () => {
+    const dir = await agent();
+    await writeFile(join(dir, "memory", "notes.md"), "# Server notes\n\nSee [[ports]] and [[ports]] again, [[nowhere]], and [it](imported/owner/ports.md).\n");
+    await writeFile(join(dir, "memory", "imported", "owner", "back.md"), "---\nname: back\n---\nBack to [[Server notes]] and [up](../../notes.md) and [[back]].\n");
+    const g = await memoryGraph(dir);
+    expect(g.nodes.map((n) => n.path)).toEqual(["memory/imported/owner/back.md", "memory/imported/owner/ports.md", "memory/notes.md"]);
+    expect(g.nodes[1]).toEqual({ path: "memory/imported/owner/ports.md", title: "ports", type: "reference", bytes: expect.any(Number) });
+    expect([...g.edges].sort()).toEqual([[0, 2, 2], [1, 2, 3]]);
+    expect(g.dangling).toBe(1);
+    expect(await memoryGraph(join(dir, "nowhere"))).toEqual({ nodes: [], edges: [], dangling: 0 });
   });
 });

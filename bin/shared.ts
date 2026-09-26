@@ -259,6 +259,38 @@ export function lineReader(open: () => ReadableStream<Uint8Array>): () => Promis
 
 export const readTerminalLine: () => Promise<string> = lineReader(() => Bun.stdin.stream() as ReadableStream<Uint8Array>);
 
+/**
+ * Read a phrase: the first line that has something in it. A command pasted
+ * with its newline and then Enter leaves an empty line queued in the terminal,
+ * and it used to be read as the answer before the person typed anything — the
+ * owner's first `basis record` was refused as `""` (D-077). A few empty lines
+ * are passed over; past that, or at the end of input, the answer is empty.
+ */
+export async function readPhrase(read: () => Promise<string> = readTerminalLine): Promise<string> {
+  for (let i = 0; i < 5; i++) {
+    const typed = typedPhrase(await read());
+    if (typed !== "") return typed;
+  }
+  return "";
+}
+
+/**
+ * A typed phrase as the person meant it: terminal control sequences (a
+ * bracketed paste wraps what is pasted in ESC[200~ … ESC[201~), a carriage
+ * return, and the quotes or backticks a phrase copied from a message comes
+ * with are not part of it; runs of spaces are one space. The words must still
+ * be exactly the phrase (D-077).
+ */
+export function typedPhrase(line: string): string {
+  return line
+    .replace(/\u001b\[[0-9;]*[~A-Za-z]/g, "")
+    .replace(/[\r\u0000-\u0008\u000b-\u001f]/g, "")
+    .trim()
+    .replace(/^[`"'“”‘’]+|[`"'“”‘’]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function usageError(message: string): number {
   console.error(`ohmyagi: ${message}`);
   return 2;

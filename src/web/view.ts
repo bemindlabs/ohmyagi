@@ -100,8 +100,18 @@ export interface ViewState {
   }[];
   readonly approved: readonly { readonly id: string; readonly what: string; readonly decided: string }[];
   readonly triggers: readonly { readonly id: string; readonly every: string; readonly next: string }[];
-  readonly recent: readonly { readonly when: string; readonly backend: string; readonly asked: string; readonly ok: boolean }[];
+  readonly recent: readonly { readonly id: string; readonly when: string; readonly backend: string; readonly asked: string; readonly ok: boolean }[];
   readonly canTriage: boolean;
+  /** What answers a message sent from this page, and what answered last. */
+  readonly engine: {
+    /** The chain a turn tries, in order — `--backend` given to `ohmyagi web`, else the default. */
+    readonly chain: readonly string[];
+    /** The model the local backend uses: `--model`, else OM_AGI_OLLAMA_MODEL, else none. */
+    readonly localModel: string | null;
+    /** The local judge that reads what may leave (D-061), or null when it is off. */
+    readonly judge: string | null;
+    readonly last: { readonly backend: string; readonly model: string | null; readonly when: string } | null;
+  };
 }
 
 /** What the Settings tab receives from `/api/settings`. */
@@ -172,4 +182,16 @@ export function remoteForPage(raw: string): { readonly remote: string; readonly 
   const http = /^https?:\/\/([^/]+)\/(.+?)(?:\.git)?\/?$/.exec(remote);
   if (http !== null) return { remote, web: `https://${http[1]}/${http[2]}` };
   return { remote, web: null };
+}
+
+/** What the Privacy tab receives from `/api/privacy` (gap 3, D-079). */
+export interface PrivacyState {
+  /** `observe status` for this subject, up to its first blank line, and whether capture is on. */
+  readonly capture: { readonly on: boolean; readonly lines: readonly string[] };
+  /** What the filter or the judge kept on this machine, newest first — the rule, never the text. */
+  readonly keptIn: readonly { readonly when: string; readonly at: string; readonly backend: string; readonly why: string }[];
+  readonly keptInTotal: number;
+  readonly needles: number;
+  readonly judge: string | null;
+  readonly basis: readonly { readonly id: string; readonly basis: string; readonly uses: readonly string[]; readonly approvedBy: string; readonly at: string; readonly expires: string | null; readonly state: string; readonly note: string }[];
 }

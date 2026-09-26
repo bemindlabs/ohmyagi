@@ -398,3 +398,24 @@ describe("lineReader, in process", () => {
     expect([await read(), await read(), await read(), await read()]).toEqual(["yes", "no", "maybe", ""]);
   });
 });
+
+describe("typedPhrase (D-077)", () => {
+  test("paste codes, a carriage return, copied quotes and extra spaces are not the phrase; the words are", async () => {
+    const { typedPhrase } = await import("../../bin/shared.ts");
+    expect(typedPhrase("\u001b[200~record basis for om-bmt\u001b[201~\r")).toBe("record basis for om-bmt");
+    expect(typedPhrase("  `record basis for om-bmt`  ")).toBe("record basis for om-bmt");
+    expect(typedPhrase("\"record  basis for   om-bmt\"")).toBe("record basis for om-bmt");
+    expect(typedPhrase("record basis for om-bm")).toBe("record basis for om-bm");
+    expect(typedPhrase("")).toBe("");
+  });
+});
+
+describe("readPhrase (D-077)", () => {
+  test("blank lines left in the terminal are passed over; the first real line is the answer", async () => {
+    const { readPhrase } = await import("../../bin/shared.ts");
+    const lines = ["", "  ", "\r", "record basis for x"];
+    expect(await readPhrase(async () => lines.shift() ?? "")).toBe("record basis for x");
+    // At the end of input it gives up rather than waiting forever.
+    expect(await readPhrase(async () => "")).toBe("");
+  });
+});

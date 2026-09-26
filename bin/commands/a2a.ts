@@ -25,7 +25,7 @@ import { append } from "../../src/ledger/store.ts";
 import { loadSoul } from "../../src/soul/load.ts";
 import { subjectId, type SubjectId } from "../../src/types.ts";
 import { dialEnv, whoIsSetting } from "../dial.ts";
-import { bold, dim, ledgerEnv, parseArgs, readTerminalLine, report, usageError } from "../shared.ts";
+import { bold, dim, ledgerEnv, parseArgs, readPhrase, report, usageError } from "../shared.ts";
 
 const USAGE =
   "usage: ohmyagi a2a peers --subject <id>\n" +
@@ -86,7 +86,7 @@ async function cmdAllow(argv: readonly string[]): Promise<number> {
   }
   console.error(`${name} at ${endpoint} will be able to send messages to this agent, and this agent to it.`);
   console.error(`To agree, type exactly:  ${phrase}`);
-  if ((await readTerminalLine()).trim() !== phrase) {
+  if ((await readPhrase()) !== phrase) {
     console.error(`ohmyagi: that was not ${JSON.stringify(phrase)}, so nothing was written.`);
     return 1;
   }

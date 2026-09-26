@@ -10,7 +10,7 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { BUN } from "../support/bare-path.ts";
@@ -245,6 +245,20 @@ describe("memory search", () => {
 });
 
 describe("memory ingest", () => {
+  /** An agent with a soul (subject `example`) and, unless told otherwise, a basis for memory (S7.3). */
+  async function ingestAgent(home: string, uses: readonly string[] | null = ["memory"], extra: Record<string, unknown> = {}): Promise<string> {
+    const agent = join(home, "agent");
+    await cp(join(import.meta.dir, "..", "fixtures", "soul-valid"), join(agent, "soul"), { recursive: true });
+    if (uses !== null) {
+      await mkdir(join(home, "state", "om-agi", "basis", "example"), { recursive: true });
+      await Bun.write(
+        join(home, "state", "om-agi", "basis", "example", "records.json"),
+        JSON.stringify([{ id: "b1", subject: "example", basis: "owner", approvedBy: "test", at: "2026-09-25T00:00:00Z", uses, expires: null, note: "", revokedAt: null, ...extra }]),
+      );
+    }
+    return agent;
+  }
+
   async function notes(home: string): Promise<string> {
     const src = join(home, "notes");
     await mkdir(src, { recursive: true });
@@ -255,7 +269,7 @@ describe("memory ingest", () => {
 
   test("without --yes: the plan, the blocked file named without its secret, nothing written, exit 1", async () => {
     const home = await sandbox();
-    const agent = await agentWith(home, {});
+    const agent = await ingestAgent(home);
     const src = await notes(home);
 
     const result = await run(home, ["memory", "ingest", agent, "--from", src], { OM_AGI_QDRANT_URL: DEAD });
@@ -271,7 +285,7 @@ describe("memory ingest", () => {
 
   test("--yes writes the clean files only, says what git keeps first, and index reads them", async () => {
     const home = await sandbox();
-    const agent = await agentWith(home, {});
+    const agent = await ingestAgent(home);
     const src = await notes(home);
 
     const result = await run(home, ["memory", "ingest", agent, "--from", src, "--name", "owner", "--yes"], {
@@ -291,7 +305,7 @@ describe("memory ingest", () => {
 
   test("usage: no --from, a bad --name, and a source that is not there", async () => {
     const home = await sandbox();
-    const agent = await agentWith(home, {});
+    const agent = await ingestAgent(home);
     for (const args of [
       ["memory", "ingest", agent],
       ["memory", "ingest", agent, "--from", home, "--name", "Bad Name"],
@@ -302,6 +316,28 @@ describe("memory ingest", () => {
     expect(missing.code).toBe(1);
     expect(missing.stderr).toContain("ohmyagi:");
   }, 60_000);
+
+  test("S7.3: no basis, a basis for another use, an expired or revoked one — nothing is read", async () => {
+    for (const [uses, extra, says] of [
+      [null, {}, "there is no basis on record"],
+      [["persona"], {}, "allows persona — not memory"],
+      [["memory"], { expires: "2020-01-01" }, "expired or been revoked"],
+      [["memory"], { revokedAt: "2026-09-25T01:00:00Z" }, "expired or been revoked"],
+    ] as const) {
+      const home = await sandbox();
+      const agent = await ingestAgent(home, uses as readonly string[] | null, extra);
+      const src = await notes(home);
+      const result = await run(home, ["memory", "ingest", agent, "--from", src, "--yes"], { OM_AGI_QDRANT_URL: DEAD });
+      expect(result.code, says).toBe(1);
+      expect(result.stderr).toContain(says);
+      expect(result.stderr).toContain("Nothing was read (S7.3)");
+      expect(result.stdout).not.toContain("infra.md");
+      expect(await Bun.file(join(agent, "memory", "imported", "notes", "infra.md")).exists()).toBe(false);
+    }
+    const bare = await sandbox();
+    const noSoul = await agentWith(bare, {});
+    expect((await run(bare, ["memory", "ingest", noSoul, "--from", await notes(bare)], {})).stderr).toContain("no soul that names its subject");
+  }, 120_000);
 });
 
 describe("memory forget", () => {
@@ -343,5 +379,74 @@ describe("memory forget", () => {
     const outside = await run(home, ["memory", "forget", agent, "--subject", "alpha", "--file", "soul/role.md"], env);
     expect(outside.code).toBe(1);
     expect(outside.stderr).toContain("only a file under memory/");
+  }, 60_000);
+});
+
+describe("memory write (D-081)", () => {
+  test("plan, then --yes writes and rebuilds full-text; a basis is required; a bad path or a credential is refused", async () => {
+    const home = await sandbox();
+    const agent = join(home, "agent");
+    await cp(join(import.meta.dir, "..", "fixtures", "soul-valid"), join(agent, "soul"), { recursive: true });
+    const src = join(home, "note.md");
+    await Bun.write(src, "# Queue\n\nThe queue restarts at noon.\n");
+    const args = ["memory", "write", agent, "--subject", "example", "--file", "memory/notes/queue.md", "--from", src];
+    const noBasis = await run(home, [...args, "--yes"], { OM_AGI_QDRANT_URL: DEAD });
+    expect(noBasis.code).toBe(1);
+    expect(noBasis.stderr).toContain("no basis");
+    await mkdir(join(home, "state", "om-agi", "basis", "example"), { recursive: true });
+    await Bun.write(join(home, "state", "om-agi", "basis", "example", "records.json"), JSON.stringify([{ id: "b1", subject: "example", basis: "owner", approvedBy: "t", at: "2026-09-26T00:00:00Z", uses: ["memory"], expires: null, note: "", revokedAt: null }]));
+    const dry = await run(home, args, { OM_AGI_QDRANT_URL: DEAD });
+    expect(dry.stdout).toContain("new memory/notes/queue.md");
+    expect(await Bun.file(join(agent, "memory", "notes", "queue.md")).exists()).toBe(false);
+    const wet = await run(home, [...args, "--yes"], { OM_AGI_QDRANT_URL: DEAD });
+    expect(wet.code, wet.stderr).toBe(0);
+    expect(wet.stdout).toContain("full-text");
+    const found = await run(home, ["memory", "search", agent, "--subject", "example", "noon"], { OM_AGI_QDRANT_URL: DEAD });
+    expect(found.stdout).toContain("memory/notes/queue.md");
+    expect((await run(home, ["memory", "write", agent, "--subject", "example", "--file", "soul/role.md", "--from", src, "--yes"], { OM_AGI_QDRANT_URL: DEAD })).code).toBe(1);
+    await Bun.write(src, `token: ghp_${"a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"}\n`);
+    const secret = await run(home, [...args, "--yes"], { OM_AGI_QDRANT_URL: DEAD });
+    expect(secret.code).toBe(1);
+    expect(secret.stderr).toContain("credential");
+    expect((await run(home, ["memory", "write", agent, "--subject", "example"], {})).code).toBe(2);
+  }, 60_000);
+});
+
+
+describe("memory import (D-084)", () => {
+  test("plan, then --yes writes under memory/imported/ and indexes it; a basis is required; bad sources are refused", async () => {
+    const home = await sandbox();
+    const agent = join(home, "agent");
+    await cp(join(import.meta.dir, "..", "fixtures", "soul-valid"), join(agent, "soul"), { recursive: true });
+    const src = join(home, "upload.html");
+    await Bun.write(src, "<title>Backup plan</title><main><h1>Backup plan</h1><p>The backup runs at 02:00 nightly.</p></main>");
+    const args = ["memory", "import", agent, "--subject", "example", "--from", src, "--name", "backup.html"];
+    const noBasis = await run(home, args, { OM_AGI_QDRANT_URL: DEAD });
+    expect(noBasis.code).toBe(1);
+    expect(noBasis.stderr).toContain("no basis");
+    await mkdir(join(home, "state", "om-agi", "basis", "example"), { recursive: true });
+    await Bun.write(join(home, "state", "om-agi", "basis", "example", "records.json"), JSON.stringify([{ id: "b1", subject: "example", basis: "owner", approvedBy: "t", at: "2026-09-26T00:00:00Z", uses: ["memory"], expires: null, note: "", revokedAt: null }]));
+    const dry = await run(home, args, { OM_AGI_QDRANT_URL: DEAD });
+    expect(dry.code, dry.stderr).toBe(0);
+    expect(dry.stdout).toContain("read html → markdown · 1 memory file(s)");
+    expect(dry.stdout).toContain("new memory/imported/backup-plan.md");
+    expect(await Bun.file(join(agent, "memory", "imported", "backup-plan.md")).exists()).toBe(false);
+    const wet = await run(home, [...args, "--yes"], { OM_AGI_QDRANT_URL: DEAD });
+    expect(wet.code, wet.stderr).toBe(0);
+    const written = await Bun.file(join(agent, "memory", "imported", "backup-plan.md")).text();
+    expect(written).toContain('source: "backup.html"');
+    expect(written).toContain("The backup runs at 02:00 nightly.");
+    const found = await run(home, ["memory", "search", agent, "--subject", "example", "nightly"], { OM_AGI_QDRANT_URL: DEAD });
+    expect(found.stdout).toContain("memory/imported/backup-plan.md");
+    expect((await run(home, args, { OM_AGI_QDRANT_URL: DEAD })).stdout).toContain("memory/imported/backup-plan-2.md");
+    const url = await run(home, ["memory", "import", agent, "--subject", "example", "--url", "file:///etc/passwd"], {});
+    expect(url.code).toBe(1);
+    expect(url.stderr).toContain("only http and https");
+    await Bun.write(src, `key ghp_${"a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"}\n`);
+    const secret = await run(home, ["memory", "import", agent, "--subject", "example", "--from", src, "--name", "leak.txt", "--yes"], { OM_AGI_QDRANT_URL: DEAD });
+    expect(secret.code).toBe(1);
+    expect(secret.stdout).toContain("REFUSED");
+    expect(await Bun.file(join(agent, "memory", "imported", "leak.md")).exists()).toBe(false);
+    expect((await run(home, ["memory", "import", agent, "--subject", "example"], {})).code).toBe(2);
   }, 60_000);
 });

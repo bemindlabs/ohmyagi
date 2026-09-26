@@ -25,6 +25,7 @@ import { cmdA2A } from "./commands/a2a.ts";
 import { cmdChat } from "./commands/chat.ts";
 import { cmdPersona } from "./commands/persona.ts";
 import { cmdEval } from "./commands/eval.ts";
+import { cmdBasis } from "./commands/basis.ts";
 import { cmdAutonomy } from "./commands/autonomy.ts";
 import { cmdBackends } from "./commands/backends.ts";
 import { cmdDoctor } from "./commands/doctor.ts";
@@ -150,6 +151,8 @@ async function main(rawArgv: readonly string[]): Promise<number> {
       return cmdPersona(rest);
     case "eval":
       return cmdEval(rest);
+    case "basis":
+      return cmdBasis(rest);
 
     case "update":
       return cmdUpdate(rest);

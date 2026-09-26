@@ -36,7 +36,7 @@ import { loadSoul } from "../../src/soul/load.ts";
 import { runGuarded } from "../../src/spawn.ts";
 import { subjectId, type SubjectId } from "../../src/types.ts";
 import { dialEnv, whoIsSetting } from "../dial.ts";
-import { bold, dim, ledgerEnv, parseArgs, readTerminalLine, report, usageError } from "../shared.ts";
+import { bold, dim, ledgerEnv, parseArgs, readPhrase, report, usageError } from "../shared.ts";
 
 const USAGE =
   "usage: ohmyagi chat users --subject <id>\n" +
@@ -91,7 +91,7 @@ async function cmdAllow(argv: readonly string[]): Promise<number> {
   }
   console.error(`${platform} user ${userId} will get answers from this agent — written by a model, screened, and never carrying anything marked personal.`);
   console.error(`To agree, type exactly:  ${phrase}`);
-  if ((await readTerminalLine()).trim() !== phrase) {
+  if ((await readPhrase()) !== phrase) {
     console.error(`ohmyagi: that was not ${JSON.stringify(phrase)}, so nothing was written.`);
     return 1;
   }

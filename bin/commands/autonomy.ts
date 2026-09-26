@@ -54,7 +54,7 @@ import {
   writeDial,
   type DialVerdict,
 } from "../dial.ts";
-import { ERR, OUT, parseArgs, readTerminalLine, usageError, type Sink } from "../shared.ts";
+import { ERR, OUT, parseArgs, readPhrase, usageError, type Sink } from "../shared.ts";
 
 const AUTONOMY_USAGE =
   "usage: ohmyagi autonomy show [<dir> --subject <id>]\n" +
@@ -274,7 +274,7 @@ async function cmdSet(argv: readonly string[]): Promise<number> {
     sayDial(ERR, before);
     ERR.line("");
     ERR.line(`To agree, type exactly:  ${phrase}`);
-    if ((await readTerminalLine()).trim() !== phrase) {
+    if ((await readPhrase()) !== phrase) {
       ERR.line(`ohmyagi: that was not ${JSON.stringify(phrase)}, so nothing was written.`);
       return 1;
     }
@@ -353,7 +353,7 @@ async function cmdResume(argv: readonly string[]): Promise<number> {
   }
   ERR.line(`The brake is at ${verdict.stopPath}.`);
   ERR.line(`To take it off, type exactly:  ${phrase}`);
-  if ((await readTerminalLine()).trim() !== phrase) {
+  if ((await readPhrase()) !== phrase) {
     ERR.line(`ohmyagi: that was not ${JSON.stringify(phrase)}, so the brake is still on.`);
     return 1;
   }

@@ -15,6 +15,7 @@ const STATE: ViewState = {
   triggers: [],
   recent: [],
   canTriage: false,
+  engine: { chain: ["claude", "codex", "ollama"], localModel: "qwen3.8:27b", judge: "qwen3.8:27b", last: { backend: "claude", model: null, when: "just now" } },
 };
 
 const SETTINGS: SettingsState = {
@@ -48,7 +49,18 @@ function fakeDeps() {
     settings: async () => SETTINGS,
     agent: async () => AGENT,
     memories: async () => [{ path: "memory/a.md", title: "A", description: "d", type: "project", bytes: 10, modified: "t" }],
+    memoryImport: async (source, write) => {
+      runs.push(["memory", "import", source.kind === "url" ? source.url : `${source.name}:${new TextDecoder().decode(source.bytes)}`, write ? "--yes" : "(dry)"]);
+      return { code: 0, stdout: "new memory/imported/x.md", stderr: "" };
+    },
+    memoryGraph: async () => ({ nodes: [{ path: "memory/a.md", title: "A", type: "project", bytes: 10 }, { path: "memory/b.md", title: "B", type: "", bytes: 5 }], edges: [[0, 1, 2]], dangling: 1 }),
     memory: async (path) => (path === "memory/a.md" ? { ok: true, text: "hello" } : { ok: false, reason: "not a memory file" }),
+    memoryWrite: async (path, content) => {
+      runs.push(["memory", "write", path, content]);
+      return { code: 0, stdout: "written", stderr: "" };
+    },
+    privacy: async () => ({ capture: { on: true, lines: ["capture: on since x"] }, keptIn: [{ when: "now", at: "t", backend: "claude", why: "personal needle #1" }], keptInTotal: 1, needles: 9, judge: "qwen", basis: [{ id: "d858fe8c", basis: "owner", uses: ["memory"], approvedBy: "me", at: "2026-09-25", expires: null, state: "active", note: "" }] }),
+    turnDetail: async (tid) => (tid === "11111111-2222-3333-4444-555555555555" ? { asked: "q", answer: "a", backend: "claude", model: null, when: "just now", content: "full" } : undefined),
     profile: async () => ({ ok: true, profile: PROFILE }),
     editProfile: async (profile, write) => {
       runs.push(["soul", "edit", write ? "--yes" : "(dry)", profile.name]);
@@ -329,5 +341,169 @@ describe("Profile wizard (D-074)", () => {
     expect((await h(post({ profile: "x" }))).status).toBe(400);
     expect(runs).toHaveLength(2);
     expect(PAGE_HTML).toContain('id="tabProfile"');
+  });
+});
+
+describe("the console (D-078): a rail on a desk, a bottom bar on a phone, and who answers always shown", () => {
+  test("layout, contrast and the engine box", () => {
+    expect(PAGE_HTML).toContain('name="viewport" content="width=device-width, initial-scale=1"');
+    expect(PAGE_HTML).toContain('<aside class="rail">');
+    expect(PAGE_HTML).toContain("@media (max-width:760px)");
+    // The bottom bar is fixed to the screen: nothing above it may create a containing block for it.
+    const phone = PAGE_HTML.slice(PAGE_HTML.indexOf("@media (max-width:760px)"));
+    expect(phone).toMatch(/nav\.tabs\{position:fixed;left:0;right:0;bottom:0/);
+    expect(phone.slice(0, phone.indexOf("nav.tabs{position:fixed"))).not.toContain("backdrop-filter");
+    expect(PAGE_HTML).toContain('"Show all " + list.length');
+    expect(PAGE_HTML).toContain("--onbrand:#1a1200");
+    for (const id of ["engChain", "engLocal", "engJudge", "engLast", "engineLine", "statusDot"]) expect(PAGE_HTML).toContain(`id="${id}"`);
+    expect(STATE.engine.chain).toEqual(["claude", "codex", "ollama"]);
+    // Full width: no cap on main, and the home page laid out by areas — status across, chat beside what waits.
+    expect(PAGE_HTML).not.toMatch(/main\{[^}]*max-width/);
+    // D-080: the chat holds the left column top to bottom and stays put; everything else scrolls beside it.
+    expect(PAGE_HTML).toContain('grid-template-areas:"chat status" "chat wait" "chat recent" "chat sched" "chat term"');
+    expect(PAGE_HTML).toMatch(/\.chatpanel\{[^}]*position:sticky;top:16px;height:calc\(100vh - 32px\)/);
+    // On a phone the message box sits above the tab bar.
+    expect(PAGE_HTML).toMatch(/\.composer\{position:fixed;left:0;right:0;bottom:calc\(62px/);
+    expect(PAGE_HTML).toContain('grid-template-areas:"chat" "status" "wait" "recent" "sched" "term"');
+  });
+});
+
+describe("gaps closed (D-079)", () => {
+  test("1: what waits can be filtered and decided in bulk, and a poll does not wipe a note being typed", () => {
+    for (const id of ["waitFilter", "waitWho", "waitSelectAll", "bulkBar", "bulkYes", "bulkNo"]) expect(PAGE_HTML).toContain(`id="${id}"`);
+    expect(PAGE_HTML).toContain("if (!force && sig === waitSig) return;");
+    expect(PAGE_HTML).toContain('confirm("Decline " + ids.length');
+  });
+});
+
+describe("gaps closed (D-079), 2", () => {
+  test("a turn from the ledger by id; anything that is not an id is 404; the chat is kept in this browser", async () => {
+    const { deps } = fakeDeps();
+    const h = handler(deps, "tok", HOSTS);
+    expect(await (await h(req("/api/turn-detail?id=11111111-2222-3333-4444-555555555555"))).json()).toMatchObject({ asked: "q", answer: "a" });
+    expect((await h(req("/api/turn-detail?id=ffffffff-ffff-ffff-ffff-ffffffffffff"))).status).toBe(404);
+    expect((await h(req("/api/turn-detail?id=../x"))).status).toBe(404);
+    expect((await h(req("/api/turn-detail?id=11111111-2222-3333-4444-555555555555", { token: null }))).status).toBe(401);
+    expect(PAGE_HTML).toContain('const CHAT_KEY = "ohmyagi-chat";');
+    expect(PAGE_HTML).toContain('id="chatClear"');
+  });
+});
+
+describe("gaps closed (D-079), 3", () => {
+  test("Privacy: GET the picture; revoking a basis is `basis revoke`; recording one has no route", async () => {
+    const { deps, runs } = fakeDeps();
+    const h = handler(deps, "tok", HOSTS);
+    expect(((await (await h(req("/api/privacy"))).json()) as { needles: number }).needles).toBe(9);
+    const post = (path: string, body: unknown) => req(path, { method: "POST", body: JSON.stringify(body) });
+    await h(post("/api/basis/revoke", { id: "d858fe8c" }));
+    expect(runs).toEqual([["basis", "revoke", "d858fe8c", "--subject", "example"]]);
+    expect((await h(post("/api/basis/revoke", { id: "--subject" }))).status).toBe(400);
+    expect((await h(post("/api/basis/record", { basis: "owner" }))).status).toBe(404);
+    expect(PAGE_HTML).toContain('id="tabPrivacy"');
+  });
+});
+
+describe("gaps closed (D-079), 4", () => {
+  test("persona review on the page: show is persona show --json, an answer is persona decide, writing is persona adopt", async () => {
+    const { deps, runs } = fakeDeps();
+    const h = handler(deps, "tok", HOSTS);
+    await h(req("/api/persona"));
+    const post = (path: string, body: unknown) => req(path, { method: "POST", body: JSON.stringify(body) });
+    await h(post("/api/persona/decide", { claim: "abcd1234", answer: "yes" }));
+    await h(post("/api/persona/adopt", {}));
+    await h(post("/api/persona/adopt", { write: true }));
+    expect(runs).toEqual([
+      ["persona", "show", "--subject", "example", "--json"],
+      ["persona", "decide", "abcd1234", "--subject", "example", "--yes"],
+      ["persona", "adopt", "/a", "--subject", "example"],
+      ["persona", "adopt", "/a", "--subject", "example", "--yes"],
+    ]);
+    for (const bad of [{ claim: "--yes", answer: "yes" }, { claim: "abcd1234", answer: "maybe" }]) expect((await h(post("/api/persona/decide", bad))).status).toBe(400);
+    expect(PAGE_HTML).toContain('id="draftList"');
+  });
+});
+
+describe("2K audit", () => {
+  test("type grows with the screen, cards flow as a masonry wall, bubbles keep a readable width", () => {
+    expect(PAGE_HTML).toContain("@media (min-width:1920px){html{font-size:16px}");
+    expect(PAGE_HTML).toContain("@media (min-width:2400px){html{font-size:17.5px}");
+    expect(PAGE_HTML).toContain(".set{columns:30rem;column-gap:18px}");
+    expect(PAGE_HTML).toContain("break-inside:avoid");
+    expect(PAGE_HTML).toContain("max-width:min(88%,62rem)");
+  });
+});
+
+describe("Memories CRUD (D-081)", () => {
+  test("save is memory write; delete is memory forget, shown first; a path outside memory/ runs nothing", async () => {
+    const { deps, runs } = fakeDeps();
+    const h = handler(deps, "tok", HOSTS);
+    const post = (path: string, body: unknown) => req(path, { method: "POST", body: JSON.stringify(body) });
+    expect(((await (await h(post("/api/memory/write", { path: "memory/notes/a.md", content: "# a" }))).json()) as { ok: boolean }).ok).toBe(true);
+    await h(post("/api/memory/delete", { path: "memory/notes/a.md" }));
+    await h(post("/api/memory/delete", { path: "memory/notes/a.md", write: true }));
+    expect(runs).toEqual([
+      ["memory", "write", "memory/notes/a.md", "# a"],
+      ["memory", "forget", "/a", "--subject", "example", "--file", "memory/notes/a.md"],
+      ["memory", "forget", "/a", "--subject", "example", "--file", "memory/notes/a.md", "--yes"],
+    ]);
+    for (const bad of [{ path: "soul/role.md", content: "x" }, { path: "memory/../x.md", content: "x" }, { path: "memory/a.md" }]) expect((await h(post("/api/memory/write", bad))).status).toBe(400);
+    expect((await h(post("/api/memory/delete", { path: "../x" }))).status).toBe(400);
+    expect(runs).toHaveLength(3);
+    for (const id of ["memNew", "memEdit", "memDelete", "memEditor", "memEdSave"]) expect(PAGE_HTML).toContain(`id="${id}"`);
+  });
+
+  test("the map: GET /api/memories/graph, and the page draws it (D-082)", async () => {
+    const { deps } = fakeDeps();
+    const h = handler(deps, "tok", HOSTS);
+    const g = (await (await h(req("/api/memories/graph"))).json()) as { edges: unknown[]; dangling: number };
+    expect(g).toMatchObject({ edges: [[0, 1, 2]], dangling: 1 });
+    expect((await h(req("/api/memories/graph", { token: null }))).status).toBe(401);
+    for (const id of ["mapCanvas", "mapSpin", "mapReset", "mapToggle", "mapLegend", "mapStats"]) expect(PAGE_HTML).toContain(`id="${id}"`);
+    expect(PAGE_HTML).toContain("prefers-reduced-motion: reduce");
+  });
+
+  test("fonts come from inside the binary, need no token, and nothing else under /fonts/ does (D-083)", async () => {
+    const { deps } = fakeDeps();
+    const h = handler(deps, "tok", HOSTS);
+    const res = await h(req("/fonts/electrolize-latin-400.woff2", { token: null }));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("font/woff2");
+    expect(new TextDecoder().decode((await res.arrayBuffer()).slice(0, 4))).toBe("wOF2");
+    for (const bad of ["/fonts/nope.woff2", "/fonts/../x.woff2", "/fonts/constructor.woff2"]) expect((await h(req(bad, { token: null }))).status).toBe(404);
+    expect(PAGE_HTML).toContain('font-family:"Electrolize"');
+    expect(PAGE_HTML).toContain('"Electrolize","IBM Plex Sans Thai"');
+    expect(PAGE_HTML).not.toContain("${");
+  });
+
+  test("import: a file as base64 or a link, checked then written; anything else runs nothing (D-084)", async () => {
+    const { deps, runs } = fakeDeps();
+    const h = handler(deps, "tok", HOSTS);
+    const post = (body: unknown) => req("/api/memory/import", { method: "POST", body: JSON.stringify(body) });
+    const ok = (await (await h(post({ name: "notes.md", data: btoa("# hi") }))).json()) as { ok: boolean; message: string };
+    expect(ok).toEqual({ ok: true, message: "new memory/imported/x.md" });
+    await h(post({ url: "https://example.org/a", write: true }));
+    expect(runs).toEqual([
+      ["memory", "import", "notes.md:# hi", "(dry)"],
+      ["memory", "import", "https://example.org/a", "--yes"],
+    ]);
+    for (const bad of [{ url: "file:///etc/passwd" }, { name: "x.exe", data: "AA==" }, { name: "a/b.md", data: "AA==" }, { name: "x.md", data: "%%%" }, { name: "x.md", data: "A".repeat(30_000_000) }, {}]) {
+      expect((await h(post(bad))).status).toBe(400);
+    }
+    expect(runs).toHaveLength(2);
+    for (const id of ["memImp", "memImport", "memFiles", "memUrl", "memImpGo", "memQueue"]) expect(PAGE_HTML).toContain(`id="${id}"`);
+  });
+
+  test("the page's script parses — one bad quote in the template stops every button", () => {
+    const scripts = [...PAGE_HTML.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]!);
+    expect(scripts.length).toBeGreaterThan(0);
+    for (const script of scripts) expect(() => new Function(script)).not.toThrow();
+  });
+
+  test("a refused delete shows the plan and the reason, not the plan alone", async () => {
+    const { deps } = fakeDeps();
+    const h = handler({ ...deps, run: async () => ({ code: 1, stdout: "1 file(s) would go\n", stderr: "ohmyagi: cannot reach the vectors. Nothing was removed\n" }) }, "tok", HOSTS);
+    const out = (await (await h(req("/api/memory/delete", { method: "POST", body: JSON.stringify({ path: "memory/a.md", write: true }) }))).json()) as { ok: boolean; message: string };
+    expect(out.ok).toBe(false);
+    expect(out.message).toBe("1 file(s) would go\ncannot reach the vectors. Nothing was removed");
   });
 });

@@ -222,6 +222,13 @@ const ROWS: readonly Row[] = [
     build: async () => ["observe", "actions", "--subject", SUBJECT, "--json"],
   },
   {
+    file: "persona.ts",
+    id: "persona show --json (no draft)",
+    code: 0,
+    stdout: "document",
+    build: async () => ["persona", "show", "--subject", SUBJECT, "--json"],
+  },
+  {
     file: "eval.ts",
     id: "eval --json (no task set)",
     code: 1,

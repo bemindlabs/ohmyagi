@@ -450,6 +450,8 @@ describe("C. behaviour — every command, watched by a git that writes down its 
       ["persona", "show", "--subject", SUBJECT],
       // D-073's: with no agent named it prints its usage and runs no turn.
       ["eval"],
+      // D-077's: shows the records there are (none).
+      ["basis", "show", "--subject", SUBJECT],
       // D-065's: a stray word is a usage error before anything is asked of GitHub.
       ["update", "wat"],
       // `stop` writes the brake into this sandbox's XDG_STATE_HOME and zeroes
@@ -535,6 +537,7 @@ describe("C. behaviour — every command, watched by a git that writes down its 
       "chat",
       "persona",
       "eval",
+      "basis",
       "update",
       // S5.2's. Run in sequence above rather than in the flat list, because
       // `decide` needs the id `new` printed.

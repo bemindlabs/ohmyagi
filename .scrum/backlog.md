@@ -609,7 +609,7 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
 |---|---|---|---|
 | ✅ S7.1 | data map — D-050: `ohmyagi erase <subject>` (dry run) คือ data map · เทสต์ยึดว่าทุกที่ที่ resolve จาก SubjectId อยู่ใน plan (`test/erase/data-map.test.ts`) | 1 | สูง |
 | ✅ S7.2 | **`ohmyagi erase <subject>`** `w3` `w3b` `fix1` `fix2` `dod1` | 2 | **สูงสุด** (ประตู) |
-| S7.3 | consent record (เมื่อ subject ≠ เจ้าของ) | 1 | กลาง — ขึ้นเมื่อมีคนจริง |
+| ✅ S7.3 | consent record — D-077 `ohmyagi basis` · AC1 ✅ record · AC2 ✅ ingest/persona ไม่อ่านถ้าไม่มีฐาน · AC3 ✅ use ต้องตรง · AC4 ✅ เจ้าของใช้ฐาน `owner` ทางเดียวกัน | 1 | กลาง |
 | S7.4 | ~~audit log~~ — **ไม่ทำ (D-050)**: ทุกการกระทำมีบันทึกของตัวเองในที่ที่ erase ถึงแล้ว · log กลางจะเก็บร่องรอยของ subject ที่ถูกลบ (ขัด I-4) | 1 | ต่ำ |
 
 **S7.2** — *เมื่อขอลบ ต้องมั่นใจว่าหายจริงทุกที่* (I-4 · **ประตูก่อนรับข้อมูลส่วนตัว**)

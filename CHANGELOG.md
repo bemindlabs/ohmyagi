@@ -2,6 +2,53 @@
 
 ## Unreleased
 
+## 0.6.0 — 2026-09-26
+
+### Memory — import documents and web links (D-084)
+- `ohmyagi memory import` and the Memories tab's Import… bring a file or a web page in as a markdown memory under
+  `memory/imported/`, with front matter naming the source. Markdown, text, HTML and data files are read directly;
+  PDF with `pdftotext`; `.docx` from its XML (LibreOffice if that fails); pptx, xlsx, odt, rtf, epub and others
+  through LibreOffice. Anything over one memory's 256 KB is cut into linked parts. Every part passes the credential
+  scan and needs a memory basis. On the page: drop files or paste a link, see each checked, then Import.
+
+### Web — fonts (D-083)
+- Electrolize for English and IBM Plex Sans Thai for Thai, bundled in the binary (both OFL 1.1) and served from
+  `/fonts/`, so the page stays offline and CDN-free.
+
+### Web — Memory map (D-082)
+- The Memories tab opens with a 3D map: each memory is a neuron, sized by its links, and each `[[link]]` (or a
+  relative `.md` link) is a synapse with signals running along it. Drag to turn, scroll to zoom, hover to see a
+  memory's neighbours, click to read it. Broken links are counted. Drawn by hand on a canvas (no library), paused
+  when out of view, and still under reduced motion. `GET /api/memories/graph`.
+
+### Web — Memories CRUD (D-081)
+- The Memories tab can create, edit and delete memories. It has New (with a front-matter template), Edit with
+  Preview, and Delete (shown first). Saving runs the new `ohmyagi memory write`: the path must be a `.md` under
+  `memory/`, a memory basis must be on record, the credential scan applies, and both indexes are rebuilt with the
+  vector collection dropped whole. Deleting runs `memory forget`.
+
+### Web — four gaps closed (D-079)
+- What waits can be filtered and decided in bulk. A poll no longer throws away a note being typed.
+- The chat survives a reload (kept in this browser). A Recently row opens to the full question and answer from the
+  ledger, with "Ask again".
+- A Privacy tab shows whether capture is on, every message kept on this machine (the rule, never the words), and the
+  basis records with a Revoke button.
+- Persona drafts can be answered on the page: `persona show --json` and `persona decide`. "Write the yeses" runs
+  `persona adopt`.
+
+### Web
+- Redesigned as an agent console (D-078). On a desk: a sidebar with the agent, its status, sections with icons and an
+  Engine box (the backend chain, the local model, the judge, and who answered last), with the chat as the main panel.
+  On a phone: a compact top bar and a bottom tab bar. Dark by default with a working light theme. Before the redesign,
+  a phone audit fixed eight problems: an off-screen tab, a header taking half the screen, a chat buried under 16
+  cards, low-contrast buttons in the dark, and others.
+
+### Data ownership (E7)
+- `ohmyagi basis record|show|revoke` (S7.3, D-077) records on what basis a subject's data may come in: the basis, who
+  approved it, when, for which uses (memory, persona, fine-tune) and until when. Recording is typed at a terminal.
+  `memory ingest` and `persona extract` read nothing without an active record for their use, and the owner's own data
+  needs one too (basis `owner`). `erase` removes the records.
+
 ## 0.5.1 — 2026-09-25
 
 ### Identity (E6)

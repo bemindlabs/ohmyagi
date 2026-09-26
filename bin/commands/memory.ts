@@ -1,7 +1,7 @@
 /** `ohmyagi memory` — build an agent's recall from its `memory/`, and ask it something. */
 
-import { homedir } from "node:os";
-import { basename, resolve } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { basename, join, resolve } from "node:path";
 import { GIT_UNDELETABLE, SCAN_BLIND_SPOTS } from "../../src/guard/index.ts";
 import {
   collectionFor,
@@ -20,6 +20,10 @@ import {
   vectorEndpoints,
 } from "../../src/memory/index.ts";
 import { subjectId, type SubjectId } from "../../src/types.ts";
+import { basisDirFor, basisFor, readBasis, refusalLine, soulSubject } from "../../src/consent/basis.ts";
+import { commitWrite, planWrite, type WritePlan } from "../../src/memory/write.ts";
+import { convertFile, convertUrl, planImport, type Converted } from "../../src/memory/import.ts";
+import { dialEnv } from "../dial.ts";
 import { bold, dim, parseArgs, usageError } from "../shared.ts";
 
 const INDEX_USAGE = "usage: ohmyagi memory index <agent-dir> --subject <id>";
@@ -27,6 +31,10 @@ const INGEST_USAGE = "usage: ohmyagi memory ingest <agent-dir> --from <dir> [--n
 const FORGET_USAGE =
   "usage: ohmyagi memory forget <agent-dir> --subject <id> (--file <memory/…> [--file …] | --match <text>) [--yes]";
 const SEARCH_USAGE = "usage: ohmyagi memory search <agent-dir> --subject <id> [--limit <n>] <query...>";
+const WRITE_USAGE = "usage: ohmyagi memory write <agent-dir> --subject <id> --file <memory/…md> --from <file> [--yes]";
+const WRITE_BOOLEANS: readonly string[] = ["yes"];
+const IMPORT_USAGE =
+  "usage: ohmyagi memory import <agent-dir> --subject <id> (--from <file> | --url <link>) [--name <file name>] [--as <memory/…md>] [--yes]";
 
 function subjectFrom(raw: string | undefined, usage: string): { ok: true; id: SubjectId } | { ok: false; code: number } {
   if (raw === undefined || raw === "") return { ok: false, code: usageError(usage) };
@@ -133,6 +141,19 @@ async function cmdMemoryIngest(argv: readonly string[]): Promise<number> {
   if (name === undefined || importName(name) !== name) {
     return usageError(`${INGEST_USAGE} — --name takes a-z, 0-9 and -, and the source's name gave nothing usable`);
   }
+
+  // S7.3 (D-077): no basis on record for memory, and nothing is read.
+  const subject = await soulSubject(dir);
+  if (subject === undefined) {
+    console.error(`ohmyagi: ${dir} has no soul that names its subject, so there is no basis to check — nothing was read.`);
+    return 1;
+  }
+  const allowed = basisFor(await readBasis(basisDirFor(dialEnv(), subjectId(subject))), "memory", new Date());
+  if (!allowed.ok) {
+    console.error(`ohmyagi: ${refusalLine(subject, "memory", allowed.reason)}`);
+    return 1;
+  }
+  console.error(dim(`ohmyagi: basis ${allowed.record.id} (${allowed.record.basis}, by ${allowed.record.approvedBy}) allows memory for ${subject}.`));
 
   let plan;
   try {
@@ -245,6 +266,126 @@ async function cmdMemoryForget(argv: readonly string[]): Promise<number> {
   return 0;
 }
 
+/**
+ * `ohmyagi memory write` — create or replace one memory file (D-081): what the
+ * web page's editor saves through. Shows the plan; with --yes writes it and
+ * rebuilds both indexes, the vector collection dropped whole (D-035). Needs
+ * the S7.3 basis for memory, like ingest. Nothing is staged or committed.
+ */
+async function cmdMemoryWrite(argv: readonly string[]): Promise<number> {
+  const { positional, options } = parseArgs(argv, WRITE_BOOLEANS);
+  const dir = positional[0];
+  const file = options.get("file");
+  const from = options.get("from");
+  if (dir === undefined || dir === "" || positional.length > 1 || file === undefined || from === undefined || from === "") return usageError(WRITE_USAGE);
+  const subject = subjectFrom(options.get("subject"), WRITE_USAGE);
+  if (!subject.ok) return subject.code;
+  const allowed = basisFor(await readBasis(basisDirFor(dialEnv(), subject.id)), "memory", new Date());
+  if (!allowed.ok) {
+    console.error(`ohmyagi: ${refusalLine(subject.id, "memory", allowed.reason)}`);
+    return 1;
+  }
+  let text: string;
+  try {
+    text = await Bun.file(from).text();
+  } catch (error) {
+    console.error(`ohmyagi: ${from}: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
+  const agentDir = resolve(dir);
+  const plan = await planWrite(agentDir, file, text);
+  if (plan.refusal !== undefined) {
+    console.error(`ohmyagi: not written — ${plan.refusal}`);
+    return 1;
+  }
+  if (plan.kind === "same") {
+    console.log(`${plan.path} already says exactly that — nothing to write.`);
+    return 0;
+  }
+  console.log(`${plan.kind === "new" ? "new" : "replace"} ${plan.path} · ${plan.bytesBefore} → ${plan.bytesAfter} bytes · +${plan.linesAdded} / -${plan.linesRemoved} line(s)`);
+  if (!options.has("yes")) {
+    console.log(dim("Nothing was written. --yes writes it and rebuilds both indexes."));
+    return 0;
+  }
+  await commitWrite(agentDir, plan, text);
+  const report = await indexAgent(agentDir, subject.id, endpointsOrReason(), {
+    markerDir: ragDirFor(homedir(), process.env, subject.id),
+    now: () => new Date(),
+  });
+  console.log(`written · full-text ${report.fts} piece(s) · ${report.vectors.ok ? `vectors rebuilt whole, ${report.vectors.points} point(s)` : `vectors not rebuilt — ${report.vectors.reason}`}`);
+  console.log(dim("Not staged and not committed: git keeps whatever it is given — see what git remembers with `ohmyagi memory forget`'s notes."));
+  return 0;
+}
+
+/**
+ * `ohmyagi memory import` — a document or a web page into memory as markdown
+ * (D-084). Shows where it would go and how it was read; with --yes writes
+ * every part through the same gates as `memory write`, then rebuilds both
+ * indexes once. `--name` is the file's own name when `--from` is a temporary
+ * copy (the web page's upload), so the kind and the title come from it.
+ */
+async function cmdMemoryImport(argv: readonly string[]): Promise<number> {
+  const { positional, options } = parseArgs(argv, WRITE_BOOLEANS);
+  const dir = positional[0];
+  const from = options.get("from");
+  const url = options.get("url");
+  if (dir === undefined || dir === "" || positional.length > 1 || (from === undefined) === (url === undefined) || from === "" || url === "") return usageError(IMPORT_USAGE);
+  const subject = subjectFrom(options.get("subject"), IMPORT_USAGE);
+  if (!subject.ok) return subject.code;
+  const allowed = basisFor(await readBasis(basisDirFor(dialEnv(), subject.id)), "memory", new Date());
+  if (!allowed.ok) {
+    console.error(`ohmyagi: ${refusalLine(subject.id, "memory", allowed.reason)}`);
+    return 1;
+  }
+  const agentDir = resolve(dir);
+  const now = new Date();
+  let converted: Converted;
+  let source: string;
+  try {
+    if (url !== undefined) {
+      const got = await convertUrl(url, fetch, tmpdir());
+      converted = got;
+      source = got.url;
+    } else {
+      const name = options.get("name") ?? from!;
+      converted = await convertFile(from!, name.split(/[\\/]/).pop()!, tmpdir());
+      source = name.split(/[\\/]/).pop()!;
+    }
+  } catch (error) {
+    console.error(`ohmyagi: not imported — ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
+  let parts;
+  try {
+    parts = await planImport(converted, source, now, (path) => Bun.file(join(agentDir, ...path.split("/"))).exists(), options.get("as"));
+  } catch (error) {
+    console.error(`ohmyagi: not imported — ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
+  const plans: { plan: WritePlan; text: string }[] = [];
+  for (const part of parts) plans.push({ plan: await planWrite(agentDir, part.path, part.text), text: part.text });
+  console.log(bold(`${converted.title} — ${source}`));
+  console.log(`read ${converted.via} · ${parts.length} memory file(s)`);
+  for (const { plan } of plans) console.log(`  ${plan.refusal === undefined ? "new" : "REFUSED"} ${plan.path} · ${plan.bytesAfter} bytes${plan.refusal === undefined ? "" : ` — ${plan.refusal}`}`);
+  const refused = plans.filter((p) => p.plan.refusal !== undefined);
+  if (refused.length > 0) {
+    console.error(`ohmyagi: not imported — ${refused.length} part(s) refused above; nothing was written.`);
+    return 1;
+  }
+  if (!options.has("yes")) {
+    console.log(dim("Nothing was written. --yes writes it and rebuilds both indexes."));
+    return 0;
+  }
+  for (const { plan, text } of plans) await commitWrite(agentDir, plan, text);
+  const report = await indexAgent(agentDir, subject.id, endpointsOrReason(), {
+    markerDir: ragDirFor(homedir(), process.env, subject.id),
+    now: () => new Date(),
+  });
+  console.log(`imported · full-text ${report.fts} piece(s) · ${report.vectors.ok ? `vectors rebuilt whole, ${report.vectors.points} point(s)` : `vectors not rebuilt — ${report.vectors.reason}`}`);
+  console.log(dim("Not staged and not committed. The original stays where it was; only the text came in."));
+  return 0;
+}
+
 export async function cmdMemory(argv: readonly string[]): Promise<number> {
   const [sub, ...rest] = argv;
   switch (sub) {
@@ -256,7 +397,11 @@ export async function cmdMemory(argv: readonly string[]): Promise<number> {
       return cmdMemoryIngest(rest);
     case "forget":
       return cmdMemoryForget(rest);
+    case "write":
+      return cmdMemoryWrite(rest);
+    case "import":
+      return cmdMemoryImport(rest);
     default:
-      return usageError(`unknown memory subcommand ${JSON.stringify(sub ?? "")} — try "ingest", "index", "search" or "forget"`);
+      return usageError(`unknown memory subcommand ${JSON.stringify(sub ?? "")} — try "ingest", "index", "search", "write" or "forget"`);
   }
 }

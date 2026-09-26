@@ -206,6 +206,17 @@ Usage:
                                         and the needle is looked for again.
                                         Refuses before removing anything if the
                                         store it wrote to cannot be reached.
+  ohmyagi memory write <agent-dir> --subject <id> --file <memory/…md> --from <file> [--yes]
+                                        Create or replace one memory file — what
+                                        the web editor saves. Needs a basis for
+                                        memory; the credential scan applies;
+                                        --yes writes and rebuilds both indexes.
+  ohmyagi memory import <agent-dir> --subject <id> (--from <file> | --url <link>) [--name <file name>] [--as <memory/…md>] [--yes]
+                                        A document or a web page into memory as
+                                        markdown: md, txt, html, pdf, docx, and
+                                        what LibreOffice opens. Shows where it
+                                        goes; --yes writes it (long ones in
+                                        parts) through the same gates as write.
   ohmyagi memory search <agent-dir> --subject <id> [--limit <n>] <query...>
                                         Ask both indexes and merge the answers;
                                         every hit says which index found it.
@@ -367,8 +378,11 @@ Usage:
   ohmyagi persona review <dir> --subject <id> [--draft <id>]
                                         Answer yes or no to each claim, at a
                                         terminal.
-  ohmyagi persona show --subject <id> [--draft <id>]
+  ohmyagi persona show --subject <id> [--draft <id>] [--json]
                                         The draft and what was decided.
+  ohmyagi persona decide <claim-id> --subject <id> (--yes | --no) [--draft <id>]
+                                        One answer — what the web page's review
+                                        sends.
   ohmyagi persona adopt <dir> --subject <id> [--draft <id>] [--yes]
                                         Write only the yeses into role.md and
                                         person.md; the soul must still load.
@@ -378,6 +392,14 @@ Usage:
                                         and with recall, grade each answer by
                                         its phrases, and say which kinds of work
                                         it cannot do yet. Turns held at level 1.
+  ohmyagi basis record <owner|consent|contract|legitimate-interest|legal-obligation> --subject <id> --uses <memory,persona,fine-tune> [--expires YYYY-MM-DD|never] [--approved-by <name>] [--note <text>]
+                                        Record on what basis a subject's data
+                                        may come in, and for which uses — typed
+                                        at a terminal. memory ingest and persona
+                                        extract read nothing without one (S7.3).
+  ohmyagi basis show --subject <id>      The records, active, expired or revoked.
+  ohmyagi basis revoke <record-id> --subject <id>
+                                        Stop what comes in next on it.
   ohmyagi chat users --subject <id>       Who the agent answers in chat apps.
   ohmyagi chat allow <platform> <user-id> --subject <id> [--label <name>]
                                         Let one person be answered: typed at a

@@ -1214,6 +1214,7 @@ export const SCENARIOS: readonly Scenario[] = [
       { argv: ["chat"] },
       { argv: ["persona"] },
       { argv: ["eval"] },
+      { argv: ["basis"] },
       { argv: ["update", "wat"] },
       { argv: ["ledger", "wat"] },
       { argv: ["ledger"] },

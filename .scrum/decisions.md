@@ -1820,3 +1820,114 @@ release แรกบน public ติดป้าย **`v0.3.0-alpha` · pre-rel
 **ผล:** ไม่ทำ S6.3 · om-agi ไม่มี Python (D-004 สาย "ไม่ผ่าน") · `.dagi/adapters` ยังเป็น `not-built` และ tripwire ใน `test/erase/places.test.ts` ยังเฝ้าอยู่ · `eval` รายงานแบบ fine-tune ว่า "not measured — SP-3 closed as not passed for now (D-076)"
 
 **จะเปิดใหม่เมื่อ** (ต้องครบทุกข้อ): (1) ชุดงานใหญ่ขึ้นและยากขึ้นเป็นอย่างน้อย ~80 งาน แล้ว soul + RAG ได้ต่ำกว่า 80% · (2) ประเภทงานที่ตกเป็นงานที่ recall แก้ไม่ได้ (`eval --recall-only` บอกว่าคำตอบอยู่ใน recall แล้ว แต่โมเดลยังตอบผิด) · (3) มีข้อมูลที่ถอนได้โดยทิ้ง adapter และเจ้าของรับทราบ `WEIGHTS_UNDELETABLE` **ก่อน**เทรน · (4) แผน GPU ที่ไม่ต้องหยุดบริการหลัก
+
+---
+
+## D-077 — S7.3: `ohmyagi basis` บันทึกฐานในการรับข้อมูลเข้า · ไม่มีฐาน = ingest และ persona ไม่อ่านอะไรเลย
+
+**สถานะ:** เจ้าของสั่ง (2026-09-25 — *"do next"*) · รายละเอียดบุษบาตัดสินตามอำนาจ D-031 · ทำให้ข้อกำหนดใน D-010 เป็นจริง (ห้าม ingest ข้อมูล personal ก่อน S3.5 + S7.3)
+
+- **AC1:** record เก็บ `basis` (owner / consent / contract / legitimate-interest / legal-obligation ตามฐานของ PDPA/GDPR ที่ใช้กับงานนี้ได้), `approvedBy`, `at`, `uses` (memory / persona / fine-tune), `expires` (YYYY-MM-DD หรือ never), `note`, `revokedAt` · ไฟล์อยู่ที่ `state/basis/<subject>/records.json` (600) · `erase` ลบทั้งหมด (data map นับ 11 tree)
+- **AC2 (บังคับในโค้ด):** `memory ingest` และ `persona extract` เรียก `basisFor` **ก่อนอ่านไฟล์ใด ๆ** · ถ้าไม่มี record, หมดอายุแล้ว, ถูก revoke หรือไม่ได้ระบุ use นั้น จะ exit 1 พร้อมบอกเหตุผลและคำสั่งที่ใช้แก้ · ไม่มีไฟล์ไหนถูกอ่านเลย และไม่มีโมเดลไหนถูกเรียก (มีเทสต์ครอบทุกกรณี)
+- **AC3:** use ต้องตรงกันเป๊ะ ฐานที่ให้แค่ `memory` เอาไปใช้กับ `persona` ไม่ได้ · มี `fine-tune` ไว้ให้ปฏิเสธได้ แม้ตอนนี้จะไม่มีอะไรเทรน (D-076)
+- **AC4:** ข้อมูลของเจ้าของเองก็ต้องมี record ด้วยฐาน `owner` ผ่านคำสั่งเดียวกัน ไม่มีทางลัด · **ผลต่อเครื่องนี้:** tonkla-agi (`om-bmt`) ต้องมี record ก่อนจะ ingest หรือ extract รอบหน้า · ข้อมูลที่เข้ามาก่อนหน้านี้ยังอยู่ (S7.3 คุมเฉพาะสิ่งที่จะเข้ามาต่อไป)
+- `basis record` ต้องพิมพ์วลี `record basis for <subject>` ที่ terminal เหมือนการ allow peer หรือ chat user · agent จะให้ฐานกับตัวเองไม่ได้ · `revoke` ทำได้โดยไม่ต้องพิมพ์วลี เพราะเป็นการลดขอบเขต · `show` แสดงสถานะ active / expired / revoked
+- record บอกแค่ว่าใครตัดสินใจอะไร **ไม่ได้รับรองว่าถูกกฎหมาย** ความรับผิดชอบนั้นเป็นของผู้อนุมัติ ซึ่ง record ระบุชื่อไว้
+- `memory ingest` เดิมไม่มี `--subject` จึงอ่าน subject จาก soul ในโฟลเดอร์ agent (`soulSubject`) · ถ้าไม่มี soul จะไม่อ่านอะไร
+- **ระหว่างทาง:** control 1 ของ parity จับได้ว่าเทสต์ `eval --recall-only` สร้าง collection ไว้ใน Qdrant จริงของเครื่อง · แก้เทสต์ให้ชี้ Qdrant ไปที่ port ที่ไม่มีอะไรฟัง · collection นั้นถูกลบไปแล้วตั้งแต่ตอนรัน parity และ collection จริงของ `om-bmt` ไม่ได้ถูกแตะ
+
+---
+
+## D-078 — Web UI ออกแบบใหม่เป็น "console ควบคุม AI" · แสดง backend/model ที่ใช้อยู่ตลอด · audit บนมือถือ
+
+**สถานะ:** เจ้าของสั่ง (2026-09-25 — *"audit and refine web ui, mobile responsive too"* · *"show current backend and model used too in web ui"* · *"redesign to modern ai control"*) · รายละเอียดบุษบาตัดสินตามอำนาจ D-031
+
+**Audit (ถ่ายหน้าจอจริงที่ 360/390/1280/1360 px ทั้ง light และ dark):** เจอ 8 จุด: แท็บที่ 5 หลุดขอบจอบนมือถือ, หัวเว็บกินครึ่งจอแรก, การ์ด 16 ใบดันแชทลงไปล่างสุด, ปุ่มที่เลือกใน dark mode เป็นตัวขาวบนพื้นเหลือง, ปุ่ม 3 ระดับเกือบล้นจอ, แตะ memory แล้วต้องเลื่อนหาเนื้อหาเอง, คำอธิบาย memory ยาวเกิน, ช่อง "Its job" เป็นบรรทัดเดียว · แก้ครบทุกจุด (commit 0311a76) แล้วค่อยออกแบบใหม่ทั้งหมด
+
+**ดีไซน์ใหม่:**
+- **desktop:** มี sidebar ซ้าย ประกอบด้วย mascot + "Oh My AGI", การ์ด agent (ชื่อ, งาน, จุดสถานะตามระดับ), เมนูพร้อมไอคอน SVG inline และ **กล่อง Engine** · พื้นที่หลักจัดเป็นสองคอลัมน์ โดย**แชทอยู่หน้าสุด** (กล่องพิมพ์แบบ composer, bubble ของที่รักเป็นสีแบรนด์) คอลัมน์ขวามีสถานะ + เบรก, Waiting (พับเหลือ 3 ใบ), schedule, recent
+- **มือถือ (≤ 760px):** แถบบนแบบย่อ (mascot, ชื่อ, สถานะ) · **แถบแท็บพร้อมไอคอนติดขอบล่าง** รองรับ safe-area · แชทขึ้นก่อน · ปุ่มเต็มความกว้าง · kv แสดงเป็นแถวเดียว · ห้ามใส่ `backdrop-filter` ที่แถบบน เพราะจะทำให้ `position:fixed` ของแถบล่างอิงแถบบนแทนหน้าจอ (มีเทสต์ยืนยัน)
+- **ธีม:** dark เป็นหลักแบบ "control room" มี glow จาง ๆ สี amber + mint จาก mascot · light ยังใช้ได้ครบ · ใช้ `--onbrand` คุม contrast ของปุ่มแบรนด์ให้อ่านชัดทุกธีม · ตัวเลขและค่าทางเทคนิคใช้ monospace
+
+**backend/model ที่ใช้อยู่:** `ViewState.engine` = `chain` (`--backend` ของ `ohmyagi web` ถ้าไม่ได้ระบุใช้ PHASE_A_BACKENDS), `localModel` (`--model` → `OM_AGI_OLLAMA_MODEL`), `judge` (`OM_AGI_EGRESS_JUDGE`), `last` (turn ล่าสุดที่มีคนตอบจริง พร้อม backend, model และเวลา) · แสดงในกล่อง Engine ที่ sidebar และแสดงเป็นบรรทัด "answers: claude → codex → ollama · judge …" ที่หัวแชท · ถ้าเลือก backend/model เองใน Settings จะแสดงตามนั้น และบอกว่าเป็น "this browser's choice" · คำตอบแต่ละข้อยังบอกว่า "answered by …" เหมือนเดิม
+
+**เต็มความกว้าง + จัดวางใหม่ (2026-09-25 — *"ขยายให้ full width แล้วจัดเรียงใหม่"*):** เอาเพดานความกว้างของ `main` ออก · หน้า Home จัดด้วย `grid-template-areas` · **≥ 1280px:** แถบสถานะเต็มความกว้าง (ระดับ + "Next scheduled" + เบรก) → แชท 2/3 สูงเต็มจอ คู่กับ Waiting 1/3 ที่เลื่อนในตัว → แถวล่าง 3 คอลัมน์ (Recently, schedule, terminal) · **1000–1280px:** สองคอลัมน์ · **< 1000px:** แถวเดียว · **มือถือ:** แชทขึ้นก่อนเสมอ · แท็บอื่นจัดการ์ดเป็น grid หลายคอลัมน์ (`auto-fill`, กว้างขั้นต่ำ 460px) ยกเว้น Profile ที่คงคอลัมน์เดียวไว้เพื่อให้อ่านง่าย
+
+
+---
+
+## D-079 — ปิดช่องว่างของ Web UI 4 ข้อ: proposals หลายข้อพร้อมกัน · ประวัติแชทไม่หาย · แท็บ Privacy · persona review บนหน้าเว็บ
+
+**สถานะ:** เจ้าของสั่ง (2026-09-25 — *"find web ui gaps"* → บุษบาเสนอ 21 ข้อ แนะนำ 5 ข้อ → *"ทำทั้ง 5"* แล้วเปลี่ยนเป็น *"1-4 ก่อน"* · ภาษาไทยยังไม่ทำ) · รายละเอียดบุษบาตัดสินตามอำนาจ D-031
+
+1. **Proposals:** กรองด้วยคำและตาม "ใครเสนอ" · มี checkbox ต่อการ์ด, ปุ่ม "Select shown", และ Allow once / Decline หลายข้อพร้อมกัน (decline ถามยืนยันก่อน) · ใช้ route เดิมทีละ id · **แก้บั๊กไปด้วย:** เดิมหน้าเว็บ poll ทุก 5 วินาทีแล้ววาดรายการใหม่ทั้งหมด ทำให้ note ที่กำลังพิมพ์และการเลือกหายไป · ตอนนี้วาดใหม่เฉพาะเมื่อรายการเปลี่ยนจริง
+2. **แชท:** บทสนทนาเก็บไว้ใน localStorage ของ browser นั้น (60 ข้อความล่าสุด มีปุ่ม Clear) · กดแถวใน Recently แล้วจะเปิดคำถามและคำตอบเต็ม ๆ จาก ledger (`GET /api/turn-detail?id=<uuid>`) พร้อมปุ่ม "Ask again" · ถ้าแถวไหน ledger เก็บไว้แค่ขนาด จะบอกตรง ๆ ว่าไม่ได้เก็บเนื้อหาไว้
+3. **แท็บ Privacy:** สถานะ capture (จาก `observe status`) · รายการที่ถูกกันไว้ในเครื่อง (จาก `egress log`: บอกแค่กฎที่ใช้ ไม่มีเนื้อข้อความ) พร้อมจำนวน needles และ judge · basis records (S7.3) พร้อมปุ่ม **Revoke** (`basis revoke`) · การ**บันทึก** basis ยังไม่มี route ให้ทำจากหน้าเว็บ เพราะต้องพิมพ์วลีใน terminal (มีเทสต์ยืนยันว่าได้ 404)
+4. **Persona review บนหน้าเว็บ (S6.1 AC4):** เพิ่ม `persona show --json` และ `persona decide <claim> --yes|--no` · ในแท็บ Profile มีส่วน "Drafts from real work" แสดงแต่ละข้อพร้อมคำอ้างอิงและไฟล์:บรรทัดต้นทาง ให้กด True / Not · ปุ่ม "Write the yeses…" จะแสดงผล adopt แบบ dry run ก่อน แล้วค่อย `persona adopt --yes` · ไม่ commit ให้ · **ข้อพิจารณา:** AC4 เดิมบังคับให้ตอบที่ terminal เพราะ "โปรแกรมห้ามตอบแทนเจ้าของ" · หน้าเว็บปลอดภัยพอ ๆ กับ `proposal decide` เพราะต้องมีกุญแจของเจ้าของ แต่ก็หมายความว่า process ที่รันด้วย uid ของเจ้าของเรียก `persona decide` ได้ด้วย ซึ่งเป็นช่องโหว่ระดับเดียวกับ proposal decide ที่ยอมรับไปแล้ว
+
+**Audit บนจอ 2K (2560×1440, 2026-09-25 — *"audit 2k display"*):** เจอ 4 จุด: ตัวหนังสือฐาน 15px เล็กเกินไป, การ์ดมีช่องโหว่ใหญ่เพราะ grid บังคับการ์ดในแถวเดียวกันให้เริ่มระดับเดียวกัน, Profile ใช้พื้นที่แค่ 40%, และ bubble แชทยาวเกิน · **แก้:** ปรับ `html` font-size ตามขนาดจอ (15 → 16px ที่ ≥1920 → 17.5px ที่ ≥2400) และขยาย rail (290/320px) · `.set` เปลี่ยนเป็น CSS columns แบบ masonry (`columns:30rem` + `break-inside:avoid`) ไม่มีช่องโหว่แล้ว · Profile ที่ ≥1920 วาง wizard คู่กับ Drafts · bubble กว้างไม่เกิน `min(88%, 62rem)` · แถว autonomy วางซ้อนแนวตั้งเหมือนกันทุกแถว (เดิมที่ 1366px บางแถววางปุ่มข้าง label บางแถววางด้านล่าง)
+
+---
+
+## D-080 — แชทอยู่กับที่: desktop เป็น sticky · มือถือมีช่องพิมพ์ติดเหนือแถบแท็บ
+
+**สถานะ:** เจ้าของเลือก (2026-09-25 — *"agent chat ควรปรับปรุงให้ fixed position?"* → บุษบาเสนอ A + C → *"ok"*)
+
+- **A (desktop):** คอลัมน์ซ้ายเป็นแชททั้งคอลัมน์ `position:sticky; top:16px; height:calc(100vh - 32px)` · คอลัมน์ขวามีแถบสถานะ, Waiting, Recently, schedule, terminal เรียงกันและเลื่อนได้ แชทไม่เลื่อนตาม · ย้ายแถบสถานะจากแถวบนเต็มความกว้างไปไว้บนสุดของคอลัมน์ขวา เพื่อให้แชทเริ่มตั้งแต่บนสุดของจอและพอดีจอ (ถ้ามีแถบสถานะอยู่ด้านบน ช่องพิมพ์จะหลุดขอบล่างก่อนแชทจะ sticky)
+- **C (มือถือ):** ช่องพิมพ์ `position:fixed` อยู่เหนือแถบแท็บ (bottom = 62px + safe-area) เหมือนแอป messenger · ข้อความเลื่อนอยู่ด้านบน · มีคลาส `main.homeon` เพิ่มระยะด้านล่าง เฉพาะตอนอยู่แท็บ Home
+- **< 1000px (ที่ไม่ใช่มือถือ):** เรียงเป็นแถวเดียว แชทไม่ sticky
+
+
+---
+
+## D-081 — Web UI จัดการ Memories ได้ครบ CRUD · ทางเขียนคือ `ohmyagi memory write` · ลบคือ `memory forget`
+
+**สถานะ:** เจ้าของสั่ง (2026-09-26 — *"feat: Web UI Memories management CRUD"*) · รายละเอียดบุษบาตัดสินตามอำนาจ D-031
+
+- **คำสั่งใหม่ `memory write <agent-dir> --subject <id> --file memory/…md --from <file> [--yes]`** (`src/memory/write.ts`): สร้างหรือแทนที่ไฟล์เดียว
+  - path ต้องเป็นไฟล์ `.md` ที่อยู่ใต้ `memory/` จริง ห้ามมี `..`, ส่วนที่ขึ้นต้นด้วยจุด หรือช่องว่าง · ห้ามผ่าน symlink (ตรวจ realpath ทุกระดับที่มีอยู่) · ห้ามเขียนทับสิ่งที่ไม่ใช่ไฟล์ธรรมดา · ขนาดไม่เกิน 256 KB · ห้ามว่าง
+  - เนื้อหาต้องผ่าน credential scan (D-051) · ต้องมี **basis สำหรับ memory (S7.3)** เหมือน ingest
+  - ถ้าไม่ใส่ `--yes` จะบอกแค่ว่าเป็นไฟล์ใหม่หรือแทนที่ ขนาดเท่าไร และเพิ่ม/ลดกี่บรรทัด · ใส่ `--yes` แล้วจะเขียนไฟล์และสร้าง index ใหม่แบบเดียวกับ `memory index`: FTS ใหม่ และ **drop collection ทั้งก้อนแล้วสร้างใหม่** (D-035) เพราะถ้าการแก้ไขลบข้อความออก ข้อความนั้นต้องหายจาก store ด้วย และการ drop ทั้ง collection เป็นทางเดียวที่ลบได้จริง · ไม่ stage และไม่ commit ให้
+- **หน้าเว็บ (แท็บ Memories):** ปุ่ม **New memory** (มี template front matter ให้), **Edit** และ **Delete…** บนไฟล์ที่เปิดอยู่ · editor มีช่อง path, ช่องแก้ markdown (ฟอนต์ monospace) และปุ่ม Preview · Save ส่งไปที่ `POST /api/memory/write` ซึ่งเขียนเนื้อหาลงไฟล์ชั่วคราว 600 ใน mkdtemp แล้วรัน `memory write --yes` · Delete ส่งไปที่ `POST /api/memory/delete` แสดงแผนของ `memory forget` ให้ยืนยันก่อน แล้วค่อยรัน `--yes` · server ตรวจ path ด้วย `memoryPathProblem` ก่อนรันคำสั่งใด ๆ
+- **ข้อจำกัดที่ยังอยู่ (แสดงบนหน้าเว็บด้วย):** git ยังเก็บทุกอย่างที่เคย commit ไว้ การลบจากหน้าเว็บจึงไม่ได้ลบออกจากประวัติ git
+
+## D-082 — Memory map: memories เป็น neuron, `[[link]]` เป็น synapse, หมุนได้ใน 3D บนแท็บ Memories
+
+**สถานะ:** เจ้าของสั่ง (2026-09-26 — *"feat: Memories Charts , neuron synapse in 3d"*) · รายละเอียดบุษบาตัดสินตามอำนาจ D-031
+
+- **ข้อมูล:** `memoryGraph(agentDir)` (`src/web/memories.ts`) ให้ 1 neuron ต่อไฟล์ใต้ `memory/` และ 1 synapse ต่อคู่ที่ link กัน นับทั้ง `[[name]]` (จับกับชื่อไฟล์ก่อน แล้วค่อยชื่อใน front matter) และ markdown link ไปยัง `.md` แบบ relative · link สองทางนับเป็น synapse เดียวที่มี `weight` · link ที่ไม่ตรงกับ memory ใดนับเป็น `dangling` แสดงบนหน้าเว็บเป็น "broken links" · link เว็บ (`https:`) ไม่นับ · อ่านได้อย่างเดียว ใช้กฎความปลอดภัยเดียวกับ `readMemoryFile`
+- **route:** `GET /api/memories/graph` ต้องมี token เหมือนทุก route
+- **ภาพ:** วาดบน canvas เอง ไม่ใช้ library (CSP ไม่ให้โหลดจาก CDN และหน้าเว็บต้องอยู่ใน binary) · ใช้ force layout 3D: แรงผลักระหว่างทุกคู่ แรงสปริงตาม synapse และแรงดึงเข้ากลาง · สปริงของ hub อ่อนลงตาม √degree ไม่งั้นไฟล์ index ที่ link ทุกไฟล์จะดึงทั้งแผนที่เข้าไปกองกันเป็นก้อน · scale ใช้ระยะที่ percentile 90 ไม่ใช่ระยะไกลสุด เพื่อไม่ให้จุดที่หลุดออกไปทำให้ทั้งกราฟเล็ก · perspective, จุดใหญ่ตาม degree, สีตามชนิดของ memory, มีสัญญาณวิ่งไปตาม synapse
+- **ใช้งาน:** ลากเพื่อหมุน · scroll เพื่อ zoom · ชี้ที่จุดจะแสดงชื่อ ชนิด และจำนวน link พร้อมไฮไลต์เพื่อนบ้าน · คลิกจุดจะเปิดไฟล์นั้นในช่อง Read · filter/kind ที่มีอยู่จะทำให้จุดที่ไม่ตรงจางลง · มีปุ่ม Spin / Reset view / Hide map (จำค่าไว้ใน browser)
+- **ใช้ทรัพยากรเท่าที่จำเป็น:** หยุดวาดเมื่อแท็บถูกซ่อน, map ถูกปิด หรือหน้าเว็บไม่ได้อยู่บนจอ · ถ้าตั้ง `prefers-reduced-motion` จะไม่หมุน ไม่มีสัญญาณวิ่ง และคำนวณ layout ให้นิ่งก่อนแสดง
+- **ข้อมูลจริง (om-bmt):** 79 neurons · 219 synapses · 3 ไฟล์ไม่มี link · 10 broken links
+
+## D-083 — ฟอนต์หน้าเว็บ: Electrolize สำหรับอังกฤษ · IBM Plex Sans Thai สำหรับไทย · ฝังไว้ใน binary
+
+**สถานะ:** เจ้าของสั่ง (2026-09-26 — *"chore: web font use IBM Plex Sans Thai, and Electrolize for english"*) · รายละเอียดบุษบาตัดสินตามอำนาจ D-031
+
+- **ไม่โหลดจาก Google Fonts:** CSP ของหน้าเว็บ (`default-src 'self'`) ไม่ให้โหลดจากที่อื่น และ D-060 กำหนดให้หน้าเว็บใช้ได้แบบ offline ใน binary เดียว จึงฝัง woff2 subset (จาก @fontsource v5) ไว้ใน `src/web/fonts.ts` เป็น base64 รวมประมาณ 77 KB แล้วเสิร์ฟที่ `GET /fonts/<name>.woff2` ไม่ต้องใช้ token เพราะในไฟล์ฟอนต์ไม่มีข้อมูลของ agent · cache แบบ immutable · ชื่อที่ไม่ใช่ฟอนต์ที่ฝังไว้ (รวม `constructor`, `..`) ได้ 404
+- **stack:** `"Electrolize","IBM Plex Sans Thai",system-ui…` ใช้ `unicode-range` แยก: ตัวละตินใช้ Electrolize (มีแค่น้ำหนัก 400 ตัวหนาจึงเป็นแบบที่ browser สังเคราะห์เอา) · ตัวไทยใช้ Plex Sans Thai 400/600 · ตัวที่ Electrolize ไม่มีจะ fallback ไปที่ Plex latin · code/mono ยังเป็น ui-monospace เหมือนเดิม
+- **license:** ทั้งสองเป็น SIL OFL 1.1 · สำเนา license อยู่ที่ `src/web/fonts/` และระบุไว้ใน NOTICE
+
+## D-084 — Memories import: ไฟล์ (md, pdf, docx, pptx, xlsx, html …) และลิงก์เว็บ → memory แบบ markdown
+
+**สถานะ:** เจ้าของสั่ง (2026-09-26 — *"feat: Memories can import from files, md, pdf, docx, etc and web link"*) · รายละเอียดบุษบาตัดสินตามอำนาจ D-031
+
+- **คำสั่งใหม่ `memory import <agent-dir> --subject <id> (--from <file> | --url <link>) [--name <ชื่อไฟล์>] [--as <memory/…md>] [--yes]`** (`src/memory/import.ts`)
+  - **แปลงเป็นข้อความเท่านั้น ไม่เก็บ HTML:** ตัด script, style, nav, form ทิ้ง สิ่งที่ recall แนบเข้า prompt ภายหลังจึงเป็นแค่ถ้อยคำ
+  - **md / txt / csv / json / yaml:** อ่านตามที่เขียน (ข้อมูลแบบ data ห่อเป็น code block)
+  - **html และลิงก์เว็บ:** ใช้ตัวแปลงที่เขียนเอง ใช้ `<article>`/`<main>` ถ้ามี · เก็บหัวข้อ ลิสต์ ลิงก์ (แปลงเป็น absolute) ตัวหนา/เอียง code และแถวตาราง
+  - **pdf:** ใช้ `pdftotext` (poppler)
+  - **docx:** อ่าน `word/document.xml` เอง (Title/Heading/list/table) ถ้าอ่านไม่ได้ค่อยส่งให้ LibreOffice
+  - **pptx / ppt / odt / odp / rtf / doc / epub:** แปลงด้วย LibreOffice เป็น pdf แล้วส่งต่อให้ `pdftotext`
+  - **xlsx / xls / ods:** แปลงด้วย LibreOffice เป็น csv (ได้เฉพาะ sheet แรก)
+  - **เครื่องมือภายนอก:** เรียกผ่าน `spawnGuarded` และ kill ถ้าเกิน 120 วินาที · ถ้าไม่มีเครื่องมือ จะบอกให้ติดตั้งหรือแปลงไฟล์เป็น .md/.pdf เอง
+  - **ขนาด:** ต้นฉบับไม่เกิน 20 MB · ถ้ายาวเกิน 1 memory (256 KB) จะตัดที่หัวข้อหรือย่อหน้าเป็น `memory/imported/<slug>/part-NN.md` และลิงก์ถึงกันด้วย relative link ไม่ใช้ `[[part-01]]` เพราะทุกเอกสารที่ถูกตัดจะมี part-01 ชื่อซ้ำกันใน map (D-082)
+  - **ชื่อไฟล์:** ได้จาก slug ของชื่อเรื่อง ถ้าเป็นชื่อภาษาไทยจะใช้ `import-<วันที่>-<hash>` · ชื่อที่มีอยู่แล้วจะได้ `-2`, `-3` ไม่เขียนทับ memory เดิม · ถ้าใส่ `--as` แล้วชื่อซ้ำจะปฏิเสธ
+  - **front matter:** name, description, `source`, `imported`, `via`, `metadata.type: reference`
+  - **ด่านที่ต้องผ่าน (เหมือน `memory write`):** basis สำหรับ memory (S7.3) ตรวจก่อนอ่านไฟล์ · ทุก part ผ่าน `planWrite` (path และ credential scan) · ถ้ามี part ใดถูกปฏิเสธจะไม่เขียนเลยสักไฟล์ · `--yes` แล้วค่อยเขียนทุก part และสร้าง index ใหม่ครั้งเดียว · ไม่ stage และไม่ commit
+- **ลิงก์เว็บ:** รับเฉพาะ http/https · ไม่รับลิงก์ที่มี user:password · timeout 30 วินาที · ไม่เกิน 20 MB · รองรับหน้าเว็บ ข้อความ และ PDF · การ fetch เป็นการเรียกออกเครือข่ายที่เจ้าของสั่งเอง (หน้าเว็บต้องใช้ token) ไม่ใช่สิ่งที่ agent ทำเอง จึงไม่ผ่านระดับ autonomy "reach" · เจ้าของเลือก URL ในเครือข่ายภายในได้ จึงไม่บล็อก IP ภายใน
+- **หน้าเว็บ:** ปุ่ม **Import…** ในแท็บ Memories เปิดช่องลากไฟล์มาวาง (เลือกได้หลายไฟล์) และช่องใส่ลิงก์ · แต่ละรายการจะตรวจแบบ dry run ทันที แสดงว่าจะไปอยู่ที่ไหน อ่านด้วยวิธีไหน หรือเพราะอะไรจึงถูกปฏิเสธ · กด Import แล้วจะเขียนเฉพาะรายการที่ผ่าน ทีละรายการ
+  - `POST /api/memory/import` รับ `{name, data: base64}` หรือ `{url}` · server ตรวจนามสกุล ชื่อไฟล์ (ห้ามมี `/`), ขนาด และ URL ก่อน แล้วเขียนเป็นไฟล์ชั่วคราว 600 ใน mkdtemp ก่อนรันคำสั่ง
+- **ทดสอบกับไฟล์จริงบนเครื่องนี้:** md, docx, pdf, odt, pdf ภาษาไทย และ https://example.com แปลงได้ถูกต้อง · `file://` ถูกปฏิเสธ

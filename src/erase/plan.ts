@@ -76,6 +76,7 @@ import { confirmationsDirFor } from "../decide/confirm.ts";
 import { triggersDirFor } from "../decide/triggers.ts";
 import { a2aDirFor } from "../a2a/peers.ts";
 import { chatDirFor } from "../connectors/users.ts";
+import { basisDirFor } from "../consent/basis.ts";
 import { collectionFor } from "../memory/collection.ts";
 import { ragDirFor, readRagMarker, type RagMarker } from "../memory/marker.ts";
 import {
@@ -301,6 +302,9 @@ export async function planErase(
   // Who the agent answers in chat apps, who has been told it is an AI, and
   // where each platform was read up to (D-066). The messages are in the ledger.
   wanted.push({ place: "ledger", label: "the chat allowlist and who has been told", dir: chatDirFor(env, subject) });
+  // The basis records (S7.3, D-077): who approved this subject's data coming
+  // in, and for what. With the data gone there is nothing left for them to cover.
+  wanted.push({ place: "ledger", label: "the basis records for taking this subject's data in", dir: basisDirFor(env, subject) });
 
   const emptyParents: string[] = [];
   const personal = await personalDir(env, subject);
