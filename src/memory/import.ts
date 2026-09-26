@@ -3,7 +3,7 @@
  * import` and the web page's Import… run.
  *
  * A file (md, txt, html, pdf, docx, and what LibreOffice opens) or a web link
- * becomes one markdown memory under `memory/imported/`, with front matter that
+ * becomes one markdown memory under `memory/knowledge/` (D-090), with front matter that
  * says where it came from. Longer than one memory may be (256 KB), it is cut
  * at headings or paragraphs into parts in a folder of their own. Every part
  * then goes through the same gates as `memory write`: the path rules, the
@@ -19,6 +19,7 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { spawnGuarded } from "../spawn.ts";
+import { KNOWLEDGE_DIR } from "./kinds.ts";
 import { MAX_MEMORY_BYTES } from "./write.ts";
 
 /** What a file of this kind is turned into markdown with. */
@@ -395,7 +396,8 @@ export async function planImport(
   if (body === "") throw new Error(`${source}: nothing readable came out (${converted.via})${converted.via.includes("pdftotext") ? " — a scanned PDF is pictures of text, with no text to take" : ""}`);
   const pieces = splitMarkdown(body);
   let slug = as === undefined ? slugFor(converted.title, now, source) : as.replace(/^memory\//, "").replace(/\.md$/, "");
-  const base = as === undefined ? `memory/imported/${slug}` : `memory/${slug}`;
+  // A document brought in is knowledge, not something the person did (D-090).
+  const base = as === undefined ? `${KNOWLEDGE_DIR}/${slug}` : `memory/${slug}`;
   let root = base;
   for (let n = 2; ; n += 1) {
     const first = pieces.length === 1 ? `${root}.md` : `${root}/part-01.md`;

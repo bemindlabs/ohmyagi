@@ -1966,3 +1966,68 @@ release แรกบน public ติดป้าย **`v0.3.0-alpha` · pre-rel
 - **หน้าเว็บที่มีข้อความสั้นแต่ไม่มี script:** อ่านตามที่ได้มา ไม่เปิด browser
 - **ราคา:** render หนึ่งครั้งใช้ประมาณ 26 วินาทีบนเครื่องนี้ ส่วนใหญ่เป็นเวลาเปิด Chrome · ทั้ง dry run และตอนเขียนจริงต่าง render ใหม่ (ไม่ cache ไว้) เพราะเนื้อหาของหน้าอาจเปลี่ยนระหว่างนั้น
 - **ผลจริง:** หน้า portfolio นั้นได้ 7.6 KB เนื้อหาครบ ผ่าน google-chrome
+
+## D-088 — `ohmyagi web` หยุดแบบรอให้งานที่ค้างอยู่เสร็จก่อน
+
+**สถานะ:** เกิดเหตุจริง (2026-09-26) · บุษบาแก้ตามอำนาจ D-031
+
+- **เหตุการณ์:** เจ้าของ import หน้าเว็บส่วนตัวหน้าหนึ่ง จากหน้าเว็บ ไฟล์ถูกเขียนเสร็จตอน 14:22:53 แต่ 14:22:59 บุษบา restart service เพื่อติดตั้ง v0.6.1 ขณะที่ index กำลัง rebuild อยู่ `server.stop(true)` ตัด connection ทันที และ systemd (`KillMode=control-group`) ส่ง SIGTERM ไปฆ่าคำสั่ง `memory import` ที่เป็น child ด้วย หน้าเว็บจึงขึ้นว่า "The server did not answer" ทั้งที่ไฟล์เข้าไปแล้ว (ได้สำเนาซ้ำ `-2`) · แก้ index ที่อาจค้างครึ่งทางด้วย `memory index` แล้ว (303 pieces / 303 points)
+- **แก้:** `WebServer.stop(force = false)` คืนค่าเป็น Promise · แบบ gentle ใช้ `server.stop(false)` ของ Bun คือไม่รับ request ใหม่แต่รอ request ที่กำลังทำอยู่ให้เสร็จก่อน · `ohmyagi web` เมื่อได้ SIGTERM/SIGINT ครั้งแรกจะหยุดแบบ gentle และบอกจำนวนที่ค้างอยู่ ส่วนครั้งที่สองจะหยุดทันที · เพิ่ม `pending()` ไว้ให้บอกจำนวน
+- **unit ของ systemd:** ตั้ง `KillMode=mixed` ให้ SIGTERM ไปถึงเฉพาะ ohmyagi ไม่ฆ่า child ที่กำลังทำงาน · ตั้ง `TimeoutStopSec=150` ให้พอสำหรับ render ด้วย Chrome รวมกับ rebuild index · ที่เหลือหลังหมดเวลาจะถูก kill ตามปกติ · ใช้กับ `ohmyagi-web-om.service` บนเครื่องนี้แล้ว (สำรองไฟล์เดิมเป็น `.bak-YYYYMMDD`)
+- **ทดสอบ:** มี test ที่ยิง request ค้างไว้ แล้วสั่ง stop ตรวจว่า stop ยังไม่ resolve, request ใหม่ถูกปฏิเสธ, request ที่ค้างอยู่ได้คำตอบ 200 ครบ แล้ว stop จึง resolve
+- **นิสัยที่ต้องเปลี่ยน (บุษบาเอง):** ก่อน restart service ที่เจ้าของใช้อยู่ ให้ดูก่อนว่ามี child ของ service ทำงานอยู่หรือไม่
+
+## D-089 — footer แสดงเวอร์ชัน Oh My AGI แบบ fixed เต็มความกว้าง
+
+**สถานะ:** เจ้าของสั่ง (2026-09-26 — *"feat: show oh my agi current version on fixed footer full width"*) · รายละเอียดบุษบาตัดสินตามอำนาจ D-031
+
+- **ข้อมูล:** เพิ่ม `ViewState.version = { current, latest }` · `current` คือ `VERSION` ของ binary ที่กำลังเสิร์ฟหน้าเว็บอยู่ จึงถูกต้องแน่นอน · `latest` มาจากผลการตรวจ update ครั้งล่าสุด (`readCheck`, อ่านไฟล์เฉย ๆ ไม่เรียกเครือข่าย) · หน้าเว็บอัปเดตทุกครั้งที่ poll
+- **หน้าตา:** แถบบางสูง 28px fixed อยู่ล่างสุด เต็มความกว้าง แสดงบนทุกหน้า · ซ้ายเป็น **Oh My AGI** vX.Y.Z และถ้าเจอเวอร์ชันใหม่กว่าจะแสดง "· vA.B.C is out — ohmyagi update" (เทียบแบบตัวเลข) · ขวาเป็น agent · subject · on this computer · กดที่เวอร์ชันจะตรวจ update (`/api/update-check`) · **ไม่มีลิงก์ออกไปข้างนอก** เพราะมี test เดิมบังคับว่าหน้าเว็บต้องไม่โหลดหรือลิงก์ไป http(s) ใด ๆ
+- **layout:** ใช้ตัวแปร `--foot` ร่วมกัน · desktop: rail และ chat panel หักความสูงของ footer ออก และ toast ยกขึ้น · phone: footer อยู่ล่างสุดและรวม safe-area ไว้ในตัว ส่วน tab bar กับ composer ขยับขึ้นไปวางบน footer · แก้ test layout 2 ข้อตาม (ตำแหน่งของ `nav.tabs` และความสูงของ `.chatpanel`) พร้อมเขียน comment อ้าง D-089 ไว้
+- **ตรวจด้วยตา:** screenshot ขนาด 1600×900 และ 390×844 แล้ว
+
+## D-090 — Knowledge base: `memory/knowledge/` แยก "ความรู้" ออกจาก "ความจำ"
+
+**สถานะ:** เจ้าของสั่ง (2026-09-26 — *"feat: Knowledge Memories"* แล้วเลือกครบ 4 แบบ: knowledge base แยกส่วน, collections, knowledge graph, สกัดความรู้อัตโนมัติ) · นี่คือ phase 1 · รายละเอียดบุษบาตัดสินตามอำนาจ D-031
+
+- **นิยาม (`src/memory/kinds.ts`):** ทุกไฟล์ใต้ `memory/knowledge/` คือ **knowledge** (เอกสาร คู่มือ หน้าเว็บที่นำเข้ามาไว้ค้นข้อมูล) · ที่เหลือคือ **memory** ของบุคคล (โน้ต การตัดสินใจ เหตุการณ์) · **ใช้ path เป็นตัวแยก ไม่ใช้ flag ใน front matter** เพราะ path เป็นสิ่งที่ git และ `ls` เห็น และอ่านผิดไม่ได้ · recall ก็ filter ได้จาก path ของแต่ละ chunk โดยไม่ต้องเปิดอ่านไฟล์
+- **import (D-084):** ปลายทางเริ่มต้นเปลี่ยนจาก `memory/imported/<slug>` เป็น `memory/knowledge/<slug>` · `memory ingest` (โน้ตของเจ้าของ) ยังไปที่ `memory/imported/` เหมือนเดิม เพราะเป็น memory
+- **`memory move`:** แผนการย้ายคือเขียนไฟล์ที่ path ใหม่ผ่าน `planWrite` (path, credential scan, ห้ามทับไฟล์ที่มีอยู่) แล้วค่อยลบไฟล์เดิม · ต้องมี basis สำหรับ memory · `--yes` แล้ว rebuild index ครั้งเดียว · `--to knowledge` ใช้ชื่อเดิมใน `memory/knowledge/` ส่วน `--to memory` ย้ายไป `memory/notes/` · ไม่ stage ให้ git (git ยังเห็นที่ path เดิมจนกว่าจะ commit)
+- **`recall(..., scope)`:** ถ้า scope ไม่ใช่ `all` จะดึงผลจากแต่ละส่วนมามากขึ้นเป็น `limit*8` แล้ว filter ตาม path ก่อน merge · `memory search --scope` และ `/api/memory-search {scope}` ใช้ตัวนี้ · **recall ของ turn ยังดูทั้งสองแบบ** เพราะคำตอบอาจต้องใช้ทั้งความรู้และความจำ
+- **เว็บ:** มีปุ่มเลือก All · Memory · Knowledge พร้อมจำนวน · tag "knowledge" ในรายการ · ปุ่ม Move to Knowledge/Memory… (แสดงแผนก่อน แล้วยืนยัน) · Search by meaning ค้นตามปุ่มที่เลือกอยู่ · มีคำสั่ง `/search knowledge|memory <คำค้น>` · บน map วาด knowledge เป็นสี่เหลี่ยม memory เป็นวงกลม
+
+## D-091 — Collections: `tags:` ใน front matter ของ memory
+
+**สถานะ:** phase 2 ของ "Knowledge Memories" (เจ้าของเลือก 2026-09-26) · รายละเอียดบุษบาตัดสินตามอำนาจ D-031
+
+- **เก็บไว้ในไฟล์เอง (`src/memory/tags.ts`):** แต่ละ tag คือหนึ่ง collection และ memory หนึ่งไฟล์อยู่ได้หลาย collection · ไม่มีที่อื่นเก็บว่าไฟล์ไหนอยู่ collection ไหน git จึงเห็นทุกอย่างและแก้ด้วย editor ใดก็ได้ · อ่านได้ทั้งแบบ `tags: [a, b]`, `tags: a, b` และ block list `- a` · ทำให้เป็นรูปแบบเดียวกัน (ตัวพิมพ์เล็ก, ตัวอักษรไทยได้, ตัวเลข, `-`, `_`, ไม่เกิน 30 ตัว) และไม่เกิน 12 tag · เขียนกลับที่บรรทัดเดิม ถ้าไม่มีจะวางต่อจาก `description` ถ้าไม่มี front matter เลยจะสร้างให้ ถ้า tag ว่างจะลบบรรทัดออก
+- **การแก้:** `POST /api/memory/tags {path, tags}` อ่านไฟล์เดิม ใส่ tag แล้วส่งไป `memory write` จึงผ่านด่านครบทุกอย่าง (path, credential scan, basis, rebuild index) · ไม่มีคำสั่ง CLI ใหม่ ใน terminal แก้ front matter แล้วรัน `memory index` ได้เลย
+- **เว็บ:** แถว chip แสดงทุก collection พร้อมจำนวน กดเพื่อ filter ทั้งรายการและ map · ช่อง Read แสดง collection ของไฟล์ที่เปิดอยู่และมีปุ่ม "Edit tags" · ในรายการแสดง tag ไม่เกิน 3 อันต่อไฟล์ · มีคำสั่ง `/tags` และ `/tag <name>`
+- **ค้นหา:** ข้อความใน tag อยู่ใน chunk แรกซึ่งมี front matter อยู่แล้ว full-text จึงค้นเจอโดยไม่ต้องทำอะไรเพิ่ม
+
+## D-092 — Knowledge graph: สิ่งที่ memory พูดถึงร่วมกัน (port, service, host, env, path)
+
+**สถานะ:** phase 3 ของ "Knowledge Memories" (เจ้าของเลือก 2026-09-26) · รายละเอียดบุษบาตัดสินตามอำนาจ D-031
+
+- **ดึงจากรูปแบบข้อความ ไม่ใช้ model (`src/memory/entities.ts`):** ข้อความเดิมจะได้กราฟเดิมเสมอ และไม่มีอะไรออกนอกเครื่องระหว่างสร้าง · ชนิดของ entity:
+  - **port:** `host:NNNN`, `:NNNN` (4–5 หลัก) และ `port NN–NNNNN`
+  - **service:** ชื่อ unit ที่ลงท้าย `.service`, `.timer` หรือ `.socket`
+  - **host:** domain ที่ลงท้ายด้วย TLD ในรายการ (ไม่นับ `sh`, `py`, `md` เพราะส่วนใหญ่เป็นนามสกุลไฟล์ และไม่นับชื่อที่อยู่ใน path แต่ host หลัง `//` ใน URL นับ)
+  - **env:** ตัวพิมพ์ใหญ่ที่มี `_` คั่น
+  - **path:** ขึ้นต้นด้วย `~/`
+  - **สิ่งที่ไม่นับ:** เวลา วันที่ เลขเวอร์ชัน และ IP · มี test ตรวจทั้งหมดนี้
+- **ในกราฟ:** `memoryGraph` เพิ่ม `entities` (เฉพาะที่มี memory **ตั้งแต่ 2 ไฟล์ขึ้นไป** พูดถึง เพราะสิ่งที่ถูกพูดถึงในไฟล์เดียวไม่ได้เชื่อมอะไร และช่วยให้ map ยังอ่านออก · ไม่เกิน 150 รายการ) และ `mentions` (คู่ entity กับ node) · ข้อมูลของเจ้าของ: 83 ไฟล์ พบ 401 entity มี 95 ที่ใช้ร่วมกัน (เช่น port 11434 ×10, ts.net host ×14)
+- **ถามได้ (`whoMentions`):** `memory who <thing>` · `GET /api/memory/who?q=` · คำสั่ง `/who` · `10410`, `port 10410` และ `:10410` หมายถึง port เดียวกัน · คำค้นอื่นจับกับค่าที่ตรงกัน หรือค่าที่มีคำค้นอยู่ข้างใน ถ้าพิมพ์ตั้งแต่ 3 ตัวอักษร · คืนค่า path และบรรทัดของทุกไฟล์ที่พูดถึง · อ่านอย่างเดียว ไม่ใช้ index
+- **map:** ปุ่ม **Things** (จำค่าไว้ใน browser) เพิ่ม entity เป็นรูปข้าวหลามตัด สีตามชนิด เชื่อมกับ memory ด้วยเส้นประ · คลิก entity จะแสดงรายการ memory ที่พูดถึงในช่อง Read และกดแต่ละรายการเพื่อเปิดอ่านได้
+
+## D-093 — สกัดความรู้อัตโนมัติ: local model เสนอ fact ทีละข้อ ต้องมี quote จริง และเจ้าของตอบ yes/no ทีละข้อ
+
+**สถานะ:** phase 4 ของ "Knowledge Memories" (เจ้าของเลือก 2026-09-26) · รายละเอียดบุษบาตัดสินตามอำนาจ D-031
+
+- **ใช้หลักเดียวกับ persona draft (S6.1/D-072):** local model อ่าน memory แล้วเสนอ fact สั้น ๆ ที่เป็นจริงได้โดยไม่ต้องพึ่งบริบทอื่น แต่ละข้อต้องมี quote ที่คัดลอกมาตรงตัวอักษร (8–120 ตัว) ถ้าหา quote นั้นในชิ้นที่อ่านไม่เจอ (`locateQuote` ตัวเดียวกับ persona) fact นั้นจะถูก **ตัดทิ้ง ไม่นำเสนอ** · model ที่แต่งเรื่องขึ้นจึงถูกจับได้ด้วยการเทียบข้อความ ไม่ต้องอาศัยความเชื่อใจ · prompt สั่งห้ามดึง credential ความเห็น และแผนการ
+- **ต้องเป็น model ในเครื่องเท่านั้น:** `asLocal` ต้องเป็น loopback ไม่อย่างนั้นปฏิเสธ · ต้องมี basis สำหรับ memory (S7.3) ทั้งตอนอ่านและตอนเขียน · draft เก็บใน personal dir (`…/personal/knowledge/<uuid>.json`, 0600) อยู่นอก git
+- **แหล่งที่อ่าน:** ค่าเริ่มต้นคือ `memory/knowledge/` เพราะ fact อยู่หนาแน่นที่สุดในเอกสาร · ใช้ `--from` เลือกที่อื่นใต้ `memory/` ได้ · ไม่อ่าน `memory/knowledge/facts/` ซ้ำ · `--max-chunks` ค่าเริ่มต้น 20
+- **adopt:** เขียนเฉพาะข้อที่ตอบ yes โดยแยกไฟล์ตาม topic เป็น `memory/knowledge/facts/<topic>.md` (มี tag `facts` และชื่อ topic · D-091) แต่ละบรรทัดอ้าง `note:line` ของต้นทาง · ถ้าไฟล์นั้นมีอยู่แล้วจะเพิ่มเฉพาะบรรทัดที่ยังไม่มี · เขียนผ่าน `planWrite` (credential scan) ถ้ามีไฟล์ใดถูกปฏิเสธจะไม่เขียนเลยสักไฟล์ · rebuild index ครั้งเดียว
+- **CLI อยู่ใต้ `memory` (`memory distill …`)** ไม่ใช่คำสั่งระดับบนสุดตัวใหม่ เพื่อไม่ต้องเพิ่มคำสั่งเข้า parity proofs สำหรับฟีเจอร์ที่เป็นเรื่องของ memory อยู่แล้ว
+- **เว็บ:** การอ่านใช้เวลาหลายนาที server จึงเริ่มงานเป็น background แล้วเก็บสถานะไว้ต่อ agent (`/api/distill/start` ส่งคืนทันที ส่วน `GET /api/distill` คืน draft พร้อมสถานะงาน ถ้ากำลังทำงานอยู่จะตอบ 409) · หน้าเว็บ poll ทุก 10 วินาทีขณะเปิดแท็บ Memories · แต่ละ fact มีปุ่ม Yes/No, quote และลิงก์ไปที่ note · มีปุ่ม "Write the yeses" (แสดงแผนก่อนแล้วยืนยัน) และคำสั่ง `/facts`
+- **ผลจริง:** อ่าน knowledge ของเจ้าของ 3 ชิ้นด้วย qwen3.8:27b ใช้เวลาราว 1 นาที ได้ 22 fact ตัดทิ้ง 2 · ทุกข้ออ้างบรรทัดจริงในต้นฉบับ

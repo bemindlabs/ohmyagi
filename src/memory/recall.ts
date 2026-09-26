@@ -12,6 +12,7 @@
  * cosine (higher is better, in [-1, 1]); it reads only positions.
  */
 
+import { inScope, type Scope } from "./kinds.ts";
 import type { SubjectId } from "../types.ts";
 import { buildFts, ftsPath, searchFts } from "./fts.ts";
 import { writeRagMarker } from "./marker.ts";
@@ -93,8 +94,10 @@ export async function recall(
   endpoints: VectorEndpoints | { readonly reason: string },
   doFetch?: Fetch,
   mode: "all" | "any" = "all",
+  scope: Scope = "all",
 ): Promise<RecallResult> {
-  const pool = limit * 3;
+  // A scoped search throws some candidates away, so it asks each half for more of them first.
+  const pool = limit * (scope === "all" ? 3 : 8);
   const text = await searchFts(agentDir, query, pool, mode);
   let semantic: Awaited<ReturnType<typeof searchVectors>> = [];
   let vector: RecallResult["vector"] = "ok";
@@ -125,8 +128,8 @@ export async function recall(
       }
     });
   };
-  add(text, "fts");
-  add(semantic, "vector");
+  add(text.filter((hit) => inScope(hit.path, scope)), "fts");
+  add(semantic.filter((hit) => inScope(hit.path, scope)), "vector");
 
   const hits = [...merged.values()]
     .sort((a, b) => b.score - a.score || a.hit.path.localeCompare(b.hit.path))

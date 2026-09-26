@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { commitWrite, MAX_MEMORY_BYTES, memoryPathProblem, planWrite } from "../../src/memory/write.ts";
+import { commitMove, commitWrite, MAX_MEMORY_BYTES, memoryPathProblem, planMove, planWrite } from "../../src/memory/write.ts";
 
 const scratch: string[] = [];
 afterEach(async () => {
@@ -49,5 +49,31 @@ describe("memory write", () => {
     expect(await readFile(join(dir, "memory", "deep", "new", "n.md"), "utf8")).toBe("# n\n");
     const refused = await planWrite(dir, "soul/role.md", "x");
     await expect(commitWrite(dir, refused, "x")).rejects.toThrow();
+  });
+});
+
+describe("moving a memory (D-090)", () => {
+  test("to a free path: planned, then written there and gone from here; a taken path, a missing file or a credential is refused", async () => {
+    const d = await mkdtemp(join(tmpdir(), "om-agi-move-"));
+    try {
+      await mkdir(join(d, "memory", "notes"), { recursive: true });
+      await writeFile(join(d, "memory", "notes", "ports.md"), "# Ports\n\n30700 is a2a.\n");
+      await writeFile(join(d, "memory", "notes", "other.md"), "# Other\n");
+      const plan = await planMove(d, "memory/notes/ports.md", "memory/knowledge/ports.md");
+      expect(plan.refusal).toBeUndefined();
+      expect(plan.write.kind).toBe("new");
+      await commitMove(d, plan);
+      expect(await Bun.file(join(d, "memory", "knowledge", "ports.md")).text()).toBe("# Ports\n\n30700 is a2a.\n");
+      expect(await Bun.file(join(d, "memory", "notes", "ports.md")).exists()).toBe(false);
+      expect((await planMove(d, "memory/notes/other.md", "memory/knowledge/ports.md")).refusal).toContain("already a memory");
+      expect((await planMove(d, "memory/notes/gone.md", "memory/knowledge/gone.md")).refusal).toContain("not a memory file");
+      expect((await planMove(d, "memory/notes/other.md", "memory/notes/other.md")).refusal).toContain("already there");
+      expect((await planMove(d, "../x.md", "memory/x.md")).refusal).toBeDefined();
+      await writeFile(join(d, "memory", "notes", "leak.md"), `key ghp_${"a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"}\n`);
+      expect((await planMove(d, "memory/notes/leak.md", "memory/knowledge/leak.md")).refusal).toContain("credential");
+      await expect(commitMove(d, await planMove(d, "memory/notes/gone.md", "memory/knowledge/g.md"))).rejects.toThrow();
+    } finally {
+      await rm(d, { recursive: true, force: true });
+    }
   });
 });

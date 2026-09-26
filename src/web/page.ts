@@ -42,8 +42,14 @@ code,.mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
 code{background:var(--calmbg);padding:1px 6px;border-radius:6px;font-size:.86em}
 
 /* shell */
-.app{display:grid;grid-template-columns:260px 1fr;min-height:100vh}
-.rail{position:sticky;top:0;height:100vh;overflow:auto;padding:18px 14px;border-right:1px solid var(--line);background:var(--bg2);display:flex;flex-direction:column;gap:14px}
+.app{display:grid;grid-template-columns:260px 1fr;min-height:calc(100vh - var(--foot))}
+/* D-089: the version, and who this page belongs to, in a thin bar across the bottom of every screen. */
+:root{--foot:28px}
+.foot{position:fixed;left:0;right:0;bottom:0;z-index:35;height:var(--foot);display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 14px;background:var(--bg2);border-top:1px solid var(--line);font-size:.74rem;color:var(--muted);white-space:nowrap;overflow:hidden}
+.footver{border:0;background:none;padding:0;min-height:0;font:inherit;color:inherit;cursor:pointer}.footver:hover{color:var(--ink);text-decoration:underline}
+.foot b{color:var(--ink);font-weight:600}.foot .newer{color:var(--care);font-weight:600}
+.foot .right{overflow:hidden;text-overflow:ellipsis}
+.rail{position:sticky;top:0;height:calc(100vh - var(--foot));overflow:auto;padding:18px 14px;border-right:1px solid var(--line);background:var(--bg2);display:flex;flex-direction:column;gap:14px}
 .brand{display:flex;align-items:center;gap:10px;padding:2px 6px}
 .logo{width:44px;height:48px;flex:none}
 .brand b{font-size:1.02rem;letter-spacing:.2px}.brand .small{display:block}
@@ -94,7 +100,7 @@ textarea{min-height:70px;resize:vertical}
 .pill.ask{background:var(--carebg);color:var(--care)}.pill.act{background:var(--okbg);color:var(--ok)}.pill.stop{background:var(--warnbg);color:var(--warn)}
 ul.plain{list-style:none;padding:0;margin:0}ul.plain li{padding:8px 0;border-top:1px solid var(--line)}ul.plain li:first-child{border-top:0}
 .empty{color:var(--muted);font-style:italic}
-.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:12px;max-width:90vw;white-space:pre-wrap;display:none;z-index:50;box-shadow:var(--shadow)}
+.toast{position:fixed;left:50%;bottom:calc(22px + var(--foot));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:12px;max-width:90vw;white-space:pre-wrap;display:none;z-index:50;box-shadow:var(--shadow)}
 footer{color:var(--muted);font-size:.8rem;margin-top:22px}
 
 /* home: full width — status across the top, the chat and what waits side by side, the rest beneath */
@@ -113,7 +119,7 @@ footer{color:var(--muted);font-size:.8rem;margin-top:22px}
 .bulk .small{flex:1;color:var(--care);font-weight:600}.bulk button{min-height:32px;padding:5px 10px;font-size:.84rem}
 .card .pick{display:flex;align-items:center;gap:8px;float:right;margin:-2px -2px 0 8px}.card .pick input{width:18px;height:18px;accent-color:var(--brand)}
 /* A (D-080): the chat stays put while the column beside it scrolls. */
-.chatpanel{display:flex;flex-direction:column;position:sticky;top:16px;height:calc(100vh - 32px);min-height:420px}
+.chatpanel{display:flex;flex-direction:column;position:sticky;top:16px;height:calc(100vh - 32px - var(--foot));min-height:420px}
 .panelhead{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:8px}
 .engineline{font-size:.78rem;color:var(--muted);font-family:ui-monospace,monospace;text-align:right}
 .chat{flex:1;display:flex;flex-direction:column;gap:10px;min-height:0;overflow:auto;padding:4px 2px 10px}
@@ -158,6 +164,17 @@ footer{color:var(--muted);font-size:.8rem;margin-top:22px}
 .memlist{max-height:70vh;overflow:auto}
 /* D-082: the memories as neurons and the links between them as synapses, turning in 3D. */
 .memmap{grid-column:1/-1}
+.kindseg{margin-bottom:0}.kindseg button[aria-pressed=true]{background:var(--card);color:var(--ink);font-weight:600;box-shadow:var(--shadow)}
+.tag.kn{background:var(--carebg);color:var(--care)}
+/* D-093: facts drawn out of memory, answered one by one. */
+.fact{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;padding:10px 0;border-top:1px solid var(--line)}
+.fact:first-child{border-top:0}.fact .q{font-size:.8rem;color:var(--muted);margin-top:3px}.fact .q button{border:0;background:none;padding:0;min-height:0;color:var(--focus);font:inherit;cursor:pointer;text-decoration:underline}
+.fact .yn{display:flex;gap:6px;flex:none}.fact.done{opacity:.6}
+/* D-091: collections — the tags in a memory's front matter. */
+.tagrow{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 2px}
+.tagchip{border:1px solid var(--line);background:var(--bg2);border-radius:99px;padding:2px 10px;font-size:.78rem;min-height:26px;color:var(--muted)}
+.tagchip[aria-pressed=true]{background:var(--minbg);color:var(--mint);border-color:var(--mint);font-weight:600}
+.tagchip b{font-weight:600;margin-left:4px;color:var(--ink);opacity:.6}
 /* D-084: import — drop files or paste a link; each is checked before anything is written. */
 .drop{display:block;border:2px dashed var(--line);border-radius:14px;padding:22px 14px;text-align:center;cursor:pointer;background:var(--bg2)}
 .drop.over,.drop:focus-within{border-color:var(--brand);background:var(--carebg)}
@@ -214,11 +231,13 @@ footer{color:var(--muted);font-size:.8rem;margin-top:22px}
   .agentcard h1 #name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .sub{-webkit-line-clamp:1;margin-top:0;font-size:.8rem}
   .statusline{margin-top:2px;font-size:.78rem}
-  nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:30;flex-direction:row;justify-content:space-around;gap:0;padding:6px 4px calc(6px + env(safe-area-inset-bottom));background:var(--bg2);border-top:1px solid var(--line);backdrop-filter:blur(12px)}
+  :root{--foot:calc(22px + env(safe-area-inset-bottom))}
+  .foot{height:var(--foot);padding:0 12px env(safe-area-inset-bottom);font-size:.68rem}
+  nav.tabs{position:fixed;left:0;right:0;bottom:var(--foot);z-index:30;flex-direction:row;justify-content:space-around;gap:0;padding:6px 4px 6px;background:var(--bg2);border-top:1px solid var(--line);backdrop-filter:blur(12px)}
   nav.tabs button{flex-direction:column;gap:2px;width:auto;flex:1;padding:6px 2px;font-size:.68rem;text-align:center;min-height:0}
   nav.tabs button svg{width:22px;height:22px}
   nav.tabs button[aria-selected=true]{background:none;box-shadow:none;color:var(--brand)}
-  main{padding:14px 14px 96px}
+  main{padding:14px 14px calc(96px + var(--foot))}
   section{padding:14px;border-radius:14px}
   .grid{gap:14px;grid-template-areas:"chat" "status" "wait" "recent" "sched" "term"}
   .memgrid{grid-template-columns:1fr;gap:14px}
@@ -227,11 +246,11 @@ footer{color:var(--muted);font-size:.8rem;margin-top:22px}
   .chatpanel{position:static;height:auto;min-height:0}
   .chat{max-height:none;min-height:120px}
   /* C (D-080): the message box sits above the tab bar, like a messenger. */
-  .composer{position:fixed;left:0;right:0;bottom:calc(62px + env(safe-area-inset-bottom));z-index:25;margin:0;border-radius:14px 14px 0 0;border-width:1px 0 0;padding:8px 10px;background:var(--bg2);box-shadow:0 -8px 24px -16px rgba(0,0,0,.5)}
+  .composer{position:fixed;left:0;right:0;bottom:calc(62px + var(--foot));z-index:25;margin:0;border-radius:14px 14px 0 0;border-width:1px 0 0;padding:8px 10px;background:var(--bg2);box-shadow:0 -8px 24px -16px rgba(0,0,0,.5)}
   .composer textarea{min-height:42px;max-height:30vh}
   .composer .row{margin-top:2px}
   .composer #sending{font-size:.72rem}
-  main.homeon{padding-bottom:190px}
+  main.homeon{padding-bottom:calc(190px + var(--foot))}
   .engineline{text-align:left}
   .panelhead{flex-direction:column}
   .cat>div:last-child{width:100%}
@@ -239,7 +258,7 @@ footer{color:var(--muted);font-size:.8rem;margin-top:22px}
   .kv{grid-template-columns:1fr;gap:0}.kv dt{margin-top:8px;font-size:.82rem}
   .msg{max-width:94%}
   .memlist{max-height:none}
-  .toast{bottom:84px}
+  .toast{bottom:calc(84px + var(--foot))}
 }
 ${MARKDOWN_CSS}
 </style>
@@ -390,23 +409,32 @@ ${MARKDOWN_CSS}
 
   <div class="memgrid" id="memories" role="tabpanel" aria-labelledby="tabMemories" hidden>
     <section class="memmap" aria-labelledby="h-map">
-      <div class="panelhead"><h2 id="h-map">Memory map <span class="small" id="mapStats"></span></h2><div class="row" style="margin:0"><button id="mapSpin" aria-pressed="true">Spin</button><button id="mapReset">Reset view</button><button id="mapToggle" aria-expanded="true">Hide map</button></div></div>
+      <div class="panelhead"><h2 id="h-map">Memory map <span class="small" id="mapStats"></span></h2><div class="row" style="margin:0"><button id="mapEntities" aria-pressed="false" title="Ports, services, hosts, env names and paths that two or more memories mention">Things</button><button id="mapSpin" aria-pressed="true">Spin</button><button id="mapReset">Reset view</button><button id="mapToggle" aria-expanded="true">Hide map</button></div></div>
       <div id="mapBody">
         <div class="mapwrap"><canvas id="mapCanvas" role="img" aria-label="Memory map: each memory is a dot, each link between two memories a line. The list below holds the same memories."></canvas><div class="maptip" id="mapTip" hidden></div></div>
         <div class="legend" id="mapLegend"></div>
         <p class="hint">Each dot is a memory, sized by how many others it links to; each line is a <code>[[link]]</code> between two of them, with signals running along it. Drag to turn it, scroll to zoom, click a dot to read it. The filter below dims what does not match.</p>
       </div>
     </section>
+    <section class="memmap" aria-labelledby="h-facts">
+      <div class="panelhead"><h2 id="h-facts">Facts to confirm <span class="small" id="factStats"></span></h2><div class="row" style="margin:0"><button id="factStart">Draw facts…</button><button class="primary" id="factAdopt" disabled>Write the yeses</button></div></div>
+      <p class="hint">The local model reads your knowledge (or, with Memory chosen above, all of memory) and offers short facts, each quoting the words it came from — one whose quote is not there is cut. Say yes to the true ones; only those are written, to <code>memory/knowledge/facts/</code>.</p>
+      <div id="factList"></div>
+    </section>
     <section aria-labelledby="h-mem">
       <div class="panelhead"><h2 id="h-mem">Memories <span class="small" id="memCount"></span></h2><div class="row" style="margin:0"><button id="memImp">Import…</button><button class="primary" id="memNew">New memory</button></div></div>
+      <div class="seg kindseg" id="memKind" role="group" aria-label="Which kind"><button data-kind="" aria-pressed="true">All</button><button data-kind="memory" aria-pressed="false">Memory</button><button data-kind="knowledge" aria-pressed="false">Knowledge</button></div>
+      <p class="hint" style="margin:6px 0 10px">Memory is what it keeps of the person and what happened; knowledge is documents and pages brought in to look things up in (<code>memory/knowledge/</code>).</p>
+      <div class="tagrow" id="memTags" role="group" aria-label="Collections"></div>
       <label class="small" for="memFilter">Filter by words</label>
       <input type="text" id="memFilter" placeholder="Type to narrow the list…" autocomplete="off">
       <div class="row"><select id="memType" aria-label="Kind"><option value="">All kinds</option></select><button id="memSearch" title="Ask recall — the same search a turn uses">Search by meaning</button></div>
       <div class="memlist" id="memList" style="margin-top:10px"></div>
     </section>
     <section aria-labelledby="h-memview">
-      <div class="panelhead"><h2 id="h-memview">Read</h2><div class="row" style="margin:0" id="memActions" hidden><button id="memEdit">Edit</button><button class="danger" id="memDelete">Delete…</button></div></div>
+      <div class="panelhead"><h2 id="h-memview">Read</h2><div class="row" style="margin:0" id="memActions" hidden><button id="memMove">Move…</button><button id="memEdit">Edit</button><button class="danger" id="memDelete">Delete…</button></div></div>
       <div class="row" style="justify-content:space-between;margin-top:0"><p class="small" id="memPath" style="margin:0">Pick a memory on the left.</p><label class="small"><input type="checkbox" id="memRaw"> show as written</label></div>
+      <div class="row" id="memTagBox" hidden style="margin:0 0 8px;gap:8px;align-items:center"><span class="small">Collections:</span><span id="memTagList" class="tagrow" style="margin:0"></span><button id="memTagEdit" class="linkish">Edit tags</button></div>
       <div class="notes" id="memText" style="max-height:70vh" hidden></div>
       <div id="memEditor" hidden>
         <label class="small" for="memEdPath">File</label>
@@ -491,6 +519,7 @@ ${MARKDOWN_CSS}
 </main>
 </div>
 <div class="toast" id="toast" role="status"></div>
+<footer class="foot" id="foot"><span><button class="footver" id="footCheck" title="Check for a newer release"><b>Oh My AGI</b> <span id="footVer">…</span></button> <span id="footNewer"></span></span><span class="right" id="footWho"></span></footer>
 <script>
 ${MARKDOWN_JS}
 (() => {
@@ -613,6 +642,10 @@ ${MARKDOWN_JS}
   async function refresh(force) {
     let s; try { s = await api("/api/state"); } catch { return; }
     lastState = s; canTriage = s.canTriage;
+    $("footVer").textContent = s.version ? "v" + s.version.current : "";
+    const newer = s.version && s.version.latest && s.version.latest !== s.version.current && s.version.latest.localeCompare(s.version.current, undefined, { numeric: true }) > 0;
+    $("footNewer").replaceChildren(...(newer ? [el("span", "newer", "· v" + s.version.latest + " is out — ohmyagi update")] : []));
+    $("footWho").textContent = s.agent.name + " · " + s.agent.subject + " · on this computer";
     $("name").textContent = s.agent.name; $("role").textContent = s.agent.role; $("role").title = s.agent.role; subject = s.agent.subject; agentName = s.agent.name;
     if (!restored) { restored = true; for (const m of chatLog) bubble(m.cls, m.text, m.small, true); }
     $("prompt").placeholder = "Ask " + s.agent.name + " a question, or say what you'd like done…";
@@ -846,10 +879,13 @@ ${MARKDOWN_JS}
       if (!p) return sys(((lastState && lastState.approved) || []).length ? "Say which: a number from /waiting's “allowed” list." : "Nothing allowed is waiting to be done.");
       return send(p.what, p.id);
     } },
-    { name: "search", args: "<words>", help: "Search memory by meaning, the way a turn recalls", run: async (a) => {
-      if (!a) return sys("Search for what? /search <words>");
-      const r = await api("/api/memory-search", { query: a });
-      sys("**Memory — " + a + "**\\n\\n" + (r.text || r.message || r.error || "Nothing found."));
+    { name: "search", args: "[knowledge|memory] <words>", help: "Search memory by meaning, the way a turn recalls — or one kind only", run: async (a) => {
+      if (!a) return sys("Search for what? /search [knowledge|memory] <words>");
+      const first = a.split(" ")[0].toLowerCase(), scope = first === "knowledge" || first === "memory" ? first : "all";
+      const words = scope === "all" ? a : a.slice(first.length).trim();
+      if (!words) return sys("Search " + scope + " for what?");
+      const r = await api("/api/memory-search", { query: words, scope });
+      sys("**" + (scope === "knowledge" ? "Knowledge" : scope === "memory" ? "Memory (not knowledge)" : "Memory") + " — " + words + "**\\n\\n" + (r.text || r.message || r.error || "Nothing found."));
     } },
     { name: "remember", args: "<text>", help: "Save a note to memory (as New memory does)", more: "Goes to memory/notes/<date>-<words>.md through ohmyagi memory write: the credential scan and the memory basis apply.", run: async (a) => {
       if (!a) return sys("Remember what? /remember <text>");
@@ -868,6 +904,23 @@ ${MARKDOWN_JS}
         { label: "Import it", primary: true, run: async () => { const r = await api("/api/memory/import", { url: a, write: true }); sys(r.ok ? "Imported. " + (r.message || "").split("\\n").filter((l) => l.startsWith("imported")).join("") : "Not imported — " + (r.message || r.error || "")); } },
         { label: "Cancel", run: async () => sys("Nothing was imported.") },
       ]);
+    } },
+    { name: "who", args: "<port|service|host|env|path>", help: "Which memories mention it — “/who 10410”", run: async (a) => {
+      if (!a) return sys("Who mentions what? /who 10410, /who ohmyagi-web-om.service, /who ~/ai-stack");
+      const hits = await api("/api/memory/who?q=" + encodeURIComponent(a));
+      if (!hits.length) return sys("Nothing in memory mentions **" + a + "**.");
+      sys(hits.map((h) => "**" + h.type + " " + h.value + "** — " + h.mentions.length + "\\n\\n" + h.mentions.map((m) => "- " + m.title + " — _" + m.path + ":" + m.line + "_").join("\\n")).join("\\n\\n"));
+    } },
+    { name: "facts", args: "", help: "Open the facts waiting for your yes or no (drawn out of memory)", run: () => { showTab("memories"); $("h-facts").scrollIntoView({ block: "start" }); } },
+    { name: "tags", args: "", help: "List the collections, with how many memories are in each", run: async () => {
+      if (!mems.length) { try { mems = await api("/api/memories"); } catch { return; } }
+      const count = new Map(); for (const m of mems) for (const t of m.tags || []) count.set(t, (count.get(t) || 0) + 1);
+      if (!count.size) return sys("No collections yet. Tag a memory: open it in Memories → Edit tags, or /tag <name>.");
+      sys("**Collections**\\n\\n" + [...count].sort((a, b) => b[1] - a[1]).map(([t, n]) => "- #" + t + " — " + n).join("\\n") + "\\n\\n/tag <name> opens one.");
+    } },
+    { name: "tag", args: "<name>", help: "Open one collection in Memories", run: async (a) => {
+      const t = a.trim().toLowerCase().replace(/^#/, ""); if (!t) return sys("Which collection? /tags lists them.");
+      showTab("memories"); memTag = t; if (mems.length) { drawTags(); drawMemories(); }
     } },
     { name: "memories", args: "[words]", help: "Open Memories, filtered by words", run: (a) => { showTab("memories"); $("memFilter").value = a; if (mems.length) drawMemories(); } },
     { name: "autonomy", args: "[read|write|run|reach] [never|ask|tell]", help: "See or set what it may do on its own", more: "Levels here go up to “do it, then tell me” (2). Acting without asking (3) is typed in a terminal.", run: async (a) => {
@@ -930,6 +983,7 @@ ${MARKDOWN_JS}
     const v = $("prompt").value;
     if (e.key === "Enter" && !e.shiftKey && !(e.ctrlKey || e.metaKey) && $("cmdMenu").hidden && v.startsWith("/") && !v.startsWith("//") && !v.includes("\\n")) { e.preventDefault(); send(v); }
   });
+  $("footCheck").onclick = async () => { const r = await api("/api/update-check", {}); toast(r.message || (r.ok ? "Checked." : "Could not check.")); refresh(); };
   $("send").onclick = () => send($("prompt").value);
   $("prompt").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) send($("prompt").value); });
   $("stopBtn").onclick = async () => {
@@ -1145,6 +1199,17 @@ ${MARKDOWN_JS}
     if (!r.ok) { toast(r.message || r.error || "Not saved."); return; }
     toast(r.message || "Saved."); memEditing = null; await loadMemories(); openMemory(path);
   };
+  $("memMove").onclick = async () => {
+    const path = memShown; if (!path) return;
+    const to = kindOf(path) === "knowledge" ? "memory" : "knowledge";
+    const plan = await api("/api/memory/move", { path, to });
+    if (!plan.ok) { toast(plan.message || plan.error || "Cannot move it."); return; }
+    if (!confirm("Move to " + to + "?\\n\\n" + (plan.message || "") + "\\n\\nBoth indexes are rebuilt. Git keeps the old path until you commit the move.")) return;
+    $("memMove").disabled = true;
+    const r = await api("/api/memory/move", { path, to, write: true });
+    $("memMove").disabled = false;
+    toast(r.ok ? "Moved to " + to + "." : (r.message || "Not moved.")); if (r.ok) { await loadMemories(); openMemory(movedTo(path, to)); }
+  };
   $("memDelete").onclick = async () => {
     const path = memShown; if (!path) return;
     const plan = await api("/api/memory/delete", { path });
@@ -1153,16 +1218,51 @@ ${MARKDOWN_JS}
     const r = await api("/api/memory/delete", { path, write: true });
     toast(r.ok ? "Deleted." : (r.message || "Not deleted.")); memShown = ""; memMode(false); $("memPath").textContent = "Pick a memory on the left."; loadMemories();
   };
-  let mems = []; let memShown = "";
+  let mems = []; let memShown = ""; let memKind = ""; let memTag = "";
+  // D-091: collections — every tag with how many memories are in it; one pressed narrows the list and the map.
+  function drawTags() {
+    const row = $("memTags"); row.replaceChildren();
+    const count = new Map(); for (const m of mems) for (const t of m.tags || []) count.set(t, (count.get(t) || 0) + 1);
+    if (memTag && !count.has(memTag)) memTag = "";
+    for (const [t, n] of [...count].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))) {
+      const b = el("button", "tagchip", "#" + t); b.append(el("b", "", String(n))); b.setAttribute("aria-pressed", String(t === memTag));
+      b.onclick = () => { memTag = memTag === t ? "" : t; drawTags(); drawMemories(); };
+      row.append(b);
+    }
+    row.hidden = count.size === 0;
+  }
+  function showTagsOf(path) {
+    const m = mems.find((x) => x.path === path); const list = $("memTagList"); list.replaceChildren();
+    $("memTagBox").hidden = !m;
+    if (!m) return;
+    if (!m.tags.length) list.append(el("span", "small", "none"));
+    for (const t of m.tags) { const b = el("button", "tagchip", "#" + t); b.onclick = () => { memTag = t; drawTags(); drawMemories(); }; list.append(b); }
+  }
+  $("memTagEdit").onclick = async () => {
+    const m = mems.find((x) => x.path === memShown); if (!m) return;
+    const typed = prompt("Collections for " + m.title + " — separate them with commas:", m.tags.join(", "));
+    if (typed === null) return;
+    const tags = typed.split(",").map((t) => t.trim()).filter(Boolean);
+    const r = await api("/api/memory/tags", { path: m.path, tags });
+    toast(r.ok ? "Collections saved." : (r.message || r.error || "Not saved.")); if (r.ok) { await loadMemories(); openMemory(m.path); }
+  };
+  // D-090: the person's memory, knowledge (memory/knowledge/), or both.
+  function kindOf(path) { return path.startsWith("memory/knowledge/") ? "knowledge" : "memory"; }
+  function movedTo(path, to) { const name = path.split("/").pop(); return to === "knowledge" ? "memory/knowledge/" + name : "memory/notes/" + name; }
+  document.querySelectorAll("#memKind button").forEach((b) => b.onclick = () => {
+    memKind = b.dataset.kind; document.querySelectorAll("#memKind button").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); drawMemories();
+  });
   function drawMemories() {
     const q = $("memFilter").value.trim().toLowerCase(); const kind = $("memType").value;
     const list = $("memList"); list.replaceChildren();
-    const hits = mems.filter((m) => (!kind || m.type === kind) && (!q || (m.title + " " + m.description + " " + m.path).toLowerCase().includes(q)));
+    const hits = mems.filter((m) => (!memKind || m.kind === memKind) && (!memTag || (m.tags || []).includes(memTag)) && (!kind || m.type === kind) && (!q || (m.title + " " + m.description + " " + m.path).toLowerCase().includes(q)));
+    const counts = { "": mems.length, memory: mems.filter((m) => m.kind === "memory").length, knowledge: mems.filter((m) => m.kind === "knowledge").length };
+    document.querySelectorAll("#memKind button").forEach((b) => { b.textContent = (b.dataset.kind ? b.dataset.kind[0].toUpperCase() + b.dataset.kind.slice(1) : "All") + " " + counts[b.dataset.kind]; });
     $("memCount").textContent = "(" + (hits.length === mems.length ? mems.length : hits.length + " of " + mems.length) + ")";
     if (!hits.length) { list.append(el("p", "empty", mems.length ? "Nothing matches." : "No memories yet. Notes go in memory/ in its repository.")); return; }
     for (const m of hits) {
       const b = el("button", "mem"); b.setAttribute("aria-current", String(m.path === memShown));
-      const t = el("div", "what", m.title); if (m.type) t.append(el("span", "tag", m.type));
+      const t = el("div", "what", m.title); if (m.kind === "knowledge") t.append(el("span", "tag kn", "knowledge")); if (m.type) t.append(el("span", "tag", m.type)); for (const tg of (m.tags || []).slice(0, 3)) t.append(el("span", "tag", "#" + tg));
       b.append(t, el("div", "small clamp2", m.description), el("div", "small", m.path + " · " + Math.max(1, Math.round(m.bytes / 1024)) + " KB"));
       b.onclick = () => openMemory(m.path);
       list.append(b);
@@ -1174,6 +1274,8 @@ ${MARKDOWN_JS}
     let r; try { r = await api("/api/memory?path=" + encodeURIComponent(path)); } catch { return; }
     memLast = r.error ? "" : r.text; showMem(r.error || "");
     memEditing = null; $("memEditor").hidden = true; $("memImport").hidden = true; $("memActions").hidden = !!r.error;
+    $("memMove").textContent = kindOf(path) === "knowledge" ? "Move to Memory…" : "Move to Knowledge…";
+    showTagsOf(r.error ? "" : path);
   }
   let memLast = "";
   function showMem(error) {
@@ -1187,15 +1289,28 @@ ${MARKDOWN_JS}
     try { mems = await api("/api/memories"); } catch { return; }
     const sel = $("memType"); const keep = sel.value; sel.replaceChildren(el("option", "", "All kinds")); sel.firstChild.value = "";
     for (const k of [...new Set(mems.map((m) => m.type).filter(Boolean))].sort()) { const o = el("option", "", k); o.value = k; sel.append(o); }
-    sel.value = keep; drawMemories(); loadMap();
+    sel.value = keep; drawTags(); drawMemories(); loadMap(); loadFacts();
   }
   // D-082: the memory map — a force layout in 3D, drawn on a canvas by hand (no library: the page ships in the binary).
   const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const TYPE_VAR = { user: "--brand", feedback: "--mint", project: "--focus" };
   const map = { nodes: [], edges: [], deg: [], adj: [], index: new Map(), x: [], y: [], z: [], vx: [], vy: [], vz: [], heat: 0, rx: -0.35, ry: 0, zoom: 1, spin: !still, hover: -1, mouse: null, drag: null, pulses: [], raf: 0, last: 0, proj: [] };
   function mapColor(type, css) { return type === "reference" ? "#a78bfa" : css(TYPE_VAR[type] || "--muted"); }
+  // D-092: the things memories share, drawn as diamonds when "Things" is on.
+  const ENTITY_COLOR = { port: "#f472b6", service: "#34d399", host: "#fbbf24", env: "#fb923c", path: "#94a3b8" };
+  let mapThings = store.get("ohmyagi-map-things") === "on", mapRaw = null;
+  function withThings(g) {
+    if (!mapThings || !g.entities || !g.entities.length) return g;
+    const base = g.nodes.length;
+    return {
+      nodes: g.nodes.concat(g.entities.map((e) => ({ path: "entity:" + e.type + ":" + e.value, title: e.value, type: "", kind: "entity", etype: e.type, count: e.count, tags: [] }))),
+      edges: g.edges.concat(g.mentions.map(([ei, ni]) => [ni, base + ei, 1])),
+      dangling: g.dangling, entities: g.entities, mentions: g.mentions,
+    };
+  }
   async function loadMap() {
-    let g; try { g = await api("/api/memories/graph"); } catch { return; }
+    let g; try { g = mapRaw = await api("/api/memories/graph"); } catch { return; }
+    g = withThings(g);
     const n = g.nodes.length;
     const old = new Map(map.nodes.map((m, i) => [m.path, [map.x[i], map.y[i], map.z[i]]]));
     map.nodes = g.nodes; map.edges = g.edges; map.pulses = [];
@@ -1212,10 +1327,13 @@ ${MARKDOWN_JS}
     map.heat = 1;
     if (still) { for (let i = 0; i < 400 && map.heat > 0.005; i++) mapStep(); }
     const loose = map.deg.filter((d) => d === 0).length;
-    $("mapStats").textContent = "(" + n + " neurons · " + g.edges.length + " synapses" + (loose ? " · " + loose + " unlinked" : "") + (g.dangling ? " · " + g.dangling + " broken link" + (g.dangling === 1 ? "" : "s") : "") + ")";
+    const things = g.nodes.filter((m) => m.kind === "entity").length, notes = n - things;
+    $("mapStats").textContent = "(" + notes + " neurons · " + (g.edges.length - (things ? g.mentions.length : 0)) + " synapses" + (things ? " · " + things + " shared things" : "") + (loose ? " · " + loose + " unlinked" : "") + (g.dangling ? " · " + g.dangling + " broken link" + (g.dangling === 1 ? "" : "s") : "") + ")";
     const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
     const leg = $("mapLegend"); leg.replaceChildren();
     for (const type of [...new Set(g.nodes.map((m) => m.type || ""))].sort()) { const s = el("span", "", type || "no kind"); const dot = el("i"); dot.style.background = mapColor(type, css); s.prepend(dot); leg.append(s); }
+    leg.append(el("span", "", "● memory · ■ knowledge (" + g.nodes.filter((m) => m.kind === "knowledge").length + ")"));
+    if (things) for (const t of Object.keys(ENTITY_COLOR)) { const s = el("span", "", "◆ " + t); s.style.color = ENTITY_COLOR[t]; leg.append(s); }
     mapStart();
   }
   function mapStep() {
@@ -1266,7 +1384,7 @@ ${MARKDOWN_JS}
       for (let i = 0; i < n; i++) { const d = Math.hypot(P[i].x - map.mouse[0], P[i].y - map.mouse[1]) - P[i].r; if (d < 8 && d + P[i].z * 0.001 < best) { best = d + P[i].z * 0.001; map.hover = i; } }
     }
     const q = $("memFilter").value.trim().toLowerCase(), kind = $("memType").value;
-    const match = (m) => (!kind || m.type === kind) && (!q || (m.title + " " + m.path).toLowerCase().includes(q));
+    const match = (m) => m.kind === "entity" ? (!q || m.title.toLowerCase().includes(q)) : (!memKind || m.kind === memKind) && (!memTag || (m.tags || []).includes(memTag)) && (!kind || m.type === kind) && (!q || (m.title + " " + m.path).toLowerCase().includes(q));
     const sel = map.index.has(memShown) ? map.index.get(memShown) : -1;
     const focus = map.hover >= 0 ? map.hover : sel;
     const near = new Set(focus >= 0 ? [focus, ...map.adj[focus]] : []);
@@ -1277,8 +1395,10 @@ ${MARKDOWN_JS}
       const on = focus >= 0 && (a === focus || b === focus);
       ctx.globalAlpha = on ? 0.85 : (lit(a) && lit(b) ? 0.1 + 0.2 * Math.min(P[a].k, P[b].k) : 0.04);
       ctx.strokeStyle = on ? brand : ink; ctx.lineWidth = (on ? 1.4 : 0.7) + Math.min(wt, 4) * 0.25;
+      ctx.setLineDash(map.nodes[b].kind === "entity" ? [3, 4] : []);
       ctx.beginPath(); ctx.moveTo(P[a].x, P[a].y); ctx.lineTo(P[b].x, P[b].y); ctx.stroke();
     }
+    ctx.setLineDash([]);
     // Signals running along the synapses.
     if (!still && map.edges.length) {
       const rate = Math.min(8, 1 + map.edges.length / 12) * dt / 1000;
@@ -1297,10 +1417,14 @@ ${MARKDOWN_JS}
     // Neurons, far ones first.
     const order = [...P.keys()].sort((a, b) => P[b].z - P[a].z);
     for (const i of order) {
-      const p = P[i], color = mapColor(map.nodes[i].type, css), on = lit(i);
+      const p = P[i], ent = map.nodes[i].kind === "entity", color = ent ? ENTITY_COLOR[map.nodes[i].etype] : mapColor(map.nodes[i].type, css), on = lit(i);
       ctx.globalAlpha = on ? 0.35 + 0.65 * Math.min(1, p.k) : 0.12;
       ctx.fillStyle = color; ctx.shadowColor = color; ctx.shadowBlur = on ? 14 * p.k : 0;
-      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath();
+      // Knowledge is a square, the person's memory a round cell (D-090).
+      if (ent) { ctx.moveTo(p.x, p.y - p.r * 1.2); ctx.lineTo(p.x + p.r, p.y); ctx.lineTo(p.x, p.y + p.r * 1.2); ctx.lineTo(p.x - p.r, p.y); ctx.closePath(); }
+      else if (map.nodes[i].kind === "knowledge") ctx.rect(p.x - p.r * 0.9, p.y - p.r * 0.9, p.r * 1.8, p.r * 1.8); else ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fill();
       if (i === sel || i === map.hover) { ctx.shadowBlur = 0; ctx.globalAlpha = 1; ctx.strokeStyle = brand; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(p.x, p.y, p.r + 4, 0, Math.PI * 2); ctx.stroke(); }
     }
     ctx.shadowBlur = 0;
@@ -1322,7 +1446,8 @@ ${MARKDOWN_JS}
     const tip = $("mapTip");
     if (map.hover < 0) tip.hidden = true;
     else {
-      const m = map.nodes[map.hover]; tip.replaceChildren(el("div", "what", m.title), el("div", "small", (m.type || "no kind") + " · " + map.deg[map.hover] + " link(s) · " + m.path));
+      const m = map.nodes[map.hover];
+      tip.replaceChildren(el("div", "what", m.title), el("div", "small", m.kind === "entity" ? m.etype + " · in " + m.count + " memories · click to see where" : (m.type || "no kind") + " · " + map.deg[map.hover] + " link(s) · " + m.path));
       tip.hidden = false; tip.style.left = Math.min(w - 240, P[map.hover].x + 14) + "px"; tip.style.top = Math.max(4, P[map.hover].y - 12) + "px";
     }
     c.style.cursor = map.drag ? "grabbing" : map.hover >= 0 ? "pointer" : "grab";
@@ -1349,12 +1474,26 @@ ${MARKDOWN_JS}
   });
   cv.addEventListener("pointerup", (e) => {
     mouseAt(e); const click = map.drag && map.drag.moved < 6; map.drag = null;
-    if (click && map.hover >= 0) { openMemory(map.nodes[map.hover].path); $("h-memview").scrollIntoView({ behavior: still ? "auto" : "smooth", block: "nearest" }); }
+    if (click && map.hover >= 0 && map.nodes[map.hover].kind === "entity") { showWho(map.nodes[map.hover].title); $("h-memview").scrollIntoView({ behavior: still ? "auto" : "smooth", block: "nearest" }); }
+    else if (click && map.hover >= 0) { openMemory(map.nodes[map.hover].path); $("h-memview").scrollIntoView({ behavior: still ? "auto" : "smooth", block: "nearest" }); }
   });
   cv.addEventListener("pointercancel", () => { map.drag = null; });
   cv.addEventListener("pointerleave", () => { if (!map.drag) map.mouse = null; });
   cv.addEventListener("wheel", (e) => { e.preventDefault(); map.zoom = Math.max(0.4, Math.min(5, map.zoom * Math.exp(-e.deltaY * 0.0012))); }, { passive: false });
-  $("mapSpin").setAttribute("aria-pressed", String(map.spin));
+  $("mapEntities").setAttribute("aria-pressed", String(mapThings));
+  $("mapEntities").onclick = () => { mapThings = !mapThings; store.set("ohmyagi-map-things", mapThings ? "on" : ""); $("mapEntities").setAttribute("aria-pressed", String(mapThings)); loadMap(); };
+  // Who mentions a thing: in the Read panel, each memory a button that opens it at that line's note.
+  async function showWho(thing) {
+    let hits; try { hits = await api("/api/memory/who?q=" + encodeURIComponent(thing)); } catch { return; }
+    memShown = ""; drawMemories(); memMode(false); $("memActions").hidden = true; $("memTagBox").hidden = true;
+    $("memPath").textContent = "What mentions " + thing;
+    const box = $("memText"); box.hidden = false; box.style.whiteSpace = "normal"; box.replaceChildren();
+    if (!hits.length) { box.textContent = "Nothing in memory mentions " + thing + "."; return; }
+    for (const h of hits) {
+      box.append(el("div", "what", h.type + " " + h.value + " — " + h.mentions.length + " memor" + (h.mentions.length === 1 ? "y" : "ies")));
+      for (const m of h.mentions) { const b = el("button", "mem"); b.append(el("div", "", m.title), el("div", "small mono", m.path + ":" + m.line + "  " + m.excerpt)); b.onclick = () => openMemory(m.path); box.append(b); }
+    }
+  }
   $("mapSpin").onclick = () => { map.spin = !map.spin; $("mapSpin").setAttribute("aria-pressed", String(map.spin)); };
   $("mapReset").onclick = () => { map.rx = -0.35; map.ry = 0; map.zoom = 1; map.heat = 1; };
   function mapShow(on) { $("mapBody").hidden = !on; $("mapToggle").textContent = on ? "Hide map" : "Show map"; $("mapToggle").setAttribute("aria-expanded", String(on)); $("mapSpin").hidden = $("mapReset").hidden = !on; store.set("ohmyagi-map", on ? "" : "off"); if (on) mapStart(); }
@@ -1416,12 +1555,55 @@ ${MARKDOWN_JS}
     }
     $("memImpNote").textContent = done ? done + " imported." : ""; if (done) { toast(done + " imported."); loadMemories(); }
   };
+  // D-093: facts to confirm. A run takes minutes, so it is started and then asked after.
+  let factTimer = 0;
+  async function loadFacts() {
+    clearTimeout(factTimer);
+    let r; try { r = await api("/api/distill"); } catch { return; }
+    const running = r.run && !r.run.finished;
+    const d = r.draft; const list = $("factList"); list.replaceChildren();
+    $("factStart").disabled = running;
+    if (running) { const mins = Math.max(0, Math.round((Date.now() - Date.parse(r.run.since)) / 60000)); $("factStats").textContent = "(reading — started " + (mins ? mins + " min ago" : "just now") + ")"; if (!$("memories").hidden) factTimer = setTimeout(loadFacts, 10000); }
+    else if (r.run && r.run.finished && !r.run.finished.ok) $("factStats").textContent = "(the last run did not finish: " + r.run.finished.message.split("\\n").pop() + ")";
+    if (!d) { if (!running) $("factStats").textContent = $("factStats").textContent || ""; list.append(el("p", "empty", running ? "Reading…" : "None yet. “Draw facts…” asks the local model to read your knowledge.")); $("factAdopt").disabled = true; return; }
+    const open = d.facts.filter((f) => f.decision === null), yes = d.facts.filter((f) => f.decision === "yes").length;
+    if (!running) $("factStats").textContent = "(" + open.length + " to answer · " + yes + " yes · from " + d.sources.length + " note(s), " + d.cut + " cut)";
+    $("factAdopt").disabled = yes === 0;
+    const shown = [...open, ...d.facts.filter((f) => f.decision !== null)].slice(0, 60);
+    for (const f of shown) {
+      const row = el("div", "fact" + (f.decision ? " done" : ""));
+      const left = el("div"); const t = el("div", "", f.fact); t.append(el("span", "tag", "#" + f.topic)); left.append(t);
+      const q = el("div", "q"); q.append(document.createTextNode("“" + f.quote + "” — ")); const src = el("button", "", f.source.path + ":" + f.source.line); src.onclick = () => openMemory(f.source.path); q.append(src); left.append(q);
+      const yn = el("div", "yn");
+      if (f.decision) yn.append(el("span", "pill " + (f.decision === "yes" ? "act" : "stop"), f.decision));
+      else for (const [label, a, cls] of [["Yes", "yes", "primary"], ["No", "no", ""]]) {
+        const b = el("button", cls, label);
+        b.onclick = async () => { yn.querySelectorAll("button").forEach((x) => x.disabled = true); const out = await api("/api/distill/decide", { fact: f.id, answer: a }); if (!out.ok) toast(out.message || "That did not work."); loadFacts(); };
+        yn.append(b);
+      }
+      row.append(left, yn); list.append(row);
+    }
+  }
+  $("factStart").onclick = async () => {
+    const from = memKind === "memory" ? "memory" : "memory/knowledge";
+    if (!confirm("Ask the local model to read " + (from === "memory" ? "all of memory" : "your knowledge") + " for facts?\\n\\nIt reads up to 20 pieces on this machine and can take several minutes. Nothing is written until you say yes to a fact and press “Write the yeses”.")) return;
+    const r = await api("/api/distill/start", { from });
+    toast(r.ok ? "Reading — facts appear here when it is done." : (r.error || "Could not start."));
+    loadFacts();
+  };
+  $("factAdopt").onclick = async () => {
+    const plan = await api("/api/distill/adopt", {});
+    if (!plan.ok) { toast(plan.message || "Nothing to write."); return; }
+    if (!confirm("Write the yeses?\\n\\n" + plan.message + "\\n\\nBoth indexes are rebuilt.")) return;
+    const r = await api("/api/distill/adopt", { write: true });
+    toast(r.ok ? "Written." : (r.message || "Not written.")); if (r.ok) loadMemories();
+  };
   $("memFilter").addEventListener("input", drawMemories);
   $("memType").addEventListener("change", drawMemories);
   $("memSearch").onclick = async () => {
     const q = $("memFilter").value.trim(); if (!q) { toast("Type what to look for in the box first."); return; }
     $("memSearch").disabled = true; memShown = ""; drawMemories(); $("memPath").textContent = "Search by meaning: " + q; $("memText").hidden = false; $("memText").textContent = "Searching…";
-    const r = await api("/api/memory-search", { query: q });
+    const r = await api("/api/memory-search", { query: q, scope: memKind || "all" });
     $("memText").textContent = r.text || r.message || r.error || "Nothing found."; $("memSearch").disabled = false;
   };
   async function loadSettings() {

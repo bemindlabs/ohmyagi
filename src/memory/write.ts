@@ -11,7 +11,7 @@
  * of the store too, and dropping the collection is the only removal that does.
  */
 
-import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, sep } from "node:path";
 import { scanStaged, type Finding } from "../guard/scan.ts";
 import { MEMORY_DIR } from "./sources.ts";
@@ -93,4 +93,40 @@ export async function commitWrite(agentDir: string, plan: WritePlan, text: strin
   const absolute = join(agentDir, ...plan.path.split("/"));
   await mkdir(dirname(absolute), { recursive: true });
   await writeFile(absolute, text);
+}
+
+export interface MovePlan {
+  readonly from: string;
+  readonly to: string;
+  /** The write the move makes; its refusal (a name taken, a credential) is the move's. */
+  readonly write: WritePlan;
+  readonly refusal: string | undefined;
+}
+
+/** Moving a memory is writing it at the new path and removing the old one — planned together (D-090). */
+export async function planMove(agentDir: string, from: string, to: string): Promise<MovePlan> {
+  const problem = memoryPathProblem(from) ?? (from === to ? "it is already there" : undefined);
+  let text = "";
+  let found = problem === undefined;
+  if (found) {
+    try {
+      const info = await lstat(join(agentDir, ...from.split("/")));
+      found = info.isFile();
+      if (found) text = await readFile(join(agentDir, ...from.split("/")), "utf8");
+    } catch {
+      found = false;
+    }
+  }
+  const write = await planWrite(agentDir, to, found ? text : "x");
+  const refusal =
+    problem ?? (!found ? `${from} is not a memory file` : write.refusal ?? (write.kind !== "new" ? `${to} is already a memory — pick another name` : undefined));
+  return { from, to, write, refusal };
+}
+
+/** Write the new file, then remove the old one. The caller rebuilds the indexes. */
+export async function commitMove(agentDir: string, plan: MovePlan): Promise<void> {
+  if (plan.refusal !== undefined) throw new Error(plan.refusal);
+  const text = await readFile(join(agentDir, ...plan.from.split("/")), "utf8");
+  await commitWrite(agentDir, plan.write, text);
+  await unlink(join(agentDir, ...plan.from.split("/")));
 }

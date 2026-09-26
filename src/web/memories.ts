@@ -13,6 +13,9 @@
 
 import { lstat, readdir, readFile, realpath } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
+import { memoryKind, type MemoryKind } from "../memory/kinds.ts";
+import { tagsOf } from "../memory/tags.ts";
+import { entityQuery, extractEntities, type EntityType } from "../memory/entities.ts";
 import { MEMORY_DIR } from "../memory/sources.ts";
 
 export interface MemoryEntry {
@@ -24,6 +27,10 @@ export interface MemoryEntry {
   readonly type: string;
   readonly bytes: number;
   readonly modified: string;
+  /** The person's memory, or knowledge — `memory/knowledge/` (D-090). */
+  readonly kind: MemoryKind;
+  /** The collections it is in — `tags:` in its front matter (D-091). */
+  readonly tags: readonly string[];
 }
 
 /** A path the page may ask for: under memory/, a .md file, no way out. */
@@ -79,7 +86,7 @@ export async function listMemories(agentDir: string): Promise<readonly MemoryEnt
     try {
       const [text, info] = await Promise.all([readFile(absolute, "utf8"), lstat(absolute)]);
       const path = relative(agentDir, absolute).split(sep).join("/");
-      out.push({ path, ...memoryMeta(path, text), bytes: info.size, modified: info.mtime.toISOString() });
+      out.push({ path, ...memoryMeta(path, text), bytes: info.size, modified: info.mtime.toISOString(), kind: memoryKind(path), tags: tagsOf(text) });
     } catch {
       // Unreadable: not listed. `ohmyagi memory index` names it.
     }
@@ -109,6 +116,8 @@ export interface MemoryNode {
   readonly title: string;
   readonly type: string;
   readonly bytes: number;
+  readonly kind: MemoryKind;
+  readonly tags: readonly string[];
 }
 
 /**
@@ -123,6 +132,10 @@ export interface MemoryGraph {
   /** `[from, to, weight]`, indexes into `nodes`, `from < to`. */
   readonly edges: readonly (readonly [number, number, number])[];
   readonly dangling: number;
+  /** The things two or more memories mention (D-092) — a port, a service, a host, an env name, a path. */
+  readonly entities: readonly { readonly type: EntityType; readonly value: string; readonly count: number }[];
+  /** `[entity, node]`: this memory mentions that entity. */
+  readonly mentions: readonly (readonly [number, number])[];
 }
 
 const key = (s: string) => s.trim().toLowerCase().replace(/\.md$/, "");
@@ -156,10 +169,17 @@ export async function memoryGraph(agentDir: string): Promise<MemoryGraph> {
   // A file name wins over another file's front-matter name that happens to match it.
   entries.forEach((m, i) => byName.set(key(m.path.split("/").pop()!), i));
   const weights = new Map<string, number>();
+  const mentioned = new Map<string, { type: EntityType; value: string; nodes: number[] }>();
   let dangling = 0;
   for (const [i, m] of entries.entries()) {
     const read = await readMemoryFile(agentDir, m.path);
     if (!read.ok) continue;
+    for (const e of extractEntities(read.text)) {
+      const k = `${e.type}:${e.value}`;
+      const seen = mentioned.get(k) ?? { type: e.type, value: e.value, nodes: [] };
+      seen.nodes.push(i);
+      mentioned.set(k, seen);
+    }
     const { names, files } = memoryLinks(read.text);
     const targets = [...names.map((n) => byName.get(key(n))), ...files.map((f) => byPath.get(resolveFile(m.path, f)))];
     for (const j of targets) {
@@ -174,5 +194,47 @@ export async function memoryGraph(agentDir: string): Promise<MemoryGraph> {
     const [a, b] = id.split(":").map(Number) as [number, number];
     return [a, b, w] as const;
   });
-  return { nodes: entries.map((m) => ({ path: m.path, title: m.title, type: m.type, bytes: m.bytes })), edges, dangling };
+  // Only what joins two memories or more: a thing one note mentions once is not a bridge, and the map stays readable.
+  const shared = [...mentioned.values()].filter((e) => e.nodes.length >= 2).sort((a, b) => b.nodes.length - a.nodes.length || a.value.localeCompare(b.value)).slice(0, MAX_ENTITIES);
+  return {
+    nodes: entries.map((m) => ({ path: m.path, title: m.title, type: m.type, bytes: m.bytes, kind: m.kind, tags: m.tags })),
+    edges,
+    dangling,
+    entities: shared.map((e) => ({ type: e.type, value: e.value, count: e.nodes.length })),
+    mentions: shared.flatMap((e, ei) => e.nodes.map((n) => [ei, n] as const)),
+  };
+}
+
+const MAX_ENTITIES = 150;
+
+/** One thing, and every memory that mentions it — the line it is on, to read it in place. */
+export interface WhoHit {
+  readonly type: EntityType;
+  readonly value: string;
+  readonly mentions: readonly { readonly path: string; readonly title: string; readonly line: number; readonly excerpt: string }[];
+}
+
+/**
+ * What mentions this thing (D-092): "10410", "port 10410" and ":10410" ask for the port; anything else
+ * matches an entity whose value is it, or holds it when three letters or more were given.
+ */
+export async function whoMentions(agentDir: string, raw: string): Promise<readonly WhoHit[]> {
+  const q = entityQuery(raw);
+  if (q.value === "") return [];
+  const found = new Map<string, { type: EntityType; value: string; mentions: WhoHit["mentions"][number][] }>();
+  for (const m of await listMemories(agentDir)) {
+    const read = await readMemoryFile(agentDir, m.path);
+    if (!read.ok) continue;
+    const lines = read.text.split("\n");
+    for (const e of extractEntities(read.text)) {
+      const v = e.value.toLowerCase();
+      const hit = q.type !== undefined ? e.type === q.type && e.value === q.value : v === q.value || (q.value.length >= 3 && v.includes(q.value));
+      if (!hit) continue;
+      const k = `${e.type}:${e.value}`;
+      const seen = found.get(k) ?? { type: e.type, value: e.value, mentions: [] };
+      seen.mentions.push({ path: m.path, title: m.title, line: e.line, excerpt: (lines[e.line - 1] ?? "").trim().slice(0, 200) });
+      found.set(k, seen);
+    }
+  }
+  return [...found.values()].sort((a, b) => b.mentions.length - a.mentions.length || a.value.localeCompare(b.value)).slice(0, 20);
 }

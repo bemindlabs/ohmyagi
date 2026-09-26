@@ -21,7 +21,15 @@ import {
 } from "../../src/memory/index.ts";
 import { subjectId, type SubjectId } from "../../src/types.ts";
 import { basisDirFor, basisFor, readBasis, refusalLine, soulSubject } from "../../src/consent/basis.ts";
-import { commitWrite, planWrite, type WritePlan } from "../../src/memory/write.ts";
+import { commitMove, commitWrite, planMove, planWrite, type WritePlan } from "../../src/memory/write.ts";
+import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
+import { OLLAMA_MODEL_ENV, OllamaExec } from "../../src/exec/ollama-exec.ts";
+import { asLocal } from "../../src/exec/local.ts";
+import { probeRestraint } from "../../src/exec/restraint.ts";
+import { ensurePersonalDir, personalDir } from "../../src/guard/personal.ts";
+import { checkFacts, distillPrompt, factChunks, factNotes, FACTS_DIR, readFacts, type Fact, type FactDraft } from "../../src/memory/distill.ts";
+import { KNOWLEDGE_DIR, memoryKind, movedPath, SCOPES, type Scope } from "../../src/memory/kinds.ts";
+import { listMemories, readMemoryFile, whoMentions } from "../../src/web/memories.ts";
 import { convertFile, convertUrl, planImport, type Converted } from "../../src/memory/import.ts";
 import { dialEnv } from "../dial.ts";
 import { bold, dim, parseArgs, usageError } from "../shared.ts";
@@ -30,7 +38,9 @@ const INDEX_USAGE = "usage: ohmyagi memory index <agent-dir> --subject <id>";
 const INGEST_USAGE = "usage: ohmyagi memory ingest <agent-dir> --from <dir> [--name <name>] [--yes]";
 const FORGET_USAGE =
   "usage: ohmyagi memory forget <agent-dir> --subject <id> (--file <memory/…> [--file …] | --match <text>) [--yes]";
-const SEARCH_USAGE = "usage: ohmyagi memory search <agent-dir> --subject <id> [--limit <n>] <query...>";
+const SEARCH_USAGE = "usage: ohmyagi memory search <agent-dir> --subject <id> [--limit <n>] [--scope all|memory|knowledge] <query...>";
+const WHO_USAGE = "usage: ohmyagi memory who <agent-dir> <port|service|host|env name|path…>";
+const MOVE_USAGE = "usage: ohmyagi memory move <agent-dir> --subject <id> --file <memory/…md> (--to <memory/…md> | --to knowledge | --to memory) [--yes]";
 const WRITE_USAGE = "usage: ohmyagi memory write <agent-dir> --subject <id> --file <memory/…md> --from <file> [--yes]";
 const WRITE_BOOLEANS: readonly string[] = ["yes"];
 const IMPORT_USAGE =
@@ -103,7 +113,9 @@ async function cmdMemorySearch(argv: readonly string[]): Promise<number> {
     return usageError(`${SEARCH_USAGE} — --limit is a whole number from 1 to 50`);
   }
 
-  const result = await recall(resolve(dir), subject.id, words.join(" "), limit, endpointsOrReason());
+  const scope = (options.get("scope") ?? "all") as Scope;
+  if (!SCOPES.includes(scope)) return usageError(`${SEARCH_USAGE} — --scope is ${SCOPES.join(", ")}`);
+  const result = await recall(resolve(dir), subject.id, words.join(" "), limit, endpointsOrReason(), undefined, "all", scope);
   if (result.fts === "absent") {
     console.error(dim(`no ${FTS_FILE} — run \`ohmyagi memory index\` first`));
   }
@@ -386,6 +398,309 @@ async function cmdMemoryImport(argv: readonly string[]): Promise<number> {
   return 0;
 }
 
+/**
+ * `ohmyagi memory move` — a memory to another path, most often between the person's memory and knowledge
+ * (D-090): `--to knowledge` keeps the name under memory/knowledge/, `--to memory` puts it in memory/notes/.
+ * The same gates as write for the new path; the old file goes; both indexes are rebuilt once.
+ */
+async function cmdMemoryMove(argv: readonly string[]): Promise<number> {
+  const { positional, options } = parseArgs(argv, WRITE_BOOLEANS);
+  const dir = positional[0];
+  const from = options.get("file");
+  const rawTo = options.get("to");
+  if (dir === undefined || dir === "" || positional.length > 1 || from === undefined || rawTo === undefined || rawTo === "") return usageError(MOVE_USAGE);
+  const subject = subjectFrom(options.get("subject"), MOVE_USAGE);
+  if (!subject.ok) return subject.code;
+  const allowed = basisFor(await readBasis(basisDirFor(dialEnv(), subject.id)), "memory", new Date());
+  if (!allowed.ok) {
+    console.error(`ohmyagi: ${refusalLine(subject.id, "memory", allowed.reason)}`);
+    return 1;
+  }
+  const to = rawTo === "knowledge" || rawTo === "memory" ? movedPath(from, rawTo) : rawTo;
+  const agentDir = resolve(dir);
+  const plan = await planMove(agentDir, from, to);
+  if (plan.refusal !== undefined) {
+    console.error(`ohmyagi: not moved — ${plan.refusal}`);
+    return 1;
+  }
+  console.log(`move ${plan.from} → ${plan.to} (${memoryKind(plan.from)} → ${memoryKind(plan.to)}) · ${plan.write.bytesAfter} bytes`);
+  if (!options.has("yes")) {
+    console.log(dim("Nothing was moved. --yes moves it and rebuilds both indexes."));
+    return 0;
+  }
+  await commitMove(agentDir, plan);
+  const report = await indexAgent(agentDir, subject.id, endpointsOrReason(), {
+    markerDir: ragDirFor(homedir(), process.env, subject.id),
+    now: () => new Date(),
+  });
+  console.log(`moved · full-text ${report.fts} piece(s) · ${report.vectors.ok ? `vectors rebuilt whole, ${report.vectors.points} point(s)` : `vectors not rebuilt — ${report.vectors.reason}`}`);
+  console.log(dim("Not staged and not committed: git still has it at the old path until you commit the move."));
+  return 0;
+}
+
+/**
+ * `ohmyagi memory who` — which memories mention a port, a service, a host, an env name or a path (D-092),
+ * with the line each one mentions it on. Read-only; found by shape, no model and no index.
+ */
+async function cmdMemoryWho(argv: readonly string[]): Promise<number> {
+  const { positional } = parseArgs(argv);
+  const [dir, ...words] = positional;
+  if (dir === undefined || dir === "" || words.length === 0) return usageError(WHO_USAGE);
+  const hits = await whoMentions(resolve(dir), words.join(" "));
+  if (hits.length === 0) {
+    console.log(`nothing in memory mentions ${words.join(" ")}`);
+    return 1;
+  }
+  for (const h of hits) {
+    console.log(bold(`${h.type} ${h.value} — ${h.mentions.length} memor${h.mentions.length === 1 ? "y" : "ies"}`));
+    for (const m of h.mentions) console.log(`  ${m.path}:${m.line}  ${dim(m.excerpt)}`);
+  }
+  return 0;
+}
+
+/**
+ * `ohmyagi memory distill` — facts drawn out of memory by a local model, kept only when a person says yes
+ * (D-093). The memory goes to a model on this machine and nowhere else; the draft, which quotes it, is kept
+ * in the personal directory, outside git. What a yes becomes is written through the same gates as write.
+ *
+ *   distill <dir> --subject <id> [--from <memory/…>,…] [--model <m>] [--max-chunks <n>]
+ *   distill show --subject <id> [--json] · distill decide <fact-id> --subject <id> (--yes | --no)
+ *   distill adopt <dir> --subject <id> [--yes]
+ */
+
+const DISTILL_USAGE =
+  "usage: ohmyagi memory distill <dir> --subject <id> [--from <memory/…>,…] [--model <m>] [--max-chunks <n>]\n" +
+  "       ohmyagi memory distill show --subject <id> [--json]\n" +
+  "       ohmyagi memory distill decide <fact-id> --subject <id> (--yes | --no)\n" +
+  "       ohmyagi memory distill adopt <dir> --subject <id> [--yes]";
+
+const DISTILL_DRAFTS = "knowledge";
+const DISTILL_BOOLEANS: readonly string[] = ["yes", "no", "json"];
+
+function distillSubject(options: ReadonlyMap<string, string>): { ok: true; id: SubjectId } | { ok: false; code: number } {
+  const raw = options.get("subject");
+  if (raw === undefined || raw === "") return { ok: false, code: usageError(DISTILL_USAGE) };
+  try {
+    return { ok: true, id: subjectId(raw) };
+  } catch (error) {
+    return { ok: false, code: usageError(error instanceof Error ? error.message : String(error)) };
+  }
+}
+
+async function factDraftsDir(id: SubjectId, create: boolean): Promise<string | undefined> {
+  const dir = create ? await ensurePersonalDir(dialEnv(), id) : await personalDir(dialEnv(), id);
+  if (!dir.ok) return undefined;
+  const path = join(dir.path, DISTILL_DRAFTS);
+  if (create) await mkdir(path, { recursive: true, mode: 0o700 });
+  return path;
+}
+
+async function saveFactDraft(dir: string, draft: FactDraft): Promise<string> {
+  const path = join(dir, `${draft.id}.json`);
+  await writeFile(`${path}.${process.pid}`, `${JSON.stringify(draft, null, 2)}\n`, { mode: 0o600 });
+  await rename(`${path}.${process.pid}`, path);
+  return path;
+}
+
+/** The newest draft. */
+async function loadFactDraft(id: SubjectId): Promise<{ ok: true; draft: FactDraft; dir: string } | { ok: false; reason: string }> {
+  const dir = await factDraftsDir(id, false);
+  if (dir === undefined) return { ok: false, reason: "the personal directory cannot be resolved" };
+  let names: string[] = [];
+  try {
+    names = (await readdir(dir)).filter((n) => n.endsWith(".json"));
+  } catch {
+    // None yet.
+  }
+  const drafts: FactDraft[] = [];
+  for (const name of names) {
+    try {
+      drafts.push(JSON.parse(await readFile(join(dir, name), "utf8")) as FactDraft);
+    } catch {
+      // An unreadable draft is not one to answer.
+    }
+  }
+  drafts.sort((a, b) => b.at.localeCompare(a.at));
+  const draft = drafts[0];
+  if (draft === undefined) return { ok: false, reason: "no facts drafted yet — run `ohmyagi memory distill <dir> --subject <id>` first" };
+  return { ok: true, draft, dir };
+}
+
+const describeFact = (f: Fact) => `[${f.id}] (${f.topic}) ${f.fact}\n    “${f.quote}” — ${f.source.path}:${f.source.line}${f.decision === null ? "" : ` · ${f.decision}`}`;
+
+async function cmdDistillDraft(argv: readonly string[]): Promise<number> {
+  const { positional, options } = parseArgs(argv, DISTILL_BOOLEANS);
+  const s = distillSubject(options);
+  if (!s.ok) return s.code;
+  const dir = positional[0];
+  if (dir === undefined || positional.length > 1) return usageError(DISTILL_USAGE);
+  // Facts come out of the subject's memory and go back into it: the basis for memory (S7.3).
+  const allowed = basisFor(await readBasis(basisDirFor(dialEnv(), s.id)), "memory", new Date());
+  if (!allowed.ok) {
+    console.error(`ohmyagi: ${refusalLine(s.id, "memory", allowed.reason)}`);
+    return 1;
+  }
+  const model = options.get("model") || process.env[OLLAMA_MODEL_ENV]?.trim() || "";
+  if (model === "") return usageError(`name the local model: --model <m>, or set ${OLLAMA_MODEL_ENV}`);
+  // Memory is the owner's: only a model on this machine may read it.
+  const backend = new OllamaExec({ defaultModel: model });
+  const local = asLocal(backend);
+  if (local === undefined) {
+    console.error(`ohmyagi: the model must be on this machine — ${backend.host} is not a loopback address, so nothing was read to it.`);
+    return 1;
+  }
+  const maxChunks = Number(options.get("max-chunks") ?? "20");
+  if (!Number.isInteger(maxChunks) || maxChunks < 1) return usageError(`${DISTILL_USAGE}\n--max-chunks is a positive number`);
+  // By default the knowledge brought in — documents are where facts are thickest — never facts already drawn.
+  const from = (options.get("from") ?? KNOWLEDGE_DIR).split(",").map((p) => p.trim().replace(/\/$/, "")).filter((p) => p !== "");
+  const agentDir = resolve(dir);
+  const files = (await listMemories(agentDir)).filter((m) => from.some((f) => m.path === f || m.path.startsWith(`${f}/`)) && !m.path.startsWith(`${FACTS_DIR}/`));
+  if (files.length === 0) {
+    console.error(`ohmyagi: no memory under ${from.join(", ")} to read.`);
+    return 1;
+  }
+  const chunks = [];
+  for (const f of files) {
+    const read = await readMemoryFile(agentDir, f.path);
+    if (read.ok) chunks.push(...factChunks(f.path, read.text));
+  }
+  const reading = chunks.slice(0, maxChunks);
+  console.error(dim(`ohmyagi: ${files.length} memory file(s), ${chunks.length} piece(s)${chunks.length > maxChunks ? ` — reading the first ${maxChunks} (--max-chunks)` : ""}, to ${model} at ${backend.host}`));
+  const seen = new Set<string>();
+  const facts: Fact[] = [];
+  let cut = 0;
+  for (const [i, chunk] of reading.entries()) {
+    const { system, user } = distillPrompt(chunk);
+    const result = await local.run({ subject: s.id, prompt: user, system, restraint: probeRestraint() });
+    if (result.confidence === "silent" || result.confidence === "failed") {
+      console.error(dim(`  ${i + 1}/${reading.length} ${chunk.label}:${chunk.line} — no answer (${result.confidence})`));
+      continue;
+    }
+    const checked = checkFacts(readFacts(result.text), chunk, seen);
+    facts.push(...checked.facts);
+    cut += checked.cut;
+    console.error(dim(`  ${i + 1}/${reading.length} ${chunk.label}:${chunk.line} — ${checked.facts.length} fact(s)${checked.cut > 0 ? `, ${checked.cut} cut (quote not in the note)` : ""}`));
+  }
+  const draft: FactDraft = { v: 1, id: crypto.randomUUID(), at: new Date().toISOString(), subject: s.id, model, sources: files.map((f) => f.path), chunks: reading.length, cut, facts };
+  const store = await factDraftsDir(s.id, true);
+  if (store === undefined) {
+    console.error("ohmyagi: the personal directory cannot be resolved; nothing was kept.");
+    return 1;
+  }
+  const path = await saveFactDraft(store, draft);
+  console.log(bold(`${facts.length} fact(s) drafted, each quoting its note · ${cut} cut as not in the note`));
+  console.log(dim(`Kept at ${path} (personal, outside git). Nothing is in memory yet: answer them on the web page, or \`ohmyagi memory distill decide <id> --subject ${s.id} --yes\`.`));
+  return 0;
+}
+
+async function cmdDistillShow(argv: readonly string[]): Promise<number> {
+  const { options } = parseArgs(argv, DISTILL_BOOLEANS);
+  const s = distillSubject(options);
+  if (!s.ok) return s.code;
+  const found = await loadFactDraft(s.id);
+  if (!found.ok) {
+    if (options.has("json")) {
+      console.log(JSON.stringify({ draft: null, reason: found.reason }));
+      return 0;
+    }
+    console.error(`ohmyagi: ${found.reason}`);
+    return 1;
+  }
+  if (options.has("json")) {
+    console.log(JSON.stringify({ draft: found.draft }));
+    return 0;
+  }
+  const d = found.draft;
+  console.log(bold(`${d.facts.length} fact(s) from ${d.sources.length} note(s) · ${d.model} · ${d.at.slice(0, 16)} · ${d.cut} cut`));
+  for (const f of d.facts) console.log(describeFact(f));
+  return 0;
+}
+
+async function cmdDistillDecide(argv: readonly string[]): Promise<number> {
+  const { positional, options } = parseArgs(argv, DISTILL_BOOLEANS);
+  const s = distillSubject(options);
+  if (!s.ok) return s.code;
+  const id = positional[0];
+  if (id === undefined || options.has("yes") === options.has("no")) return usageError(DISTILL_USAGE);
+  const found = await loadFactDraft(s.id);
+  if (!found.ok) {
+    console.error(`ohmyagi: ${found.reason}`);
+    return 1;
+  }
+  const fact = found.draft.facts.find((f) => f.id === id);
+  if (fact === undefined) {
+    console.error(`ohmyagi: no fact ${id} in the newest draft.`);
+    return 1;
+  }
+  const decision = options.has("yes") ? "yes" : "no";
+  await saveFactDraft(found.dir, { ...found.draft, facts: found.draft.facts.map((f) => (f.id === id ? { ...f, decision } : f)) });
+  console.log(`${decision} — ${fact.fact}`);
+  return 0;
+}
+
+async function cmdDistillAdopt(argv: readonly string[]): Promise<number> {
+  const { positional, options } = parseArgs(argv, DISTILL_BOOLEANS);
+  const s = distillSubject(options);
+  if (!s.ok) return s.code;
+  const dir = positional[0];
+  if (dir === undefined) return usageError(DISTILL_USAGE);
+  const allowed = basisFor(await readBasis(basisDirFor(dialEnv(), s.id)), "memory", new Date());
+  if (!allowed.ok) {
+    console.error(`ohmyagi: ${refusalLine(s.id, "memory", allowed.reason)}`);
+    return 1;
+  }
+  const found = await loadFactDraft(s.id);
+  if (!found.ok) {
+    console.error(`ohmyagi: ${found.reason}`);
+    return 1;
+  }
+  const agentDir = resolve(dir);
+  const now = new Map<string, string>();
+  for (const f of await listMemories(agentDir)) {
+    if (!f.path.startsWith(`${FACTS_DIR}/`)) continue;
+    const read = await readMemoryFile(agentDir, f.path);
+    if (read.ok) now.set(f.path, read.text);
+  }
+  const notes = factNotes(found.draft, (p) => now.get(p), new Date());
+  if (notes.length === 0) {
+    console.log("No yes that is not already written — nothing to add.");
+    return 0;
+  }
+  const plans = [];
+  for (const n of notes) plans.push({ note: n, plan: await planWrite(agentDir, n.path, n.text) });
+  for (const { note, plan } of plans) console.log(`${plan.refusal === undefined ? plan.kind : "REFUSED"} ${note.path} · +${note.added} fact(s)${plan.refusal === undefined ? "" : ` — ${plan.refusal}`}`);
+  if (plans.some((p) => p.plan.refusal !== undefined)) {
+    console.error("ohmyagi: nothing was written — a note above was refused.");
+    return 1;
+  }
+  if (!options.has("yes")) {
+    console.log(dim("Nothing was written. --yes writes these and rebuilds both indexes."));
+    return 0;
+  }
+  for (const { note, plan } of plans) await commitWrite(agentDir, plan, note.text);
+  const checked = vectorEndpoints(process.env);
+  const report = await indexAgent(agentDir, s.id, checked.ok ? checked.endpoints : { reason: checked.reason }, { markerDir: ragDirFor(homedir(), process.env, s.id), now: () => new Date() });
+  console.log(`written · full-text ${report.fts} piece(s) · ${report.vectors.ok ? `vectors rebuilt whole, ${report.vectors.points} point(s)` : `vectors not rebuilt — ${report.vectors.reason}`}`);
+  console.log(dim("Not staged and not committed."));
+  return 0;
+}
+
+async function cmdDistill(argv: readonly string[]): Promise<number> {
+  const [first, ...rest] = argv;
+  switch (first) {
+    case "show":
+      return cmdDistillShow(rest);
+    case "decide":
+      return cmdDistillDecide(rest);
+    case "adopt":
+      return cmdDistillAdopt(rest);
+    case undefined:
+      return usageError(DISTILL_USAGE);
+    default:
+      return cmdDistillDraft(argv);
+  }
+}
+
 export async function cmdMemory(argv: readonly string[]): Promise<number> {
   const [sub, ...rest] = argv;
   switch (sub) {
@@ -401,6 +716,12 @@ export async function cmdMemory(argv: readonly string[]): Promise<number> {
       return cmdMemoryWrite(rest);
     case "import":
       return cmdMemoryImport(rest);
+    case "move":
+      return cmdMemoryMove(rest);
+    case "who":
+      return cmdMemoryWho(rest);
+    case "distill":
+      return cmdDistill(rest);
     default:
       return usageError(`unknown memory subcommand ${JSON.stringify(sub ?? "")} — try "ingest", "index", "search", "write" or "forget"`);
   }

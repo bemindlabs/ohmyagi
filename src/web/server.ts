@@ -17,11 +17,12 @@
  */
 
 import { fontBytes } from "./fonts.ts";
-import type { MemoryEntry, MemoryGraph } from "./memories.ts";
+import type { MemoryEntry, MemoryGraph, WhoHit } from "./memories.ts";
 import type { ModelsState } from "./models.ts";
 import { readProfile, type Profile } from "../soul/profile.ts";
 import { memoryPathProblem } from "../memory/write.ts";
 import { IMPORT_KINDS, MAX_SOURCE_BYTES, urlProblem } from "../memory/import.ts";
+import { MAX_TAGS, withTags } from "../memory/tags.ts";
 import type { AgentInfo, PrivacyState, SettingsState, ViewState } from "./view.ts";
 import { PAGE_HTML } from "./page.ts";
 
@@ -35,6 +36,8 @@ export interface WebDeps {
   readonly agent: () => Promise<AgentInfo>;
   readonly memories: () => Promise<readonly MemoryEntry[]>;
   readonly memoryGraph: () => Promise<MemoryGraph>;
+  /** What mentions a port, service, host, env name or path (D-092). */
+  readonly memoryWho: (thing: string) => Promise<readonly WhoHit[]>;
   readonly memory: (path: string) => Promise<{ readonly ok: true; readonly text: string } | { readonly ok: false; readonly reason: string }>;
   readonly privacy: () => Promise<PrivacyState>;
   /** `memory write` with this text for this path — handed over as a file that lives only for the call. */
@@ -61,7 +64,14 @@ export interface WebDeps {
 export interface WebServer {
   readonly url: string;
   readonly token: string;
-  readonly stop: () => void;
+  /**
+   * Stop listening. Gently (the default) lets requests already running finish first — an import or a turn a
+   * restart would otherwise cut off after its file was written but before the page heard back — and resolves
+   * when they have. `force` closes every connection now.
+   */
+  readonly stop: (force?: boolean) => Promise<void>;
+  /** Requests being answered right now. */
+  readonly pending: () => number;
 }
 
 const ID = /^[0-9a-f-]{8,64}$/;
@@ -104,6 +114,15 @@ function said(stderr: string): string {
     .slice(-4)
     .join("\n");
 }
+
+/**
+ * D-093: a distill run takes minutes (a local model reading each piece), longer than a request should be
+ * held open, so the page starts it and asks after it. Kept here, per agent, because a handler is made for
+ * each request.
+ */
+const distilling = new Map<string, { since: string; finished?: { ok: boolean; message: string } }>();
+/** A place in memory to read from: memory/ or a folder or file under it, nothing that climbs out. */
+const MEMORY_PLACE = /^memory(?:\/[A-Za-z0-9._-]+)*$/;
 
 export function handler(deps: WebDeps, token: string, hosts: readonly string[]) {
   const place = [deps.dir, "--subject", deps.subject];
@@ -151,6 +170,21 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[]) 
     }
     if (req.method === "GET" && url.pathname === "/api/memories") return json(await deps.memories());
     if (req.method === "GET" && url.pathname === "/api/memories/graph") return json(await deps.memoryGraph());
+    if (req.method === "GET" && url.pathname === "/api/distill") {
+      const out = await deps.run(["memory", "distill", "show", "--subject", deps.subject, "--json"]);
+      let shown: unknown = { draft: null };
+      try {
+        shown = JSON.parse(out.stdout);
+      } catch {
+        // No draft to show.
+      }
+      return json({ ...(shown as object), run: distilling.get(`${deps.dir}\0${deps.subject}`) ?? null });
+    }
+    if (req.method === "GET" && url.pathname === "/api/memory/who") {
+      const thing = (url.searchParams.get("q") ?? "").trim();
+      if (thing === "" || thing.length > 200) return json({ error: "ask about a port, a service, a host, an env name or a path" }, 400);
+      return json(await deps.memoryWho(thing));
+    }
     if (req.method === "GET" && url.pathname === "/api/memory") {
       const read = await deps.memory(url.searchParams.get("path") ?? "");
       return read.ok ? json({ text: read.text }) : json({ error: read.reason }, 404);
@@ -243,7 +277,8 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[]) 
       // Leading dashes off: a query is words, never a flag.
       const query = typeof body["query"] === "string" ? body["query"].trim().replace(/^-+\s*/, "") : "";
       if (query === "" || query.length > 500) return json({ error: "type what to look for" }, 400);
-      const out = await deps.run(["memory", "search", ...place, "--limit", "8", query]);
+      const scope = body["scope"] === "memory" || body["scope"] === "knowledge" ? body["scope"] : "all";
+      const out = await deps.run(["memory", "search", ...place, "--limit", "8", "--scope", scope, query]);
       return json({ ok: out.code === 0, text: out.stdout.trim(), message: said(out.stderr) });
     }
     // D-081: a memory created or edited is `memory write --yes`; a delete is `memory forget`,
@@ -280,6 +315,26 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[]) 
       } else return json({ ok: false, error: "send a file or a link" }, 400);
       return json({ ok: out.code === 0, message: [said(out.stdout), said(out.stderr)].filter((m) => m !== "").join("\n") });
     }
+    // D-090: between memory and knowledge. Shown first unless write is true; the command checks both paths again.
+    if (url.pathname === "/api/memory/move") {
+      const path = body["path"];
+      const to = body["to"];
+      if (typeof path !== "string" || memoryPathProblem(path) !== undefined || (to !== "knowledge" && to !== "memory")) return json({ ok: false, error: "not a memory file, or not knowledge/memory" }, 400);
+      const out = await deps.run(["memory", "move", ...place, "--file", path, "--to", to, ...(body["write"] === true ? ["--yes"] : [])]);
+      return json({ ok: out.code === 0, message: [said(out.stdout), said(out.stderr)].filter((m) => m !== "").join("\n") });
+    }
+    // D-091: a memory's collections, written into its front matter through `memory write` — every gate applies.
+    if (url.pathname === "/api/memory/tags") {
+      const path = body["path"];
+      const tags = body["tags"];
+      if (typeof path !== "string" || memoryPathProblem(path) !== undefined || !Array.isArray(tags) || tags.length > MAX_TAGS || !tags.every((t) => typeof t === "string" && t.length <= 60)) {
+        return json({ ok: false, error: `a memory file and at most ${MAX_TAGS} tags` }, 400);
+      }
+      const now = await deps.memory(path);
+      if (!now.ok) return json({ ok: false, error: now.reason }, 404);
+      const out = await deps.memoryWrite(path, withTags(now.text, tags as string[]));
+      return json({ ok: out.code === 0, message: said(out.stdout) || said(out.stderr) });
+    }
     if (url.pathname === "/api/memory/delete") {
       const path = body["path"];
       if (typeof path !== "string" || memoryPathProblem(path) !== undefined) return json({ ok: false, error: "not a memory file" }, 400);
@@ -294,6 +349,32 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[]) 
       if (typeof cid !== "string" || !/^[0-9a-f-]{8}$/.test(cid) || (answer !== "yes" && answer !== "no")) return json({ error: "no such claim" }, 400);
       const out = await deps.run(["persona", "decide", cid, "--subject", deps.subject, answer === "yes" ? "--yes" : "--no"]);
       return json({ ok: out.code === 0, message: said(out.stdout) || said(out.stderr) });
+    }
+    // D-093: facts drawn out of memory by the local model, each confirmed here before any is written.
+    if (url.pathname === "/api/distill/start") {
+      const key = `${deps.dir}\0${deps.subject}`;
+      const now = distilling.get(key);
+      if (now !== undefined && now.finished === undefined) return json({ ok: false, error: `already reading, since ${now.since}` }, 409);
+      const from = body["from"];
+      if (from !== undefined && (typeof from !== "string" || !from.split(",").every((p) => MEMORY_PLACE.test(p.trim()) && !p.includes("..")))) return json({ ok: false, error: "read from memory/ or a place under it" }, 400);
+      const run = { since: new Date().toISOString() } as { since: string; finished?: { ok: boolean; message: string } };
+      distilling.set(key, run);
+      void deps
+        .run(["memory", "distill", ...place, ...(typeof from === "string" ? ["--from", from] : [])])
+        .then((out) => (run.finished = { ok: out.code === 0, message: [said(out.stdout), said(out.stderr)].filter((m) => m !== "").join("\n") }))
+        .catch((e: unknown) => (run.finished = { ok: false, message: e instanceof Error ? e.message : String(e) }));
+      return json({ ok: true, since: run.since });
+    }
+    if (url.pathname === "/api/distill/decide") {
+      const fid = body["fact"];
+      const answer = body["answer"];
+      if (typeof fid !== "string" || !/^[0-9a-f]{8}$/.test(fid) || (answer !== "yes" && answer !== "no")) return json({ error: "no such fact" }, 400);
+      const out = await deps.run(["memory", "distill", "decide", fid, "--subject", deps.subject, answer === "yes" ? "--yes" : "--no"]);
+      return json({ ok: out.code === 0, message: said(out.stdout) || said(out.stderr) });
+    }
+    if (url.pathname === "/api/distill/adopt") {
+      const out = await deps.run(["memory", "distill", "adopt", deps.dir, "--subject", deps.subject, ...(body["write"] === true ? ["--yes"] : [])]);
+      return json({ ok: out.code === 0, message: [said(out.stdout), said(out.stderr)].filter((m) => m !== "").join("\n") });
     }
     if (url.pathname === "/api/persona/adopt") {
       const out = await deps.run(["persona", "adopt", deps.dir, "--subject", deps.subject, ...(body["write"] === true ? ["--yes"] : [])]);
@@ -331,5 +412,12 @@ export function startWeb(
   const port = server.port ?? options.port;
   hosts = allowedHosts(hostname, port, options.names ?? []);
   const shown = options.names?.[0] ?? hostname;
-  return { url: `${options.scheme ?? "http"}://${shown}:${port}/#t=${token}`, token, stop: () => server.stop(true) };
+  return {
+    url: `${options.scheme ?? "http"}://${shown}:${port}/#t=${token}`,
+    token,
+    stop: async (force = false) => {
+      await server.stop(force);
+    },
+    pending: () => server.pendingRequests,
+  };
 }

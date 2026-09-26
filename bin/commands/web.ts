@@ -16,7 +16,7 @@ import { subjectId, type SubjectId } from "../../src/types.ts";
 import { startWeb, tailnetNames } from "../../src/web/server.ts";
 import { ago, excerpt, levelSentence, remoteForPage, triageChips, type AgentInfo, type PrivacyState, type SettingsState, type ViewState } from "../../src/web/view.ts";
 import { basisDirFor, readBasis, recordState } from "../../src/consent/basis.ts";
-import { listMemories, memoryGraph, readMemoryFile } from "../../src/web/memories.ts";
+import { listMemories, memoryGraph, readMemoryFile, whoMentions } from "../../src/web/memories.ts";
 import { loadOrCreateKey } from "../../src/web/key.ts";
 import { profileOf } from "../../src/soul/profile.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -100,6 +100,7 @@ async function gather(dir: string, id: SubjectId, options: ReadonlyMap<string, s
     triggers,
     recent,
     canTriage: (await typesafeKey(process.env)) !== undefined,
+    version: { current: VERSION, latest: (await readCheck(stateRoot(homedir(), process.env)))?.latest ?? null },
     engine: engineOf(options, ledger.entries, now),
   };
 }
@@ -312,6 +313,7 @@ export async function cmdWeb(argv: readonly string[]): Promise<number> {
       privacy: () => gatherPrivacy(absolute, id),
       memories: () => listMemories(absolute),
       memoryGraph: () => memoryGraph(absolute),
+      memoryWho: (thing) => whoMentions(absolute, thing),
       memory: (path) => readMemoryFile(absolute, path),
       // Gap 2 (D-079): one turn from the ledger, asked and answered, for "Recently".
       turnDetail: async (entryId) => {
@@ -377,13 +379,23 @@ export async function cmdWeb(argv: readonly string[]): Promise<number> {
         "The link carries a one-time key; keep it to yourself. Ctrl-C stops the page (D-060).",
     ),
   );
+  // A stop lets what is running finish (an import that has written its file and is rebuilding the index, a
+  // turn waiting on a model) so the page hears how it went; a second signal stops at once (D-088).
   await new Promise<void>((done) => {
+    let stopping = false;
     const stop = () => {
-      server.stop();
-      done();
+      if (stopping) {
+        console.error("ohmyagi: stopping now — anything still running is cut off.");
+        void server.stop(true).then(done);
+        return;
+      }
+      stopping = true;
+      const running = server.pending();
+      if (running > 0) console.error(`ohmyagi: stopping — letting ${running} request(s) finish first. Again to stop at once.`);
+      void server.stop().then(done);
     };
-    process.once("SIGINT", stop);
-    process.once("SIGTERM", stop);
+    process.on("SIGINT", stop);
+    process.on("SIGTERM", stop);
   });
   return 0;
 }

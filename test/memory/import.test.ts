@@ -133,7 +133,7 @@ describe("converting a link", () => {
 
   test("a JavaScript app's empty shell is run in a headless browser, then read; with none, it says so", async () => {
     const shell = "<!doctype html><html><head><title>Tonkla</title></head><body><div id=root></div><script src=/a.js></script></body></html>";
-    const full = `<html><body><main><h1>Portfolio</h1><p>${"Lead engineer, event passport, booth stamps. ".repeat(5)}</p></main></body></html>`;
+    const full = `<html><body><main><h1>Portfolio</h1><p>${"Lead engineer, event badges, visitor stamps. ".repeat(5)}</p></main></body></html>`;
     const tried: string[] = [];
     const chromium: Runner = async (argv) => {
       tried.push(argv[0]!);
@@ -189,14 +189,14 @@ describe("where it goes", () => {
   });
 
   test("one file with front matter; a taken name gets -2; a long one becomes linked parts", async () => {
-    const taken = new Set(["memory/imported/ports.md"]);
+    const taken = new Set(["memory/knowledge/ports.md"]);
     const one = await planImport({ title: "Ports", markdown: "Use 30700.", via: "as written" }, "ports.md", NOW, async (p) => taken.has(p));
     expect(one).toHaveLength(1);
-    expect(one[0]!.path).toBe("memory/imported/ports-2.md");
+    expect(one[0]!.path).toBe("memory/knowledge/ports-2.md");
     expect(one[0]!.text).toBe('---\nname: "Ports"\ndescription: "Use 30700."\nsource: "ports.md"\nimported: 2026-09-26\nvia: "as written"\nmetadata:\n  type: reference\n---\n# Ports\n\nUse 30700.\n');
     const long = await planImport({ title: "Manual", markdown: `# Manual\n\n${"para\n\n".repeat(60_000)}`, via: "pdftotext" }, "m.pdf", NOW, async () => false);
     expect(long.length).toBeGreaterThan(1);
-    expect(long[0]!.path).toBe("memory/imported/manual/part-01.md");
+    expect(long[0]!.path).toBe("memory/knowledge/manual/part-01.md");
     expect(long[0]!.text).toContain("[part 2 →](part-02.md)");
     expect(long[1]!.text).toContain("[← part 1](part-01.md)");
     for (const p of long) expect(new TextEncoder().encode(p.text).length).toBeLessThanOrEqual(MAX_MEMORY_BYTES);

@@ -414,7 +414,7 @@ describe("memory write (D-081)", () => {
 
 
 describe("memory import (D-084)", () => {
-  test("plan, then --yes writes under memory/imported/ and indexes it; a basis is required; bad sources are refused", async () => {
+  test("plan, then --yes writes under memory/knowledge/ (D-090) and indexes it; a basis is required; bad sources are refused", async () => {
     const home = await sandbox();
     const agent = join(home, "agent");
     await cp(join(import.meta.dir, "..", "fixtures", "soul-valid"), join(agent, "soul"), { recursive: true });
@@ -429,16 +429,16 @@ describe("memory import (D-084)", () => {
     const dry = await run(home, args, { OM_AGI_QDRANT_URL: DEAD });
     expect(dry.code, dry.stderr).toBe(0);
     expect(dry.stdout).toContain("read html → markdown · 1 memory file(s)");
-    expect(dry.stdout).toContain("new memory/imported/backup-plan.md");
-    expect(await Bun.file(join(agent, "memory", "imported", "backup-plan.md")).exists()).toBe(false);
+    expect(dry.stdout).toContain("new memory/knowledge/backup-plan.md");
+    expect(await Bun.file(join(agent, "memory", "knowledge", "backup-plan.md")).exists()).toBe(false);
     const wet = await run(home, [...args, "--yes"], { OM_AGI_QDRANT_URL: DEAD });
     expect(wet.code, wet.stderr).toBe(0);
-    const written = await Bun.file(join(agent, "memory", "imported", "backup-plan.md")).text();
+    const written = await Bun.file(join(agent, "memory", "knowledge", "backup-plan.md")).text();
     expect(written).toContain('source: "backup.html"');
     expect(written).toContain("The backup runs at 02:00 nightly.");
     const found = await run(home, ["memory", "search", agent, "--subject", "example", "nightly"], { OM_AGI_QDRANT_URL: DEAD });
-    expect(found.stdout).toContain("memory/imported/backup-plan.md");
-    expect((await run(home, args, { OM_AGI_QDRANT_URL: DEAD })).stdout).toContain("memory/imported/backup-plan-2.md");
+    expect(found.stdout).toContain("memory/knowledge/backup-plan.md");
+    expect((await run(home, args, { OM_AGI_QDRANT_URL: DEAD })).stdout).toContain("memory/knowledge/backup-plan-2.md");
     const url = await run(home, ["memory", "import", agent, "--subject", "example", "--url", "file:///etc/passwd"], {});
     expect(url.code).toBe(1);
     expect(url.stderr).toContain("only http and https");
@@ -446,7 +446,54 @@ describe("memory import (D-084)", () => {
     const secret = await run(home, ["memory", "import", agent, "--subject", "example", "--from", src, "--name", "leak.txt", "--yes"], { OM_AGI_QDRANT_URL: DEAD });
     expect(secret.code).toBe(1);
     expect(secret.stdout).toContain("REFUSED");
-    expect(await Bun.file(join(agent, "memory", "imported", "leak.md")).exists()).toBe(false);
+    expect(await Bun.file(join(agent, "memory", "knowledge", "leak.md")).exists()).toBe(false);
     expect((await run(home, ["memory", "import", agent, "--subject", "example"], {})).code).toBe(2);
   }, 60_000);
+});
+
+describe("memory move and search --scope (D-090)", () => {
+  test("a note moved into knowledge is found by --scope knowledge and not by --scope memory; bad asks refused", async () => {
+    const home = await sandbox();
+    const agent = join(home, "agent");
+    await cp(join(import.meta.dir, "..", "fixtures", "soul-valid"), join(agent, "soul"), { recursive: true });
+    await mkdir(join(agent, "memory", "notes"), { recursive: true });
+    await Bun.write(join(agent, "memory", "notes", "manual.md"), "# Manual\n\nThe kiln heats to 1200 degrees.\n");
+    await Bun.write(join(agent, "memory", "notes", "diary.md"), "# Diary\n\nI fired the kiln on Monday.\n");
+    const args = ["memory", "move", agent, "--subject", "example", "--file", "memory/notes/manual.md", "--to", "knowledge"];
+    expect((await run(home, args, { OM_AGI_QDRANT_URL: DEAD })).stderr).toContain("no basis");
+    await mkdir(join(home, "state", "om-agi", "basis", "example"), { recursive: true });
+    await Bun.write(join(home, "state", "om-agi", "basis", "example", "records.json"), JSON.stringify([{ id: "b1", subject: "example", basis: "owner", approvedBy: "t", at: "2026-09-26T00:00:00Z", uses: ["memory"], expires: null, note: "", revokedAt: null }]));
+    const dry = await run(home, args, { OM_AGI_QDRANT_URL: DEAD });
+    expect(dry.code, dry.stderr).toBe(0);
+    expect(dry.stdout).toContain("move memory/notes/manual.md → memory/knowledge/manual.md (memory → knowledge)");
+    const wet = await run(home, [...args, "--yes"], { OM_AGI_QDRANT_URL: DEAD });
+    expect(wet.code, wet.stderr).toBe(0);
+    expect(await Bun.file(join(agent, "memory", "knowledge", "manual.md")).exists()).toBe(true);
+    const search = (scope: string) => run(home, ["memory", "search", agent, "--subject", "example", "--scope", scope, "kiln"], { OM_AGI_QDRANT_URL: DEAD });
+    const k = await search("knowledge");
+    expect(k.stdout).toContain("memory/knowledge/manual.md");
+    expect(k.stdout).not.toContain("diary.md");
+    const m = await search("memory");
+    expect(m.stdout).toContain("memory/notes/diary.md");
+    expect(m.stdout).not.toContain("manual.md");
+    expect((await search("all")).stdout).toContain("manual.md");
+    expect((await search("elsewhere")).code).toBe(2);
+    expect((await run(home, ["memory", "move", agent, "--subject", "example", "--file", "memory/notes/diary.md", "--to", "memory/knowledge/manual.md"], {})).stderr).toContain("already a memory");
+    expect((await run(home, ["memory", "move", agent, "--subject", "example"], {})).code).toBe(2);
+  }, 60_000);
+});
+
+describe("memory who (D-092)", () => {
+  test("names each memory and line that mentions a port; exit 1 when nothing does", async () => {
+    const home = await sandbox();
+    const agent = join(home, "agent");
+    await mkdir(join(agent, "memory", "notes"), { recursive: true });
+    await Bun.write(join(agent, "memory", "notes", "vllm.md"), "# vLLM\n\nbind 127.0.0.1:10410\n");
+    const hit = await run(home, ["memory", "who", agent, "port", "10410"], {});
+    expect(hit.code, hit.stderr).toBe(0);
+    expect(hit.stdout).toContain("port 10410 — 1 memory");
+    expect(hit.stdout).toContain("memory/notes/vllm.md:3");
+    expect((await run(home, ["memory", "who", agent, "9999"], {})).code).toBe(1);
+    expect((await run(home, ["memory", "who", agent], {})).code).toBe(2);
+  }, 30_000);
 });

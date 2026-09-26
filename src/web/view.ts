@@ -102,6 +102,8 @@ export interface ViewState {
   readonly triggers: readonly { readonly id: string; readonly every: string; readonly next: string }[];
   readonly recent: readonly { readonly id: string; readonly when: string; readonly backend: string; readonly asked: string; readonly ok: boolean }[];
   readonly canTriage: boolean;
+  /** This build of Oh My AGI, and the newest release the last update check saw (null: never checked). For the footer (D-089). */
+  readonly version: { readonly current: string; readonly latest: string | null };
   /** What answers a message sent from this page, and what answered last. */
   readonly engine: {
     /** The chain a turn tries, in order — `--backend` given to `ohmyagi web`, else the default. */

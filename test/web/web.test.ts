@@ -14,7 +14,7 @@ const STATE: ViewState = {
   approved: [],
   triggers: [],
   recent: [],
-  canTriage: false,
+  canTriage: false, version: { current: "0.6.1", latest: "0.7.0" },
   engine: { chain: ["claude", "codex", "ollama"], localModel: "qwen3.8:27b", judge: "qwen3.8:27b", last: { backend: "claude", model: null, when: "just now" } },
 };
 
@@ -48,13 +48,14 @@ function fakeDeps() {
     state: async () => STATE,
     settings: async () => SETTINGS,
     agent: async () => AGENT,
-    memories: async () => [{ path: "memory/a.md", title: "A", description: "d", type: "project", bytes: 10, modified: "t" }],
+    memories: async () => [{ path: "memory/a.md", title: "A", description: "d", type: "project", bytes: 10, modified: "t", kind: "memory", tags: ["infra"] }],
     memoryImport: async (source, write) => {
       runs.push(["memory", "import", source.kind === "url" ? source.url : `${source.name}:${new TextDecoder().decode(source.bytes)}`, write ? "--yes" : "(dry)"]);
       return { code: 0, stdout: "new memory/imported/x.md", stderr: "" };
     },
     models: async () => ({ backends: [{ id: "claude", available: true }, { id: "ollama", available: true }, { id: "kimi", available: false }], chain: ["claude", "codex", "ollama"], defaultTurn: { backend: null, model: null }, models: { claude: ["opus", "sonnet", "haiku"], ollama: ["qwen3.8:27b"], kimi: [] } }),
-    memoryGraph: async () => ({ nodes: [{ path: "memory/a.md", title: "A", type: "project", bytes: 10 }, { path: "memory/b.md", title: "B", type: "", bytes: 5 }], edges: [[0, 1, 2]], dangling: 1 }),
+    memoryGraph: async () => ({ nodes: [{ path: "memory/a.md", title: "A", type: "project", bytes: 10, kind: "memory", tags: ["infra"] }, { path: "memory/knowledge/b.md", title: "B", type: "", bytes: 5, kind: "knowledge", tags: [] }], edges: [[0, 1, 2]], dangling: 1, entities: [{ type: "port", value: "10410", count: 2 }], mentions: [[0, 0], [0, 1]] }),
+    memoryWho: async (thing) => (thing === "10410" ? [{ type: "port" as const, value: "10410", mentions: [{ path: "memory/a.md", title: "A", line: 3, excerpt: "vLLM on :10410" }] }] : []),
     memory: async (path) => (path === "memory/a.md" ? { ok: true, text: "hello" } : { ok: false, reason: "not a memory file" }),
     memoryWrite: async (path, content) => {
       runs.push(["memory", "write", path, content]);
@@ -195,9 +196,9 @@ describe("routes run the CLI and nothing else", () => {
 });
 
 describe("listening", () => {
-  const started: { stop: () => void }[] = [];
-  afterEach(() => {
-    for (const s of started.splice(0)) s.stop();
+  const started: { stop: (force?: boolean) => Promise<void> }[] = [];
+  afterEach(async () => {
+    for (const s of started.splice(0)) await s.stop(true);
   });
 
   test("loopback by default, a fresh token each time, the token only in the fragment", async () => {
@@ -210,6 +211,30 @@ describe("listening", () => {
     const res = await fetch(`http://127.0.0.1:${port}/api/state`, { headers: { [TOKEN_HEADER]: a.token } });
     expect(res.status).toBe(200);
     expect(((await res.json()) as ViewState).agent.name).toBe("Keeper");
+  });
+});
+
+describe("stopping (D-088)", () => {
+  test("a stop lets a request already running finish and answer, and refuses new ones", async () => {
+    let release: () => void = () => {};
+    const slow = new Promise<void>((r) => (release = r));
+    const { deps } = fakeDeps();
+    const server = startWeb({ ...deps, memoryImport: async () => (await slow, { code: 0, stdout: "imported", stderr: "" }) }, { port: 0 });
+    const port = new URL(server.url).port;
+    const inFlight = fetch(`http://127.0.0.1:${port}/api/memory/import`, { method: "POST", headers: { [TOKEN_HEADER]: server.token, "content-type": "application/json" }, body: JSON.stringify({ url: "https://example.org/", write: true }) });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(server.pending()).toBe(1);
+    let stopped = false;
+    const stopping = server.stop().then(() => (stopped = true));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(stopped).toBe(false);
+    await expect(fetch(`http://127.0.0.1:${port}/api/state`, { headers: { [TOKEN_HEADER]: server.token } })).rejects.toThrow();
+    release();
+    const res = await inFlight;
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { message: string }).message).toBe("imported");
+    await stopping;
+    expect(stopped).toBe(true);
   });
 });
 
@@ -228,9 +253,9 @@ describe("tailnet names", () => {
       expect(server.url).toMatch(/^http:\/\/box\.tail1\.ts\.net:\d+\/#t=/);
       const tls = startWeb(deps, { port: 0, names: ["box.tail1.ts.net"], scheme: "https" });
       expect(tls.url).toMatch(/^https:\/\/box\.tail1\.ts\.net:\d+\/#t=/);
-      tls.stop();
+      void tls.stop(true);
     } finally {
-      server.stop();
+      void server.stop(true);
     }
   });
 });
@@ -309,8 +334,8 @@ describe("Agent and Memories (read-only)", () => {
     await h(post({ query: "where is vllm" }));
     await h(post({ query: "--subject other" }));
     expect(runs).toEqual([
-      ["memory", "search", "/a", "--subject", "example", "--limit", "8", "where is vllm"],
-      ["memory", "search", "/a", "--subject", "example", "--limit", "8", "subject other"],
+      ["memory", "search", "/a", "--subject", "example", "--limit", "8", "--scope", "all", "where is vllm"],
+      ["memory", "search", "/a", "--subject", "example", "--limit", "8", "--scope", "all", "subject other"],
     ]);
     expect((await h(post({ query: "  " }))).status).toBe(400);
   });
@@ -352,7 +377,8 @@ describe("the console (D-078): a rail on a desk, a bottom bar on a phone, and wh
     expect(PAGE_HTML).toContain("@media (max-width:760px)");
     // The bottom bar is fixed to the screen: nothing above it may create a containing block for it.
     const phone = PAGE_HTML.slice(PAGE_HTML.indexOf("@media (max-width:760px)"));
-    expect(phone).toMatch(/nav\.tabs\{position:fixed;left:0;right:0;bottom:0/);
+    // D-089: the tab bar sits on the version footer, which takes the very bottom.
+    expect(phone).toMatch(/nav\.tabs\{position:fixed;left:0;right:0;bottom:var\(--foot\)/);
     expect(phone.slice(0, phone.indexOf("nav.tabs{position:fixed"))).not.toContain("backdrop-filter");
     expect(PAGE_HTML).toContain('"Show all " + list.length');
     expect(PAGE_HTML).toContain("--onbrand:#1a1200");
@@ -362,7 +388,7 @@ describe("the console (D-078): a rail on a desk, a bottom bar on a phone, and wh
     expect(PAGE_HTML).not.toMatch(/main\{[^}]*max-width/);
     // D-080: the chat holds the left column top to bottom and stays put; everything else scrolls beside it.
     expect(PAGE_HTML).toContain('grid-template-areas:"chat status" "chat wait" "chat recent" "chat sched" "chat term"');
-    expect(PAGE_HTML).toMatch(/\.chatpanel\{[^}]*position:sticky;top:16px;height:calc\(100vh - 32px\)/);
+    expect(PAGE_HTML).toMatch(/\.chatpanel\{[^}]*position:sticky;top:16px;height:calc\(100vh - 32px - var\(--foot\)\)/);
     // On a phone the message box sits above the tab bar.
     expect(PAGE_HTML).toMatch(/\.composer\{position:fixed;left:0;right:0;bottom:calc\(62px/);
     expect(PAGE_HTML).toContain('grid-template-areas:"chat" "status" "wait" "recent" "sched" "term"');
@@ -544,6 +570,90 @@ describe("Memories CRUD (D-081)", () => {
 
   test("the tab's icon is Om, from inside the page (CSP allows data: images)", () => {
     expect(PAGE_HTML).toContain('<link rel="icon" type="image/svg+xml" href="data:image/svg+xml');
+  });
+
+  test("a footer across the bottom says which Oh My AGI this is, and when a newer one is out (D-089)", async () => {
+    const { deps } = fakeDeps();
+    const state = (await (await handler(deps, "tok", HOSTS)(req("/api/state"))).json()) as ViewState;
+    expect(state.version).toEqual({ current: "0.6.1", latest: "0.7.0" });
+    for (const id of ["foot", "footVer", "footNewer", "footWho"]) expect(PAGE_HTML).toContain(`id="${id}"`);
+    expect(PAGE_HTML).toContain(".foot{position:fixed;left:0;right:0;bottom:0");
+  });
+
+  test("memory and knowledge (D-090): move is memory move, shown first; search carries the scope; the page has the switch", async () => {
+    const { deps, runs } = fakeDeps();
+    const h = handler(deps, "tok", HOSTS);
+    const post = (path: string, body: unknown) => h(req(path, { method: "POST", body: JSON.stringify(body) }));
+    await post("/api/memory/move", { path: "memory/notes/a.md", to: "knowledge" });
+    await post("/api/memory/move", { path: "memory/knowledge/a.md", to: "memory", write: true });
+    await post("/api/memory-search", { query: "kiln", scope: "knowledge" });
+    await post("/api/memory-search", { query: "kiln", scope: "--rm" });
+    expect(runs).toEqual([
+      ["memory", "move", "/a", "--subject", "example", "--file", "memory/notes/a.md", "--to", "knowledge"],
+      ["memory", "move", "/a", "--subject", "example", "--file", "memory/knowledge/a.md", "--to", "memory", "--yes"],
+      ["memory", "search", "/a", "--subject", "example", "--limit", "8", "--scope", "knowledge", "kiln"],
+      ["memory", "search", "/a", "--subject", "example", "--limit", "8", "--scope", "all", "kiln"],
+    ]);
+    for (const bad of [{ path: "../x.md", to: "knowledge" }, { path: "memory/a.md", to: "elsewhere" }, { path: "memory/a.md" }]) expect((await post("/api/memory/move", bad)).status).toBe(400);
+    expect(runs).toHaveLength(4);
+    for (const id of ["memKind", "memMove"]) expect(PAGE_HTML).toContain(`id="${id}"`);
+  });
+
+  test("collections (D-091): tags are written into the front matter through memory write; bad asks write nothing", async () => {
+    const { deps, runs } = fakeDeps();
+    const h = handler({ ...deps, memory: async (path) => (path === "memory/a.md" ? { ok: true as const, text: "---\nname: A\ndescription: d\n---\nbody\n" } : { ok: false as const, reason: "no such memory" }) }, "tok", HOSTS);
+    const post = (body: unknown) => h(req("/api/memory/tags", { method: "POST", body: JSON.stringify(body) }));
+    expect(((await (await post({ path: "memory/a.md", tags: ["Infra", "ports"] })).json()) as { ok: boolean }).ok).toBe(true);
+    expect(runs).toEqual([["memory", "write", "memory/a.md", "---\nname: A\ndescription: d\ntags: [infra, ports]\n---\nbody\n"]]);
+    expect((await post({ path: "memory/none.md", tags: [] })).status).toBe(404);
+    for (const bad of [{ path: "../a.md", tags: [] }, { path: "memory/a.md", tags: "infra" }, { path: "memory/a.md", tags: Array(13).fill("t") }, { path: "memory/a.md", tags: [3] }]) expect((await post(bad)).status).toBe(400);
+    expect(runs).toHaveLength(1);
+    for (const id of ["memTags", "memTagBox", "memTagEdit"]) expect(PAGE_HTML).toContain(`id="${id}"`);
+    expect(PAGE_HTML).toContain('{ name: "tags", args: ');
+  });
+
+  test("who mentions a thing (D-092): GET /api/memory/who; an empty ask is refused; the page has Things and /who", async () => {
+    const { deps } = fakeDeps();
+    const h = handler(deps, "tok", HOSTS);
+    const who = (await (await h(req("/api/memory/who?q=10410"))).json()) as { value: string }[];
+    expect(who[0]!.value).toBe("10410");
+    expect((await h(req("/api/memory/who?q="))).status).toBe(400);
+    expect((await h(req("/api/memory/who?q=10410", { token: null }))).status).toBe(401);
+    expect(PAGE_HTML).toContain('id="mapEntities"');
+    expect(PAGE_HTML).toContain('{ name: "who", args: ');
+  });
+
+  test("facts (D-093): a run starts in the background and is asked after; decide and adopt are the CLI's", async () => {
+    let release: (v: { code: number; stdout: string; stderr: string }) => void = () => {};
+    const { deps, runs } = fakeDeps();
+    const h = handler({ ...deps, dir: "/facts-agent", run: async (args) => {
+      runs.push(args);
+      if (args[1] === "distill" && args[2] !== "show" && args[2] !== "decide" && args[2] !== "adopt") return new Promise((r) => (release = r));
+      if (args[2] === "show") return { code: 0, stdout: JSON.stringify({ draft: { facts: [] } }), stderr: "" };
+      return { code: 0, stdout: "done", stderr: "" };
+    } }, "tok", HOSTS);
+    const post = (path: string, body: unknown) => h(req(path, { method: "POST", body: JSON.stringify(body) }));
+    expect((await post("/api/distill/start", { from: "../etc" })).status).toBe(400);
+    expect(((await (await post("/api/distill/start", { from: "memory/knowledge" })).json()) as { ok: boolean }).ok).toBe(true);
+    expect((await post("/api/distill/start", {})).status).toBe(409);
+    const during = (await (await h(req("/api/distill"))).json()) as { run: { since: string; finished?: unknown } };
+    expect(during.run.finished).toBeUndefined();
+    release({ code: 0, stdout: "1 fact(s) drafted", stderr: "" });
+    await new Promise((r) => setTimeout(r, 10));
+    const after = (await (await h(req("/api/distill"))).json()) as { draft: unknown; run: { finished: { ok: boolean } } };
+    expect(after.run.finished.ok).toBe(true);
+    expect(after.draft).toEqual({ facts: [] });
+    await post("/api/distill/decide", { fact: "abcd1234", answer: "yes" });
+    expect((await post("/api/distill/decide", { fact: "nope", answer: "yes" })).status).toBe(400);
+    await post("/api/distill/adopt", { write: true });
+    expect(runs.filter((r) => r[1] === "distill")).toEqual([
+      ["memory", "distill", "/facts-agent", "--subject", "example", "--from", "memory/knowledge"],
+      ["memory", "distill", "show", "--subject", "example", "--json"],
+      ["memory", "distill", "show", "--subject", "example", "--json"],
+      ["memory", "distill", "decide", "abcd1234", "--subject", "example", "--yes"],
+      ["memory", "distill", "adopt", "/facts-agent", "--subject", "example", "--yes"],
+    ]);
+    for (const id of ["factStart", "factAdopt", "factList"]) expect(PAGE_HTML).toContain(`id="${id}"`);
   });
 
   test("a refused delete shows the plan and the reason, not the plan alone", async () => {

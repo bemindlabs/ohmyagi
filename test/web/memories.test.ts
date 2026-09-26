@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { listMemories, memoryGraph, memoryLinks, memoryMeta, readMemoryFile } from "../../src/web/memories.ts";
+import { listMemories, memoryGraph, memoryLinks, memoryMeta, readMemoryFile, whoMentions } from "../../src/web/memories.ts";
 
 const scratch: string[] = [];
 afterEach(async () => {
@@ -66,9 +66,28 @@ describe("the memory map (D-082)", () => {
     await writeFile(join(dir, "memory", "imported", "owner", "back.md"), "---\nname: back\n---\nBack to [[Server notes]] and [up](../../notes.md) and [[back]].\n");
     const g = await memoryGraph(dir);
     expect(g.nodes.map((n) => n.path)).toEqual(["memory/imported/owner/back.md", "memory/imported/owner/ports.md", "memory/notes.md"]);
-    expect(g.nodes[1]).toEqual({ path: "memory/imported/owner/ports.md", title: "ports", type: "reference", bytes: expect.any(Number) });
+    expect(g.nodes[1]).toEqual({ path: "memory/imported/owner/ports.md", title: "ports", type: "reference", bytes: expect.any(Number), kind: "memory", tags: [] });
     expect([...g.edges].sort()).toEqual([[0, 2, 2], [1, 2, 3]]);
     expect(g.dangling).toBe(1);
-    expect(await memoryGraph(join(dir, "nowhere"))).toEqual({ nodes: [], edges: [], dangling: 0 });
+    expect(await memoryGraph(join(dir, "nowhere"))).toEqual({ nodes: [], edges: [], dangling: 0, entities: [], mentions: [] });
+  });
+});
+
+describe("the things memories share (D-092)", () => {
+  test("the graph keeps what two memories mention; who finds a port however it is asked, and the line", async () => {
+    const dir = await agent();
+    await writeFile(join(dir, "memory", "notes.md"), "# Server notes\n\nvLLM listens on 127.0.0.1:10410.\nThe web is ohmyagi-web-om.service.\n");
+    await writeFile(join(dir, "memory", "imported", "owner", "ports.md"), "---\nname: ports\n---\nLiteLLM is port 10400; never call :10410 directly.\n");
+    const g = await memoryGraph(dir);
+    expect(g.entities).toEqual([{ type: "port", value: "10410", count: 2 }]);
+    expect(g.mentions.map(([e, n]) => [g.entities[e]!.value, g.nodes[n]!.path])).toEqual([["10410", "memory/imported/owner/ports.md"], ["10410", "memory/notes.md"]]);
+    for (const ask of ["10410", "port 10410", ":10410"]) {
+      const who = await whoMentions(dir, ask);
+      expect(who).toHaveLength(1);
+      expect(who[0]!.mentions.map((m) => `${m.path}:${m.line}`)).toEqual(["memory/imported/owner/ports.md:4", "memory/notes.md:3"]);
+    }
+    expect((await whoMentions(dir, "web-om"))[0]).toMatchObject({ type: "service", value: "ohmyagi-web-om.service" });
+    expect(await whoMentions(dir, "ab")).toEqual([]);
+    expect(await whoMentions(dir, "  ")).toEqual([]);
   });
 });

@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+## 0.7.0 — 2026-09-26
+
+### Memory — facts drawn out of memory, confirmed one by one (D-093)
+- `ohmyagi memory distill` has a local model read memory (by default `memory/knowledge/`) and offer short standalone
+  facts, each with the words it came from; a fact whose quote is not in the note is cut. `show`, `decide <id>
+  --yes|--no`, and `adopt [--yes]`, which writes only the yeses — one note per topic in `memory/knowledge/facts/`,
+  each line citing `note:line` — through the same gates as `memory write`.
+- Web: "Facts to confirm" in Memories — start a read (it runs in the background and the page asks after it), Yes/No
+  on each fact with its quote and a link to the note, "Write the yeses". `/facts` opens it.
+- On the owner's knowledge: 3 pieces read by qwen3.8:27b in about a minute, 22 facts, 2 cut.
+
+### Memory — the things memories share (D-092)
+- Ports, services, hosts, env names and paths are found in every memory by their shape — no model, nothing leaves the
+  machine. `ohmyagi memory who <thing>` (and `/who`, `GET /api/memory/who`) lists every memory that mentions it and
+  the line: `who 10410`, `who port 10410` and `who :10410` all ask for the port.
+- The memory map's **Things** button adds what two or more memories mention as diamonds, a colour per kind, joined
+  by dashed lines; clicking one lists where it is mentioned. On the owner's memory: 83 notes, 95 shared things.
+
+### Memory — collections (D-091)
+- A memory's `tags:` in its front matter puts it in collections (`tags: [infra, ports]`; inline, comma or block
+  lists are read). The Memories tab shows every collection with its count; pressing one narrows the list and the
+  map. "Edit tags" on an open memory writes them through `memory write`. `/tags` lists them, `/tag <name>` opens one.
+
+### Memory — knowledge, kept apart from memory (D-090)
+- Everything under `memory/knowledge/` is **knowledge** — documents, manuals, pages brought in to look things up
+  in; everything else is the person's **memory**. `memory import` now writes to `memory/knowledge/`.
+- `ohmyagi memory move --file … --to knowledge|memory|<path>` moves a memory between them (same gates as write, one
+  rebuild). `memory search --scope knowledge|memory` looks in one kind; a turn's recall still looks in both.
+- Web: an All · Memory · Knowledge switch with counts, a "Move to Knowledge / Memory" button, search by meaning
+  follows the switch, `/search knowledge <words>`, and knowledge drawn as squares on the memory map.
+
+### Web — the version in a footer (D-089)
+- A thin bar across the bottom of every screen: "Oh My AGI v0.6.1", a note when the last update check saw a newer
+  release, and the agent and subject on the right. Pressing the version checks for a newer one. On a phone it sits
+  under the tab bar, which moves up with the message box.
+
+### Web — a restart no longer cuts off what is running (D-088)
+- `ohmyagi web` stopping on SIGTERM or Ctrl-C lets requests already running finish and answer, and says how many;
+  a second signal stops at once. Before, an import that had written its file was cut off while rebuilding the
+  index, and the page said "The server did not answer". A systemd unit for it wants `KillMode=mixed` so the
+  command doing the work is not killed under it.
+
 ## 0.6.1 — 2026-09-26
 
 ### Project

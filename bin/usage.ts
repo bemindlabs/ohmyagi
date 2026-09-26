@@ -217,7 +217,22 @@ Usage:
                                         what LibreOffice opens. Shows where it
                                         goes; --yes writes it (long ones in
                                         parts) through the same gates as write.
-  ohmyagi memory search <agent-dir> --subject <id> [--limit <n>] <query...>
+  ohmyagi memory move <agent-dir> --subject <id> --file <memory/…md> (--to <memory/…md> | --to knowledge | --to memory) [--yes]
+                                        Move a memory — between the person's
+                                        memory and knowledge/ (D-090), or to any
+                                        path. Same gates as write; one rebuild.
+  ohmyagi memory distill <agent-dir> --subject <id> [--from <memory/…>,…] [--model <m>] [--max-chunks <n>]
+  ohmyagi memory distill show --subject <id> [--json]
+  ohmyagi memory distill decide <fact-id> --subject <id> (--yes | --no)
+  ohmyagi memory distill adopt <agent-dir> --subject <id> [--yes]
+                                        Facts drawn out of memory by a local
+                                        model (default: memory/knowledge/), each
+                                        quoting its note or cut; only yeses are
+                                        written, to memory/knowledge/facts/.
+  ohmyagi memory who <agent-dir> <port|service|host|env name|path…>
+                                        Which memories mention it, and on which
+                                        line — "what uses port 10410" (D-092).
+  ohmyagi memory search <agent-dir> --subject <id> [--limit <n>] [--scope all|memory|knowledge] <query...>
                                         Ask both indexes and merge the answers;
                                         every hit says which index found it.
   ohmyagi egress needles --subject <id>
