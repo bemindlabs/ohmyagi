@@ -1,9 +1,10 @@
 {
   "name": "om-agi",
-  "version": "0.6.0",
-  "description": "Oh My AGI — a CLI that builds AGI agents you actually own",
+  "version": "0.6.1",
+  "description": "Oh My AGI — a CLI and web console that builds AGI agents you own: a soul of its own, memory recalled from your notes and documents, autonomy with a kill switch, A2A and Telegram, one git repo per agent, local-first.",
   "type": "module",
   "license": "Apache-2.0",
+  "keywords": ["agi", "ai-agents", "cli", "a2a", "rag", "local-first", "self-hosted", "bun"],
   "bin": {
     "ohmyagi": "./bin/om-agi.ts",
     "om-agi": "./bin/om-agi.ts"

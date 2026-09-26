@@ -26,6 +26,7 @@ import { chatDirFor, contactKey, readChatState } from "../../src/connectors/user
 import { describeFindings, judgeConfig, loadLexicon, readBlocked } from "../../src/egress/index.ts";
 import { allBackends, PHASE_A_BACKENDS } from "../../src/exec/index.ts";
 import { OLLAMA_MODEL_ENV } from "../../src/exec/ollama-exec.ts";
+import { modelChoices, ollamaTags, type ModelsState } from "../../src/web/models.ts";
 import { stateRoot } from "../../src/state.ts";
 import { readCheck } from "../../src/update/version.ts";
 import { VERSION } from "../../src/version.ts";
@@ -114,6 +115,26 @@ function engineOf(options: ReadonlyMap<string, string>, entries: readonly { read
     localModel: options.get("model") || process.env[OLLAMA_MODEL_ENV]?.trim() || null,
     judge: judgeConfig(process.env)?.model ?? null,
     last: answered === undefined ? null : { backend: answered.backend, model: answered.model, when: ago(answered.at, now) },
+  };
+}
+
+/** The chat picker's choices (D-085): which backends answer, and model names with a reason to work. */
+async function gatherModels(id: SubjectId, options: ReadonlyMap<string, string>): Promise<ModelsState> {
+  const all = allBackends();
+  const [backends, ledger, tags] = await Promise.all([
+    Promise.all(all.map(async (b) => ({ id: b.id, available: (await b.available()).ok }))),
+    query(ledgerEnv(), id),
+    // The local list, if Ollama answers quickly; a picker is not worth waiting for.
+    fetch(`${(process.env["OLLAMA_HOST"] ?? "http://127.0.0.1:11434").replace(/\/+$/, "")}/api/tags`, { signal: AbortSignal.timeout(1500) })
+      .then(async (r) => (r.ok ? ollamaTags(await r.json()) : []))
+      .catch(() => []),
+  ]);
+  const engine = engineOf(options, ledger.entries, new Date());
+  return {
+    backends,
+    chain: engine.chain,
+    defaultTurn: { backend: options.get("backend") ?? null, model: options.get("model") ?? null },
+    models: modelChoices({ backends: all.map((b) => b.id), entries: ledger.entries, localModel: engine.localModel, ollama: tags }),
   };
 }
 
@@ -286,6 +307,7 @@ export async function cmdWeb(argv: readonly string[]): Promise<number> {
       turnFlags,
       state: () => gather(absolute, id, options),
       settings: () => gatherSettings(absolute, id, options),
+      models: () => gatherModels(id, options),
       agent: () => gatherAgent(absolute, id),
       privacy: () => gatherPrivacy(absolute, id),
       memories: () => listMemories(absolute),

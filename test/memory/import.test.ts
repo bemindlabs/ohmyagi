@@ -131,6 +131,31 @@ describe("converting a link", () => {
     expect(urlProblem("not a url")).toContain("not a web address");
   });
 
+  test("a JavaScript app's empty shell is run in a headless browser, then read; with none, it says so", async () => {
+    const shell = "<!doctype html><html><head><title>Tonkla</title></head><body><div id=root></div><script src=/a.js></script></body></html>";
+    const full = `<html><body><main><h1>Portfolio</h1><p>${"Lead engineer, event passport, booth stamps. ".repeat(5)}</p></main></body></html>`;
+    const tried: string[] = [];
+    const chromium: Runner = async (argv) => {
+      tried.push(argv[0]!);
+      if (argv[0] !== "chromium") return { code: 127, stdout: new Uint8Array(), stderr: "not found" };
+      expect(argv).toContain("--dump-dom");
+      expect(argv.some((a) => a.startsWith("--user-data-dir="))).toBe(true);
+      return { code: 0, stdout: bytes(full), stderr: "" };
+    };
+    const got = await convertUrl("https://p.example/", reply(shell, "text/html", 200, "https://p.example/"), tmpdir(), chromium);
+    expect(got.via).toBe("fetched · rendered in chromium · html → markdown");
+    expect(got.markdown).toContain("# Portfolio");
+    expect(got.title).toBe("Tonkla");
+    expect(tried).toEqual(["google-chrome", "google-chrome-stable", "chromium"]);
+    const none: Runner = async () => ({ code: 127, stdout: new Uint8Array(), stderr: "not found" });
+    await expect(convertUrl("https://p.example/", reply(shell, "text/html"), tmpdir(), none)).rejects.toThrow("no headless Chrome or Chromium was found");
+    const empty: Runner = async (argv) => (argv[0] === "google-chrome" ? { code: 1, stdout: new Uint8Array(), stderr: "crashed\nmore" } : none(argv));
+    await expect(convertUrl("https://p.example/", reply(shell, "text/html"), tmpdir(), empty)).rejects.toThrow("showed none even after google-chrome ran it (crashed)");
+    // A short page with no scripts is what it is: no browser is started for it.
+    const short = await convertUrl("https://p.example/", reply("<p>Just this.</p>", "text/html"), tmpdir(), none);
+    expect(short.markdown).toBe("Just this.");
+  });
+
   test("a page, a text file, a PDF; a failure says why", async () => {
     const page = await convertUrl("https://example.org/docs/page", reply("<title>Docs</title><main><p>See <a href='../a'>a</a></p></main>", "text/html; charset=utf-8"), tmpdir());
     expect(page).toEqual({ title: "Docs", markdown: "See [a](https://example.org/a)", via: "fetched · html → markdown", url: "https://example.org/docs/page" });

@@ -4,15 +4,15 @@
 
 # Oh My AGI
 
-### A CLI that builds AGI agents you actually own
+### A CLI and web console that builds AGI agents you actually own
 
 *Capability that stays with the person, not the organization.*
 
-[![Status](https://img.shields.io/badge/status-v0.6.0-green)](.scrum/backlog.md)
+[![Status](https://img.shields.io/badge/status-v0.6.1-green)](.scrum/backlog.md)
 [![Runtime](https://img.shields.io/badge/runtime-Bun-black?logo=bun)](.scrum/decisions.md#d-004)
 [![Protocol](https://img.shields.io/badge/agent--to--agent-A2A%201.0.0-blue)](.scrum/decisions.md#d-016)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](#license)
-[![Decisions](https://img.shields.io/badge/decisions-D--001%20→%20D--084-informational)](.scrum/decisions.md)
+[![Decisions](https://img.shields.io/badge/decisions-D--001%20→%20D--087-informational)](.scrum/decisions.md)
 
 <img src="docs/assets/hero.jpg" alt="An agent of light standing on a terminal, tied to a git branch, a local server and a padlock" width="720">
 
@@ -20,7 +20,7 @@
 
 ---
 
-> **v0.6.0.** The full MVP is met (since v0.1.0): identity, isolation, a git repository per
+> **v0.6.1.** The full MVP is met (since v0.1.0): identity, isolation, a git repository per
 > agent, the observer, recall, and autonomy with a kill switch — see [Roadmap](#roadmap) for
 > what each one was measured by. It is a 0.x: file formats and flags may still change, and
 > anything below marked `not built yet` describes what Oh My AGI is *designed* to do, not what it
@@ -28,7 +28,7 @@
 
 ## What it is
 
-**Oh My AGI** (`ohmyagi`) is a command-line tool that creates **AGI agents** — as many as you want — where every agent:
+**Oh My AGI** (`ohmyagi`) is a command-line tool, with a web console, that creates **AGI agents** — as many as you want — where every agent:
 
 - **has an identity of its own** (a *soul*: name, role, boundaries, things it must never do, voice)
 - **remembers what you *do***, not just what you type — recorded as it happens, with your
@@ -37,6 +37,8 @@
 - **talks to other agents** over the open [A2A 1.0.0](https://a2a-protocol.org) protocol
 - **lives in its own git repository** — `git clone` *is* the migration path
 - **keeps working when a vendor disappears** — every capability has a local path
+- **has a console in your browser** — `ohmyagi web`: talk to it and switch who answers, say yes or
+  no to what it suggests, and read, edit, import (files and web pages) and map its memory
 
 ## Install
 
@@ -52,7 +54,7 @@
 
 ```bash
 # pick the release and the file for your machine, e.g. Linux x86_64
-V=v0.6.0-alpha
+V=v0.6.1-alpha
 curl -LO https://github.com/bemindlabs/ohmyagi/releases/download/$V/ohmyagi-linux-x64
 curl -LO https://github.com/bemindlabs/ohmyagi/releases/download/$V/SHA256SUMS
 sha256sum -c SHA256SUMS --ignore-missing          # macOS: shasum -a 256 -c SHA256SUMS --ignore-missing
@@ -460,9 +462,9 @@ Full detail: [`.scrum/backlog.md`](.scrum/backlog.md) · every decision and its 
 
 ## Status
 
-v0.6.0. 10 epics · 43 stories · 4 spikes · 84 recorded decisions.
+v0.6.1. 10 epics · 43 stories · 4 spikes · 87 recorded decisions.
 The full MVP is met (`.scrum/backlog.md` §7) as of v0.1.0: Phases A and B, the observer, the autonomy core and
-recall (E4). v0.2.0 added scheduled triggers (S5.3), the `ohmyagi` name, `ohmyagi setup` and a macOS installer; v0.3.0 the pattern miner (S3.3); v0.4.0 adds agent-to-agent over A2A (E8), a chat connector for Telegram (E9), the web page, the local egress judge, proposal triage, the interest tracker (S3.4) and `ohmyagi update`; v0.4.1 grows the web page (Settings, Agent, Memories, the mascot, https behind tailscale serve, a key that survives restarts); v0.4.2 renders markdown, gives the local fallback a default model, and has the judge read the question rather than the soul; v0.5.0 starts identity inheritance (E6) — `persona` drafts a soul from real artifacts with every line tied to its source (S6.1), `eval` measures how much of the job an agent does (S6.5) — and adds a Profile wizard to the web page; v0.5.1 makes recall find the answer 91.7% of the time (was 79.2%), closes S6.2, and closes SP-3 as not passed for now; v0.6.0 records the basis a subject's data comes in on (S7.3) and turns the web page into an agent console — a Privacy tab, persona drafts answered on the page, memories created, edited, deleted and imported from files and web links, and a 3D map of how they link. Next: the owner's review of S6.1 and the task set, and a second chat platform (S9.3).
+recall (E4). v0.2.0 added scheduled triggers (S5.3), the `ohmyagi` name, `ohmyagi setup` and a macOS installer; v0.3.0 the pattern miner (S3.3); v0.4.0 adds agent-to-agent over A2A (E8), a chat connector for Telegram (E9), the web page, the local egress judge, proposal triage, the interest tracker (S3.4) and `ohmyagi update`; v0.4.1 grows the web page (Settings, Agent, Memories, the mascot, https behind tailscale serve, a key that survives restarts); v0.4.2 renders markdown, gives the local fallback a default model, and has the judge read the question rather than the soul; v0.5.0 starts identity inheritance (E6) — `persona` drafts a soul from real artifacts with every line tied to its source (S6.1), `eval` measures how much of the job an agent does (S6.5) — and adds a Profile wizard to the web page; v0.5.1 makes recall find the answer 91.7% of the time (was 79.2%), closes S6.2, and closes SP-3 as not passed for now; v0.6.0 records the basis a subject's data comes in on (S7.3) and turns the web page into an agent console — a Privacy tab, persona drafts answered on the page, memories created, edited, deleted and imported from files and web links, and a 3D map of how they link; v0.6.1 lets the chat switch backend and model, adds "/" commands for every action on the page, and imports pages built by JavaScript. Next: the owner's review of S6.1 and the task set, and a second chat platform (S9.3).
 
 Those four numbers are counted out of `.scrum/` by `test/docs/readme-counts.test.ts`
 every time the suite runs, because a number in a README is the thing nobody comes
@@ -474,6 +476,10 @@ Not open for contributions yet. The engine is designed so it *can* be open-sourc
 agent repositories (the identities) are meant to stay private — Oh My AGI never creates a remote
 and has no code path that pushes, but it cannot check the visibility of a remote you add, and
 a vendor CLI it runs for a turn can push on its own. See ADR 0002 §5 for what the guard covers.
+
+Bug reports and ideas are welcome as issues — see [CONTRIBUTING.md](CONTRIBUTING.md), [SUPPORT.md](SUPPORT.md),
+and [SECURITY.md](SECURITY.md) for anything that should not be public. Everyone is expected to follow the
+[Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 

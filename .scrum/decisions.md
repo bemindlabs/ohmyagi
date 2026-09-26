@@ -1931,3 +1931,38 @@ release แรกบน public ติดป้าย **`v0.3.0-alpha` · pre-rel
 - **หน้าเว็บ:** ปุ่ม **Import…** ในแท็บ Memories เปิดช่องลากไฟล์มาวาง (เลือกได้หลายไฟล์) และช่องใส่ลิงก์ · แต่ละรายการจะตรวจแบบ dry run ทันที แสดงว่าจะไปอยู่ที่ไหน อ่านด้วยวิธีไหน หรือเพราะอะไรจึงถูกปฏิเสธ · กด Import แล้วจะเขียนเฉพาะรายการที่ผ่าน ทีละรายการ
   - `POST /api/memory/import` รับ `{name, data: base64}` หรือ `{url}` · server ตรวจนามสกุล ชื่อไฟล์ (ห้ามมี `/`), ขนาด และ URL ก่อน แล้วเขียนเป็นไฟล์ชั่วคราว 600 ใน mkdtemp ก่อนรันคำสั่ง
 - **ทดสอบกับไฟล์จริงบนเครื่องนี้:** md, docx, pdf, odt, pdf ภาษาไทย และ https://example.com แปลงได้ถูกต้อง · `file://` ถูกปฏิเสธ
+
+## D-085 — แชทเปลี่ยน backend และ model ได้จากช่องพิมพ์เลย
+
+**สถานะ:** เจ้าของสั่ง (2026-09-26 — *"feat: chat can switch backend and model"*) · รายละเอียดบุษบาตัดสินตามอำนาจ D-031
+
+- **หน้าเว็บ:** มีปุ่ม chip ใต้ช่องพิมพ์ บอกว่าใครกำลังตอบ (เช่น `claude · opus` หรือ chain ค่าเริ่มต้น) · กดแล้วเปิดแถวเลือก backend (ตัวที่เครื่องนี้ไม่มีจะกดไม่ได้) และช่อง model ที่มีรายการแนะนำตาม backend ที่เลือก · ใช้ key ใน localStorage ชุดเดียวกับ Settings จึงตรงกันทั้งสองทางเสมอ · คำตอบแต่ละข้อบอกว่าถาม model ไหน
+- **รายการ model แนะนำ (`GET /api/models`, `src/web/models.ts`):** แนะนำเฉพาะชื่อที่มีเหตุผลว่าจะใช้ได้ คือ model ที่เคยตอบจริงบน backend นั้น (จาก ledger, ใหม่สุดก่อน), local model ที่ตั้งไว้กับ `ohmyagi web`, รายการจาก `/api/tags` ของ Ollama ในเครื่อง (ตัด embedding model ออก, timeout 1.5 วินาที) และ alias ของ Claude (`opus`/`sonnet`/`haiku`) · **ไม่ใส่รายชื่อ model ที่เดาเอาเอง** เพราะชื่อที่เก่าแล้วคือ turn ที่ล้มเหลว · ช่อง model ยังพิมพ์ชื่ออื่นเองได้
+- **model เป็นของ backend:** ถ้าเปลี่ยน backend แล้ว model เดิมเป็นของ backend อื่น (เช่น qwen บน claude) หน้าเว็บจะล้าง model ออกและบอกเหตุผล · ฝั่ง server ก็ใช้กฎเดียวกัน: ถ้าหน้าเว็บเลือก backend อย่างเดียว จะไม่เอา `--model` ที่ `ohmyagi web` ถูกเปิดไว้มาใช้ต่อ แต่ถ้าเลือก model อย่างเดียว จะยังใช้ `--backend` ที่เปิดไว้ · ค่าที่ไม่ผ่าน `BACKEND_CHAIN`/`MODEL` ยังถูกทิ้งเหมือนเดิม
+- **ทดสอบแล้ว:** ใช้ headless Chrome เปิด picker → เลือก ollama (รายการเหลือเฉพาะ model ของ ollama) → typhoon → เปลี่ยนเป็น claude (typhoon ถูกล้างพร้อมแจ้งเหตุผล) → opus → Settings แสดง `claude · opus` → reset จาก Settings แล้วแชทตามทัน → reload แล้วค่ายังอยู่ · turn จริงผ่าน `ollama` + `typhoon-4b:latest` ตอบใน 1.2 วินาที
+
+## D-086 — คำสั่ง "/" ในแชท: ทุกคำสั่งคือ action ที่หน้าเว็บทำได้อยู่แล้ว
+
+**สถานะ:** เจ้าของสั่ง (2026-09-26 — *"feat: implement all '/' commands to actions"*) · รายละเอียดบุษบาตัดสินตามอำนาจ D-031
+
+- **หลักการ:** ทุกคำสั่งเรียก API เดิมที่ปุ่มบนหน้าเว็บใช้อยู่แล้ว **ไม่มี route ใหม่ฝั่ง server และไม่มีทางลัดที่ข้ามด่านใดเลย** คำสั่งทำได้เท่าที่ปุ่มทำได้: `/remember` ผ่าน `memory write` (credential scan + basis) · `/import` แสดง dry run พร้อมปุ่ม "Import it" ก่อน · `/autonomy` ตั้งได้สูงสุดแค่ 2 (ระดับ 3 ยังต้องพิมพ์ใน terminal) · `/stop` ถามยืนยันเหมือนปุ่ม
+- **ชุดคำสั่ง (21 คำสั่ง):**
+  - **แชท:** `/help [cmd]` `/clear` `/retry` `/copy` `/export` (บันทึกเป็นไฟล์ .md)
+  - **ใครตอบ:** `/backend [name|default]` `/model [name|default]` ใช้ key เดียวกับ picker (D-085) และถ้าเปลี่ยน backend แล้ว model เป็นของ backend อื่นจะถูกล้างเหมือนกัน
+  - **ข้อเสนอ:** `/status` `/waiting` (แสดงเป็นรายการมีเลขลำดับ) `/approve <n|id> [note]` `/decline <n|id> [note]` `/do <n|id>` · อ้างถึงได้ด้วยเลขลำดับจาก `/waiting` หรือ id อย่างน้อย 4 ตัวอักษรที่ไม่ซ้ำกับตัวอื่น ถ้าอ้างไม่ชัดจะปฏิเสธพร้อมบอกเหตุผล
+  - **memory:** `/search <words>` `/remember <text>` (ไฟล์ `memory/notes/<date>-<words>.md`) `/import <link>` `/memories [words]`
+  - **ควบคุม:** `/autonomy [kind level]` `/stop` `/update`
+  - **หน้า:** `/go <tab>` และ `/agent` `/profile` `/privacy` `/settings`
+- **UI:** พิมพ์ `/` แล้วมีเมนูขึ้น กรองตามที่พิมพ์ (ขึ้นต้นก่อน แล้วค่อยที่มีคำนั้นอยู่ข้างใน) · ↑↓ เลื่อน · Tab/Enter เลือก · Esc ปิด · คำสั่งที่ไม่มี argument หรือพิมพ์ชื่อครบแล้ว argument เป็นแบบ optional จะรันทันที · คำสั่งที่เป็นบรรทัดเดียวส่งได้ด้วย Enter ธรรมดา · `//` ส่งข้อความที่ขึ้นต้นด้วย `/` เป็นข้อความปกติ · ผลลัพธ์แสดงเป็น bubble แบบ `sys` (เส้นประ อยู่กลาง) แยกจากคำตอบของ agent · เก็บไว้ในประวัติแชทของ browser และติดไปในไฟล์ export ด้วย
+- **ทดสอบ:** ใช้ headless Chrome กับ sandbox (HOME แยก, สำเนา agent, basis ที่ copy มา, proposal ทดสอบ 3 รายการ) ครบทุกคำสั่ง รวมถึง `/do` ที่เป็น turn จริงบน ollama + typhoon · มี test ใหม่ตรวจว่าทุก endpoint ที่หน้าเว็บเรียกมี route ฝั่ง server จริง
+
+## D-087 — import หน้าเว็บที่สร้างเนื้อหาด้วย JavaScript: ใช้ headless Chrome render ก่อนแล้วค่อยอ่าน
+
+**สถานะ:** เจ้าของเจอปัญหาจริง (2026-09-26 — import หน้า portfolio ของเจ้าของ (เว็บ SPA บน Vercel) ไม่ได้ เพราะ "nothing readable came out … a scanned PDF has no text to take") · บุษบาแก้ตามอำนาจ D-031 · เป็นส่วนเสริมของ D-084
+
+- **สาเหตุ:** เว็บนั้นเป็น SPA (render ฝั่ง client) HTML ที่ส่งมามี body แค่ `<div id="root">` ยาว 29 ตัวอักษรกับ script 2 ตัว ข้อความทั้งหมดถูกสร้างด้วย JavaScript ใน browser ตัวอ่าน HTML (D-084) จึงไม่เจออะไรเลย · ข้อความ error ที่พูดถึง "scanned PDF" ก็ผิด เพราะนี่ไม่ใช่ PDF
+- **แก้:** ถ้าหน้าที่ fetch มามีข้อความไม่ถึง 100 ตัวอักษร **และ** มี `<script>` จะ render ด้วย headless browser ก่อน โดยลองตามลำดับ `google-chrome`, `google-chrome-stable`, `chromium`, `chromium-browser` · ใช้ `--dump-dom --virtual-time-budget=8000` กับ profile ใหม่ใน mkdtemp ทุกครั้งแล้วลบทิ้งหลังใช้ จึงไม่อ่านอะไรจาก browser ของเจ้าของและไม่ทิ้งอะไรไว้ · ทำงานผ่าน `tool` เดิม (spawnGuarded, kill เมื่อเกิน 120 วินาที) · via จะเขียนว่า `fetched · rendered in <browser> · html → markdown`
+- **ถ้าไม่มี browser:** แจ้งตรง ๆ ว่าหาไม่เจอ และแนะนำให้ save หน้าเป็น PDF แล้ว import ไฟล์นั้นแทน · ถ้ามี browser แต่ render แล้วยังว่าง ให้บอกบรรทัดแรกของ error · คำแนะนำเรื่อง "scanned PDF" แสดงเฉพาะตอนที่ via เป็น pdftotext
+- **หน้าเว็บที่มีข้อความสั้นแต่ไม่มี script:** อ่านตามที่ได้มา ไม่เปิด browser
+- **ราคา:** render หนึ่งครั้งใช้ประมาณ 26 วินาทีบนเครื่องนี้ ส่วนใหญ่เป็นเวลาเปิด Chrome · ทั้ง dry run และตอนเขียนจริงต่าง render ใหม่ (ไม่ cache ไว้) เพราะเนื้อหาของหน้าอาจเปลี่ยนระหว่างนั้น
+- **ผลจริง:** หน้า portfolio นั้นได้ 7.6 KB เนื้อหาครบ ผ่าน google-chrome

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/bemindlabs/ohmyagi/security/advisories/new
+    about: Privately, so only the maintainers see it. Never as a public issue.
+  - name: How to use it
+    url: https://github.com/bemindlabs/ohmyagi#set-up-an-agent
+    about: Setting up an agent, the commands, and ohmyagi doctor.

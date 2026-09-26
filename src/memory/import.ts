@@ -290,12 +290,46 @@ export async function convertUrl(raw: string, fetcher: Fetcher, scratch: string,
   const text = new TextDecoder().decode(bytes);
   if (type.includes("html") || /^\s*<(!doctype|html)/i.test(text)) {
     const html = htmlToMarkdown(text, url);
-    return { ...html, title: html.title || new URL(url).hostname, via: "fetched · html → markdown", url };
+    if (!thin(html.markdown) || !/<script\b/i.test(text)) return { ...html, title: html.title || new URL(url).hostname, via: "fetched · html → markdown", url };
+    // A page that builds its words with JavaScript (a React or Vue app) sends an empty shell: run it, then read it.
+    const rendered = await renderPage(url, run, scratch);
+    if (rendered.html !== undefined) {
+      const after = htmlToMarkdown(rendered.html, url);
+      if (!thin(after.markdown)) return { ...after, title: after.title || html.title || new URL(url).hostname, via: `fetched · rendered in ${rendered.browser} · html → markdown`, url };
+    }
+    throw new Error(
+      rendered.browser === undefined
+        ? `${url} builds its text with JavaScript, and no headless Chrome or Chromium was found to run it — install one, or save the page as PDF and import that`
+        : `${url} builds its text with JavaScript and showed none even after ${rendered.browser} ran it${rendered.why ? ` (${rendered.why})` : ""}`,
+    );
   }
   if (type.startsWith("text/") || type.includes("markdown") || type === "") {
     return { title: /^#\s+(.+)$/m.exec(text)?.[1]?.trim() ?? stem(last), markdown: text.replace(/\r\n/g, "\n").trim(), via: "fetched · as written", url };
   }
   throw new Error(`${url} is ${type} — not a page, a PDF or text`);
+}
+
+/** Words enough to be a memory: an empty app shell has a title and not much else. */
+const thin = (markdown: string) => markdown.replace(/\s+/g, " ").trim().length < 100;
+
+/** The browsers that can run a page headless, in the order they are tried. */
+export const BROWSERS: readonly string[] = ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"];
+
+/** The page's HTML after its scripts have run, from the first headless browser found; which one, or why not. */
+async function renderPage(url: string, run: Runner, scratch: string): Promise<{ readonly browser?: string; readonly html?: string; readonly why?: string }> {
+  for (const browser of BROWSERS) {
+    // A profile of its own each time: nothing of the person's browser is read, and nothing is left behind.
+    const profile = await mkdtemp(join(scratch, "ohmyagi-render-"));
+    try {
+      const out = await run([browser, "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", `--user-data-dir=${profile}`, "--virtual-time-budget=8000", "--dump-dom", url]);
+      if (out.code === 127) continue;
+      const html = new TextDecoder().decode(out.stdout);
+      return out.code === 0 && html.trim() !== "" ? { browser, html } : { browser, why: out.stderr.split("\n")[0] || `exit ${out.code}` };
+    } finally {
+      await rm(profile, { recursive: true, force: true });
+    }
+  }
+  return {};
 }
 
 /** A file-name part from a title: ASCII letters and digits, or a dated fallback for a title in Thai. */
@@ -358,7 +392,7 @@ export async function planImport(
   as?: string,
 ): Promise<readonly ImportPart[]> {
   const body = converted.markdown.trim();
-  if (body === "") throw new Error(`${source}: nothing readable came out (${converted.via}) — a scanned PDF has no text to take`);
+  if (body === "") throw new Error(`${source}: nothing readable came out (${converted.via})${converted.via.includes("pdftotext") ? " — a scanned PDF is pictures of text, with no text to take" : ""}`);
   const pieces = splitMarkdown(body);
   let slug = as === undefined ? slugFor(converted.title, now, source) : as.replace(/^memory\//, "").replace(/\.md$/, "");
   const base = as === undefined ? `memory/imported/${slug}` : `memory/${slug}`;

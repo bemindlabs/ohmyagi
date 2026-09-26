@@ -53,6 +53,7 @@ function fakeDeps() {
       runs.push(["memory", "import", source.kind === "url" ? source.url : `${source.name}:${new TextDecoder().decode(source.bytes)}`, write ? "--yes" : "(dry)"]);
       return { code: 0, stdout: "new memory/imported/x.md", stderr: "" };
     },
+    models: async () => ({ backends: [{ id: "claude", available: true }, { id: "ollama", available: true }, { id: "kimi", available: false }], chain: ["claude", "codex", "ollama"], defaultTurn: { backend: null, model: null }, models: { claude: ["opus", "sonnet", "haiku"], ollama: ["qwen3.8:27b"], kimi: [] } }),
     memoryGraph: async () => ({ nodes: [{ path: "memory/a.md", title: "A", type: "project", bytes: 10 }, { path: "memory/b.md", title: "B", type: "", bytes: 5 }], edges: [[0, 1, 2]], dangling: 1 }),
     memory: async (path) => (path === "memory/a.md" ? { ok: true, text: "hello" } : { ok: false, reason: "not a memory file" }),
     memoryWrite: async (path, content) => {
@@ -497,6 +498,52 @@ describe("Memories CRUD (D-081)", () => {
     const scripts = [...PAGE_HTML.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]!);
     expect(scripts.length).toBeGreaterThan(0);
     for (const script of scripts) expect(() => new Function(script)).not.toThrow();
+  });
+
+  test("a bulk selection holds only the cards on screen — never one a filter or \"Show fewer\" hid", () => {
+    expect(PAGE_HTML).toContain("for (const id of [...picked]) if (!waitOnScreen.includes(id)) picked.delete(id);");
+    expect(PAGE_HTML).toContain("for (const id of waitOnScreen) picked.add(id);");
+    expect(PAGE_HTML).not.toContain("for (const p of waitShown()) picked.add(p.id)");
+  });
+
+  test("the chat switches backend and model: /api/models, and each one named replaces only its own flag (D-085)", async () => {
+    const { deps, runs } = fakeDeps();
+    const h = handler({ ...deps, turnFlags: ["--backend", "ollama", "--model", "qwen3.8:27b"] }, "tok", HOSTS);
+    const m = (await (await h(req("/api/models"))).json()) as { models: Record<string, string[]>; chain: string[] };
+    expect(m.models["claude"]).toEqual(["opus", "sonnet", "haiku"]);
+    expect(m.chain).toEqual(["claude", "codex", "ollama"]);
+    expect((await h(req("/api/models", { token: null }))).status).toBe(401);
+    const turn = (body: unknown) => h(req("/api/turn", { method: "POST", body: JSON.stringify(body) }));
+    await turn({ prompt: "a" });
+    await turn({ prompt: "b", backend: "claude", model: "opus" });
+    await turn({ prompt: "c", model: "typhoon-4b" });
+    await turn({ prompt: "d", backend: "claude" });
+    await turn({ prompt: "e", backend: "claude; rm -rf /", model: "--yes" });
+    const flags = runs.filter((r) => r[0] === "turn").map((r) => r.slice(r.indexOf("--json") + 1).join(" "));
+    expect(flags).toEqual([
+      "--backend ollama --model qwen3.8:27b",
+      "--backend claude --model opus",
+      "--backend ollama --model typhoon-4b",
+      "--backend claude",
+      "--backend ollama --model qwen3.8:27b",
+    ]);
+    for (const id of ["chatPick", "pickRow", "chatBackend", "chatModel", "chatModelList"]) expect(PAGE_HTML).toContain(`id="${id}"`);
+  });
+
+  test("the chat's / commands (D-086): all listed, and every endpoint the page calls is one the server answers", async () => {
+    for (const name of ["help", "clear", "retry", "copy", "export", "backend", "model", "status", "waiting", "approve", "decline", "do", "search", "remember", "import", "memories", "autonomy", "stop", "update", "go"]) {
+      expect(PAGE_HTML).toContain(`{ name: "${name}", args: `);
+    }
+    expect(PAGE_HTML).toContain('id="cmdMenu"');
+    const server = await Bun.file(new URL("../../src/web/server.ts", import.meta.url)).text();
+    const called = [...new Set([...PAGE_HTML.matchAll(/api\("(\/api\/[a-z/-]+)/g)].map((m) => m[1]!))];
+    expect(called.length).toBeGreaterThan(15);
+    // A plain route is a string; one with an id in it is a pattern with its slashes escaped.
+    for (const path of called) expect(server.includes(`"${path}"`) || server.includes(path.split("/").join("\\/")), path).toBe(true);
+  });
+
+  test("the tab's icon is Om, from inside the page (CSP allows data: images)", () => {
+    expect(PAGE_HTML).toContain('<link rel="icon" type="image/svg+xml" href="data:image/svg+xml');
   });
 
   test("a refused delete shows the plan and the reason, not the plan alone", async () => {

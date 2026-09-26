@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+## 0.6.1 — 2026-09-26
+
+### Project
+- Om the mascot is the README icon and the web page's tab icon. The description says what 0.6 is. GitHub
+  community files: SECURITY (private reports), CONTRIBUTING, CODE_OF_CONDUCT (Contributor Covenant 2.1), SUPPORT,
+  issue forms, a pull request template, CODEOWNERS, dependabot for actions, .editorconfig and .gitattributes.
+
+### Memory — import pages built by JavaScript (D-087)
+- A web page that arrives as an empty app shell (React, Vue, Next export…) is run in a headless Chrome or Chromium
+  with a throwaway profile, then read — it used to fail as "nothing readable". With no such browser installed it
+  says so and suggests saving the page as PDF. The "scanned PDF" hint is now given only for a PDF.
+
+### Web — "/" commands in the chat (D-086)
+- Type `/` in the message box for a menu of commands (↑ ↓, Tab or Enter, Esc); each does something the page can
+  already do: `/help` `/clear` `/retry` `/copy` `/export` · `/backend` `/model` · `/status` `/waiting`
+  `/approve` `/decline` `/do` · `/search` `/remember` `/import` `/memories` · `/autonomy` `/stop` `/update` ·
+  `/go` and `/agent` `/profile` `/privacy` `/settings`. Suggestions are named by their number in `/waiting` or the
+  start of their id. What a command says appears as the page's own note in the chat, not the agent's. `//` sends a
+  message that starts with a slash.
+
+### Web — switch backend and model from the chat (D-085)
+- A chip under the message box shows who answers ("claude · opus"); pressing it opens a backend picker (the ones
+  not on this computer are greyed) and a model box with suggestions for that backend: models that really answered
+  (from the ledger), the local model and what the local Ollama lists, and Claude's aliases. A model meant for
+  another backend is cleared when the backend changes. The same choice as Settings, which stays in step. Each
+  answer names the model that was asked for. `GET /api/models`.
+- A backend named by the page no longer inherits the model `ohmyagi web` was started with; a model alone still
+  keeps the started backend.
+
+### Web — "Waiting for you" selections
+- A selection holds only the cards on screen: "Select shown" no longer picks cards folded under "Show all", and a
+  filter that hides a selected card drops it, so a bulk "Allow once" never reaches one you did not see. The count
+  reads "2 of 5" while filtering.
+
 ## 0.6.0 — 2026-09-26
 
 ### Memory — import documents and web links (D-084)

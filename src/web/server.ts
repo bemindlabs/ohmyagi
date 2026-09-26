@@ -18,6 +18,7 @@
 
 import { fontBytes } from "./fonts.ts";
 import type { MemoryEntry, MemoryGraph } from "./memories.ts";
+import type { ModelsState } from "./models.ts";
 import { readProfile, type Profile } from "../soul/profile.ts";
 import { memoryPathProblem } from "../memory/write.ts";
 import { IMPORT_KINDS, MAX_SOURCE_BYTES, urlProblem } from "../memory/import.ts";
@@ -29,6 +30,8 @@ export const TOKEN_HEADER = "x-ohmyagi-token";
 export interface WebDeps {
   readonly state: () => Promise<ViewState>;
   readonly settings: () => Promise<SettingsState>;
+  /** The backends and model names the chat's picker offers (D-085). */
+  readonly models: () => Promise<ModelsState>;
   readonly agent: () => Promise<AgentInfo>;
   readonly memories: () => Promise<readonly MemoryEntry[]>;
   readonly memoryGraph: () => Promise<MemoryGraph>;
@@ -129,6 +132,7 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[]) 
 
     if (req.method === "GET" && url.pathname === "/api/state") return json(await deps.state());
     if (req.method === "GET" && url.pathname === "/api/settings") return json(await deps.settings());
+    if (req.method === "GET" && url.pathname === "/api/models") return json(await deps.models());
     if (req.method === "GET" && url.pathname === "/api/agent") return json(await deps.agent());
     if (req.method === "GET" && url.pathname === "/api/profile") return json(await deps.profile());
     if (req.method === "GET" && url.pathname === "/api/privacy") return json(await deps.privacy());
@@ -168,7 +172,14 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[]) 
       // one is ignored and the flags `ohmyagi web` was started with apply.
       const backend = typeof body["backend"] === "string" && BACKEND_CHAIN.test(body["backend"]) ? body["backend"] : undefined;
       const model = typeof body["model"] === "string" && MODEL.test(body["model"]) ? body["model"] : undefined;
-      const flags = backend === undefined && model === undefined ? (deps.turnFlags ?? []) : [...(backend === undefined ? [] : ["--backend", backend]), ...(model === undefined ? [] : ["--model", model])];
+      // What the page names replaces what `ohmyagi web` was started with (D-085). A model belongs to its
+      // backend: a model alone keeps the started backend, but a backend alone drops the started model —
+      // `claude --model qwen3.8:27b` is a turn that cannot answer.
+      const started = deps.turnFlags ?? [];
+      const startedWith = (flag: string) => (started.indexOf(flag) >= 0 ? started[started.indexOf(flag) + 1] : undefined);
+      const useBackend = backend ?? startedWith("--backend");
+      const useModel = model ?? (backend === undefined ? startedWith("--model") : undefined);
+      const flags = [...(useBackend === undefined ? [] : ["--backend", useBackend]), ...(useModel === undefined ? [] : ["--model", useModel])];
       const args = ["turn", ...place, "--prompt", prompt, "--json", ...flags];
       if (proposal !== undefined) args.push("--proposal", proposal);
       const out = await deps.run(args);

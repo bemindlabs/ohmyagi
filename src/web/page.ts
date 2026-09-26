@@ -17,6 +17,7 @@ export const PAGE_HTML = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Oh My AGI</title>
+<link rel="icon" type="image/svg+xml" href="${MASCOT_DATA_URI}">
 <style>
 ${FONT_CSS}
 /* D-078: a control console for one agent — the chat in front, what it may do and who answers always in view. */
@@ -120,11 +121,24 @@ footer{color:var(--muted);font-size:.8rem;margin-top:22px}
 .msg{padding:10px 13px;border-radius:14px;max-width:min(88%,62rem);white-space:pre-wrap;word-wrap:break-word}
 .me{align-self:flex-end;background:linear-gradient(180deg,var(--brand2),var(--brand));color:var(--onbrand);border-bottom-right-radius:4px}
 .it{align-self:flex-start;background:var(--card2);border:1px solid var(--line);border-bottom-left-radius:4px}
+/* D-086: what a /command said — the page's own voice, not the agent's. */
+.sys{align-self:center;background:var(--calmbg);border:1px dashed var(--line);font-size:.88rem;max-width:min(94%,62rem);white-space:normal}
+.sys .row{margin-top:8px}
+.composer{position:relative}
+.cmdmenu{position:absolute;left:8px;right:8px;bottom:calc(100% + 6px);background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);max-height:min(46vh,380px);overflow:auto;z-index:20;padding:4px}
+.cmdmenu button{display:flex;gap:10px;width:100%;text-align:left;border:0;background:none;border-radius:8px;padding:7px 10px;min-height:0;align-items:baseline}
+.cmdmenu button[aria-selected=true],.cmdmenu button:hover{background:var(--calmbg)}
+.cmdmenu b{font-family:ui-monospace,monospace;font-size:.86rem;white-space:nowrap}.cmdmenu .small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .composer{border:1px solid var(--line);border-radius:14px;background:var(--bg2);padding:8px;margin-top:6px}
 .composer textarea{border:0;background:transparent;min-height:56px;padding:6px}
 .composer textarea:focus-visible{outline:none}
 .composer:focus-within{border-color:var(--brand)}
 .composer .row{margin-top:4px;justify-content:space-between}
+/* D-085: who answers, switched from the chat itself. */
+.pickchip{border:1px solid var(--line);background:var(--bg2);border-radius:99px;padding:3px 11px;font-size:.78rem;min-height:30px;color:var(--muted);max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pickchip b{color:var(--ink);font-weight:600}
+.pickrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:6px 4px 8px;border-bottom:1px solid var(--line);margin-bottom:4px}
+.pickrow select,.pickrow input{width:auto;flex:1 1 150px;min-height:34px;padding:5px 9px;font-size:.84rem}
 .status{display:flex;gap:14px;align-items:center;justify-content:space-between;flex-wrap:wrap}
 .thinking .logo,.think img{animation:bob .9s ease-in-out infinite}
 @keyframes bob{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-4px) scale(1.06)}}
@@ -279,8 +293,14 @@ ${MARKDOWN_CSS}
       <div class="chat" id="chat" aria-live="polite"></div>
       <div class="composer">
         <label class="small" for="prompt" style="position:absolute;left:-9999px">Your message</label>
-        <textarea id="prompt" placeholder="Ask a question, or tell it what you'd like done…"></textarea>
-        <div class="row"><span class="small think" id="sending">Ctrl+Enter to send</span><button class="primary" id="send">Send</button></div>
+        <div class="pickrow" id="pickRow" hidden>
+          <select id="chatBackend" aria-label="Backend for this chat"></select>
+          <input type="text" id="chatModel" list="chatModelList" placeholder="Model — blank for its default" aria-label="Model for this chat" autocomplete="off" spellcheck="false">
+          <datalist id="chatModelList"></datalist>
+        </div>
+        <div class="cmdmenu" id="cmdMenu" role="listbox" aria-label="Commands" hidden></div>
+        <textarea id="prompt" placeholder="Ask a question, or tell it what you'd like done…" aria-describedby="sending"></textarea>
+        <div class="row"><span class="small think" id="sending">Ctrl+Enter to send · / for commands</span><div class="row" style="margin:0;gap:8px;flex-wrap:nowrap;min-width:0"><button class="pickchip" id="chatPick" aria-expanded="false" aria-controls="pickRow" title="Switch backend and model">…</button><button class="primary" id="send">Send</button></div></div>
       </div>
     </section>
 
@@ -501,6 +521,9 @@ ${MARKDOWN_JS}
 
   let waitItems = [], waitSig = "";
   const picked = new Set();
+  // The cards on screen right now. A selection only ever holds these: a bulk "Allow once" must never reach a
+  // card that a filter or "Show fewer" has hidden, since the person never saw what it would allow.
+  let waitOnScreen = [];
   function waitShown() {
     const q = $("waitFilter").value.trim().toLowerCase(), who = $("waitWho").value;
     return waitItems.filter((p) => (!who || (who === "agent") === p.byAgent) && (!q || (p.what + " " + p.why + " " + p.impact).toLowerCase().includes(q)));
@@ -518,13 +541,15 @@ ${MARKDOWN_JS}
     if (!force && sig === waitSig) return;
     waitSig = sig;
     const box = $("waiting"); box.replaceChildren();
-    $("waitCount").textContent = items.length ? "(" + items.length + ")" : "";
-    renderBulk();
-    if (!items.length) { box.append(el("p", "empty", "Nothing is waiting. You're all caught up.")); return; }
     const list = waitShown();
-    if (!list.length) { box.append(el("p", "empty", "Nothing matches the filter.")); return; }
     const filtering = $("waitFilter").value.trim() !== "" || $("waitWho").value !== "";
     const shown = waitAll || filtering ? list : list.slice(0, 3);
+    waitOnScreen = shown.map((p) => p.id);
+    for (const id of [...picked]) if (!waitOnScreen.includes(id)) picked.delete(id);
+    $("waitCount").textContent = !items.length ? "" : filtering ? "(" + list.length + " of " + items.length + ")" : "(" + items.length + ")";
+    renderBulk();
+    if (!items.length) { box.append(el("p", "empty", "Nothing is waiting. You're all caught up.")); return; }
+    if (!list.length) { box.append(el("p", "empty", "Nothing matches the filter.")); return; }
     for (const p of shown) {
       const c = el("div", "card");
       const pick = el("label", "pick"); const cb = el("input"); cb.type = "checkbox"; cb.checked = picked.has(p.id); cb.setAttribute("aria-label", "Select: " + p.what);
@@ -553,7 +578,7 @@ ${MARKDOWN_JS}
   }
   $("waitFilter").addEventListener("input", () => renderWaiting(waitItems, true));
   $("waitWho").addEventListener("change", () => renderWaiting(waitItems, true));
-  $("waitSelectAll").onclick = () => { for (const p of waitShown()) picked.add(p.id); renderWaiting(waitItems, true); };
+  $("waitSelectAll").onclick = () => { for (const id of waitOnScreen) picked.add(id); renderWaiting(waitItems, true); };
   $("bulkClear").onclick = () => { picked.clear(); renderWaiting(waitItems, true); };
   async function bulk(action) {
     const ids = [...picked]; if (!ids.length) return;
@@ -587,7 +612,7 @@ ${MARKDOWN_JS}
   }
   async function refresh(force) {
     let s; try { s = await api("/api/state"); } catch { return; }
-    canTriage = s.canTriage;
+    lastState = s; canTriage = s.canTriage;
     $("name").textContent = s.agent.name; $("role").textContent = s.agent.role; $("role").title = s.agent.role; subject = s.agent.subject; agentName = s.agent.name;
     if (!restored) { restored = true; for (const m of chatLog) bubble(m.cls, m.text, m.small, true); }
     $("prompt").placeholder = "Ask " + s.agent.name + " a question, or say what you'd like done…";
@@ -654,12 +679,17 @@ ${MARKDOWN_JS}
     if (!restoring) remember(cls, text, small);
     const b = el("div", "msg " + cls);
     if (cls === "it" && agentName) b.append(el("div", "small", agentName + " · AI"));
-    if (cls === "it") { b.style.whiteSpace = "normal"; b.append(md(text)); } else b.append(document.createTextNode(text));
+    if (cls === "it" || cls === "sys") { b.style.whiteSpace = "normal"; b.append(md(text)); } else b.append(document.createTextNode(text));
     if (small) b.append(el("div", "small", small));
     $("chat").append(b); $("chat").scrollTop = 1e9;
+    return b;
   }
   async function send(text, proposal) {
     text = (text || "").trim(); if (!text) return;
+    if (!proposal && text.startsWith("/")) {
+      if (text.startsWith("//")) text = text.slice(1);
+      else { $("prompt").value = ""; closeMenu(); await runCommand(text); return; }
+    }
     bubble("me", text); $("prompt").value = ""; $("send").disabled = true;
     const mini = el("img"); mini.src = document.querySelector(".logo").src; mini.alt = "";
     $("sending").replaceChildren(mini, document.createTextNode("Thinking…")); document.body.classList.add("thinking");
@@ -670,11 +700,236 @@ ${MARKDOWN_JS}
       if (r.error) bubble("it", r.error);
       else {
         const filed = (r.proposals || []).filter((p) => p.outcome === "filed").length;
-        bubble("it", r.text || "(no answer)", (r.route ? "answered by " + r.route : "") + (filed ? " · " + filed + " suggestion(s) waiting for you" : ""));
+        // The route names the backend; the model this browser asked for is said beside it (D-085).
+        const route = r.route ? "answered by " + r.route.replace(/^answered by /, "") : "";
+        const asked = pick.model && route && !route.includes(pick.model) ? route.replace(/^(answered by [^ ·]+)/, "$1 (" + pick.model + ")") : route;
+        bubble("it", r.text || "(no answer)", asked + (filed ? " · " + filed + " suggestion(s) waiting for you" : ""));
       }
     } catch (e) { bubble("it", e && e.message === "expired" ? "This page's link has changed — open the link ohmyagi web printed (or the service's key), then send again." : "Could not reach the agent — is ohmyagi web still running?"); }
-    $("send").disabled = false; $("sending").replaceChildren(document.createTextNode("Ctrl+Enter to send")); document.body.classList.remove("thinking"); refresh();
+    $("send").disabled = false; $("sending").replaceChildren(document.createTextNode("Ctrl+Enter to send · / for commands")); document.body.classList.remove("thinking"); refresh();
   }
+  // D-085: switch backend and model from the chat. The same two keys Settings writes, so both always agree.
+  let models = null;
+  function pickSummary() {
+    const p = choice();
+    const who = p.backend || (models ? models.chain.join(" → ") : "default");
+    $("chatPick").replaceChildren(document.createTextNode("▾ "), el("b", "", who), document.createTextNode(p.model ? " · " + p.model : ""));
+  }
+  function fillModelList() {
+    const p = choice(); const list = $("chatModelList"); list.replaceChildren();
+    if (!models) return;
+    const ids = p.backend ? [p.backend] : models.chain;
+    for (const name of [...new Set(ids.flatMap((b) => models.models[b] || []))]) { const o = el("option"); o.value = name; list.append(o); }
+    $("chatModel").placeholder = "Model — blank for " + (p.backend === "ollama" || (!p.backend && models.defaultTurn.model) ? (models.defaultTurn.model || engine && engine.localModel || "its default") : "its default");
+  }
+  function syncPicker() {
+    const p = choice();
+    if (models) {
+      const sel = $("chatBackend"); sel.replaceChildren();
+      const def = el("option", "", "Default — " + models.chain.join(" → ")); def.value = ""; sel.append(def);
+      for (const b of models.backends) { const o = el("option", "", b.id + (b.available ? "" : " — not on this computer")); o.value = b.id; o.disabled = !b.available && b.id !== p.backend; sel.append(o); }
+      sel.value = p.backend; if (sel.value !== p.backend) sel.value = "";
+    }
+    $("chatModel").value = p.model; fillModelList(); pickSummary(); renderEngine();
+    if ($("backendSel").options.length) { $("backendSel").value = p.backend; $("modelIn").value = p.model; showModelNow(); }
+  }
+  async function loadModels() { try { models = await api("/api/models"); } catch { return; } syncPicker(); }
+  $("chatPick").onclick = () => {
+    const open = $("pickRow").hidden; $("pickRow").hidden = !open; $("chatPick").setAttribute("aria-expanded", String(open));
+    if (open) { if (!models) loadModels(); $("chatBackend").focus(); }
+  };
+  $("chatBackend").addEventListener("change", () => {
+    const backend = $("chatBackend").value, model = $("chatModel").value.trim();
+    store.set("ohmyagi-backend", backend);
+    // A model named for another backend would fail here (qwen on claude): clear it rather than send a turn that cannot work.
+    if (model && models) {
+      const mine = (backend ? [backend] : models.chain).some((b) => (models.models[b] || []).includes(model));
+      const theirs = Object.keys(models.models).find((b) => (models.models[b] || []).includes(model));
+      if (!mine && theirs) { store.set("ohmyagi-model", ""); toast("Model cleared — " + model + " is for " + theirs + "."); }
+    }
+    syncPicker();
+  });
+  $("chatModel").addEventListener("change", () => { store.set("ohmyagi-model", $("chatModel").value.trim()); syncPicker(); });
+  $("chatModel").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("chatModel").dispatchEvent(new Event("change")); $("prompt").focus(); } });
+  // D-086: "/" commands — every one is something this page can already do, typed instead of clicked.
+  let lastState = null;
+  function sys(text, actions) {
+    const b = bubble("sys", text);
+    if (actions && actions.length) {
+      const row = el("div", "row");
+      for (const a of actions) { const btn = el("button", a.primary ? "primary" : (a.danger ? "danger" : ""), a.label); btn.onclick = async () => { row.querySelectorAll("button").forEach((x) => x.disabled = true); await a.run(); }; row.append(btn); }
+      b.append(row);
+    }
+    return b;
+  }
+  const LEVEL_WORDS = { never: 0, "0": 0, ask: 1, "1": 1, tell: 2, then: 2, "2": 2 };
+  function waitingRef(ref) {
+    const items = (lastState && lastState.waiting) || [];
+    if (!ref) return { error: "Say which: a number from /waiting, or the start of its id." };
+    const n = Number(ref);
+    if (Number.isInteger(n) && n >= 1 && n <= items.length && String(n) === ref) return { item: items[n - 1] };
+    const hits = ref.length >= 4 ? items.filter((p) => p.id.startsWith(ref.toLowerCase())) : [];
+    if (hits.length === 1) return { item: hits[0] };
+    return { error: hits.length > 1 ? "More than one starts with " + ref + " — type more of it." : "Nothing waiting is " + ref + ". /waiting lists them." };
+  }
+  function approvedRef(ref) {
+    const items = (lastState && lastState.approved) || [];
+    const n = Number(ref);
+    if (Number.isInteger(n) && n >= 1 && n <= items.length && String(n) === ref) return items[n - 1];
+    const hits = ref && ref.length >= 4 ? items.filter((p) => p.id.startsWith(ref.toLowerCase())) : [];
+    return hits.length === 1 ? hits[0] : null;
+  }
+  function slugOf(text) { let out = ""; for (const ch of text.toLowerCase()) out += (ch >= "a" && ch <= "z") || (ch >= "0" && ch <= "9") ? ch : "-"; return out.split("-").filter(Boolean).slice(0, 7).join("-").slice(0, 50); }
+  const TAB_NAMES = ["home", "agent", "profile", "memories", "privacy", "settings"];
+  const COMMANDS = [
+    { name: "help", args: "[command]", help: "What each command does", run: (a) => {
+      const one = COMMANDS.find((c) => c.name === a.replace("/", ""));
+      if (one) return sys("**/" + one.name + (one.args ? " " + one.args : "") + "** — " + one.help + (one.more ? "\\n\\n" + one.more : ""));
+      sys("**Commands** — type / to pick one. Start a message with // to send a slash as text.\\n\\n" + COMMANDS.map((c) => "- **/" + c.name + "**" + (c.args ? " " + c.args : "") + " — " + c.help).join("\\n"));
+    } },
+    { name: "clear", args: "", help: "Clear this browser's copy of the conversation", run: () => { $("chatClear").click(); } },
+    { name: "retry", args: "", help: "Send your last message again", run: () => {
+      const last = [...chatLog].reverse().find((m) => m.cls === "me");
+      if (!last) return sys("Nothing to send again yet."); return send(last.text);
+    } },
+    { name: "copy", args: "", help: "Copy the last answer", run: async () => {
+      const last = [...chatLog].reverse().find((m) => m.cls === "it");
+      if (!last) return sys("No answer to copy yet.");
+      try { await navigator.clipboard.writeText(last.text); toast("Copied the last answer."); } catch { sys("This browser would not let the page copy — select the text instead."); }
+    } },
+    { name: "export", args: "", help: "Save the conversation as a Markdown file", run: () => {
+      if (!chatLog.length) return sys("Nothing to save yet.");
+      const lines = chatLog.map((m) => (m.cls === "me" ? "**You:** " : m.cls === "it" ? "**" + (agentName || "Agent") + ":** " : "_Page:_ ") + m.text + (m.small ? "\\n\\n_" + m.small + "_" : ""));
+      const a = el("a"); a.href = URL.createObjectURL(new Blob(["# " + (agentName || "Agent") + " — conversation\\n\\n" + lines.join("\\n\\n---\\n\\n") + "\\n"], { type: "text/markdown" }));
+      a.download = (agentName || "agent") + "-chat-" + new Date().toISOString().slice(0, 10) + ".md"; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    } },
+    { name: "backend", args: "[name|default]", help: "Switch who answers (as the picker under the box does)", run: async (a) => {
+      if (!models) await loadModels();
+      const ids = models ? models.backends.map((b) => b.id) : [];
+      if (!a) { const p = choice(); return sys("Answering: **" + (p.backend || "default (" + (models ? models.chain.join(" → ") : "…") + ")") + "**" + (p.model ? " · " + p.model : "") + "\\n\\nBackends: " + (models ? models.backends.map((b) => b.id + (b.available ? "" : " (not here)")).join(", ") : "…") + "\\n\\n/backend <name> to switch, /backend default to go back."); }
+      const want = a === "default" ? "" : a.toLowerCase();
+      if (want && !ids.includes(want)) return sys("No backend called " + a + ". These are: " + ids.join(", ") + ".");
+      if (want && !models.backends.find((b) => b.id === want).available) return sys(want + " is not on this computer.");
+      $("chatBackend").value = want; $("chatBackend").dispatchEvent(new Event("change"));
+      sys("Now answering: **" + (want || "default") + "**" + (choice().model ? " · " + choice().model : ""));
+    } },
+    { name: "model", args: "[name|default]", help: "Switch the model the backend uses", run: async (a) => {
+      if (!models) await loadModels();
+      const p = choice(), ids = p.backend ? [p.backend] : (models ? models.chain : []);
+      const sugg = models ? [...new Set(ids.flatMap((b) => models.models[b] || []))] : [];
+      if (!a) return sys("Model: **" + (p.model || "the backend's default") + "**" + (sugg.length ? "\\n\\nSuggested here: " + sugg.join(", ") : "") + "\\n\\n/model <name> to switch, /model default to clear.");
+      store.set("ohmyagi-model", a === "default" ? "" : a); syncPicker();
+      sys("Model: **" + (choice().model || "the backend's default") + "**" + (a !== "default" && sugg.length && !sugg.includes(a) ? " — not one this backend has answered with before; the next message will tell." : ""));
+    } },
+    { name: "status", args: "", help: "How the agent stands right now", run: async () => {
+      await refresh(true); const s = lastState; if (!s) return sys("The agent did not answer.");
+      const p = choice();
+      sys("**" + s.agent.name + "** — " + s.autonomy.title + "\\n\\n- Waiting for you: " + s.waiting.length + "\\n- Allowed, not done yet: " + s.approved.length + "\\n- Answers: " + (p.backend || s.engine.chain.join(" → ")) + (p.model ? " · " + p.model : "") + "\\n- Judge: " + (s.engine.judge || "off") + "\\n- Last answered by: " + (s.engine.last ? s.engine.last.backend + " · " + s.engine.last.when : "—") + "\\n- Next scheduled: " + (s.triggers.length ? s.triggers.map((t) => t.id + " " + t.next).join(", ") : "nothing"));
+    } },
+    { name: "waiting", args: "", help: "List what waits for your yes, numbered", run: async () => {
+      await refresh(true); const w = (lastState && lastState.waiting) || [], ok = (lastState && lastState.approved) || [];
+      if (!w.length && !ok.length) return sys("Nothing is waiting. You're all caught up.");
+      sys((w.length ? "**Waiting for you**\\n\\n" + w.map((p, i) => (i + 1) + ". " + p.what + " — _" + p.id.slice(0, 8) + " · " + (p.byAgent ? "by the agent" : "by you") + " · " + p.filed + "_").join("\\n") + "\\n\\n/approve <number> or /decline <number>" : "") + (ok.length ? "\\n\\n**Allowed, not done yet**\\n\\n" + ok.map((p, i) => (i + 1) + ". " + p.what + " — _" + p.id.slice(0, 8) + "_").join("\\n") + "\\n\\n/do <number> runs one" : ""));
+    } },
+    { name: "approve", args: "<number|id> [note]", help: "Allow one suggestion, once", run: async (a) => {
+      const [ref, ...note] = a.split(" "); const r = waitingRef(ref); if (r.error) return sys(r.error);
+      const out = await api("/api/proposals/" + r.item.id + "/approve", { note: note.join(" ") });
+      sys(out.ok ? "Allowed once: **" + r.item.what + "** — /do when you're ready." : (out.message || "That did not work.")); refresh(true);
+    } },
+    { name: "decline", args: "<number|id> [note]", help: "Decline one suggestion", run: async (a) => {
+      const [ref, ...note] = a.split(" "); const r = waitingRef(ref); if (r.error) return sys(r.error);
+      const out = await api("/api/proposals/" + r.item.id + "/refuse", { note: note.join(" ") });
+      sys(out.ok ? "Declined: **" + r.item.what + "**" : (out.message || "That did not work.")); refresh(true);
+    } },
+    { name: "do", args: "<number|id>", help: "Run something already allowed, once", run: async (a) => {
+      await refresh(true); const p = approvedRef(a.trim());
+      if (!p) return sys(((lastState && lastState.approved) || []).length ? "Say which: a number from /waiting's “allowed” list." : "Nothing allowed is waiting to be done.");
+      return send(p.what, p.id);
+    } },
+    { name: "search", args: "<words>", help: "Search memory by meaning, the way a turn recalls", run: async (a) => {
+      if (!a) return sys("Search for what? /search <words>");
+      const r = await api("/api/memory-search", { query: a });
+      sys("**Memory — " + a + "**\\n\\n" + (r.text || r.message || r.error || "Nothing found."));
+    } },
+    { name: "remember", args: "<text>", help: "Save a note to memory (as New memory does)", more: "Goes to memory/notes/<date>-<words>.md through ohmyagi memory write: the credential scan and the memory basis apply.", run: async (a) => {
+      if (!a) return sys("Remember what? /remember <text>");
+      const day = new Date().toISOString().slice(0, 10), slug = slugOf(a) || "note-" + new Date().toISOString().slice(11, 19).split(":").join("");
+      const path = "memory/notes/" + day + "-" + slug + ".md", title = a.split("\\n")[0].slice(0, 70);
+      const text = "---\\nname: " + JSON.stringify(title) + "\\ndescription: " + JSON.stringify(a.split("\\n").join(" ").slice(0, 150)) + "\\nmetadata:\\n  type: project\\n---\\n\\n" + a + "\\n";
+      const r = await api("/api/memory/write", { path, content: text });
+      sys(r.ok ? "Remembered in **" + path + "**. " + (r.message || "").split("\\n").slice(1, 2).join("") : "Not saved — " + (r.message || r.error || "that did not work."));
+      if (r.ok && !$("memories").hidden) loadMemories();
+    } },
+    { name: "import", args: "<link>", help: "Bring a web page into memory (shows first)", run: async (a) => {
+      if (!a) return sys("Import which link? /import https://…");
+      const plan = await api("/api/memory/import", { url: a });
+      if (!plan.ok) return sys("Cannot import it — " + (plan.message || plan.error || "no reason given."));
+      sys("**Import " + a + "?**\\n\\n" + plan.message, [
+        { label: "Import it", primary: true, run: async () => { const r = await api("/api/memory/import", { url: a, write: true }); sys(r.ok ? "Imported. " + (r.message || "").split("\\n").filter((l) => l.startsWith("imported")).join("") : "Not imported — " + (r.message || r.error || "")); } },
+        { label: "Cancel", run: async () => sys("Nothing was imported.") },
+      ]);
+    } },
+    { name: "memories", args: "[words]", help: "Open Memories, filtered by words", run: (a) => { showTab("memories"); $("memFilter").value = a; if (mems.length) drawMemories(); } },
+    { name: "autonomy", args: "[read|write|run|reach] [never|ask|tell]", help: "See or set what it may do on its own", more: "Levels here go up to “do it, then tell me” (2). Acting without asking (3) is typed in a terminal.", run: async (a) => {
+      const [cat, lvl] = a.toLowerCase().split(" ").filter(Boolean);
+      if (!cat) { const st = await api("/api/settings"); return sys("**What it may do on its own**\\n\\n" + CATS.map(([k, name]) => "- " + name + ": " + (st.levels[k] === 3 ? "on its own" : LEVELS[st.levels[k]] || st.levels[k])).join("\\n") + "\\n\\n/autonomy <read|write|run|reach> <never|ask|tell>"); }
+      const known = CATS.find(([k]) => k === cat); if (!known) return sys("The kinds are read, write, run and reach.");
+      if (!(lvl in LEVEL_WORDS)) return sys("The levels are never, ask and tell (0, 1, 2).");
+      const r = await api("/api/autonomy", { category: cat, level: LEVEL_WORDS[lvl] });
+      sys(r.ok ? known[1] + ": **" + LEVELS[LEVEL_WORDS[lvl]].toLowerCase() + "**." : (r.message || r.error || "That did not work.")); refresh(true);
+    } },
+    { name: "stop", args: "", help: "Pull the brake — the same as Stop everything", run: () => { $("stopBtn").click(); } },
+    { name: "update", args: "", help: "Check for a newer ohmyagi", run: async () => { const r = await api("/api/update-check", {}); sys(r.message || (r.ok ? "Checked." : "Could not check.")); } },
+    { name: "go", args: "<home|agent|profile|memories|privacy|settings>", help: "Open a section", run: (a) => { const t = a.toLowerCase(); if (!TAB_NAMES.includes(t)) return sys("The sections are " + TAB_NAMES.join(", ") + "."); showTab(t); } },
+    ...["agent", "profile", "privacy", "settings"].map((t) => ({ name: t, args: "", help: "Open " + t[0].toUpperCase() + t.slice(1), run: () => showTab(t) })),
+  ];
+  async function runCommand(text) {
+    const body = text.slice(1); const space = body.search(" ");
+    const name = (space < 0 ? body : body.slice(0, space)).toLowerCase(), arg = space < 0 ? "" : body.slice(space + 1).trim();
+    const cmd = COMMANDS.find((c) => c.name === name);
+    if (!cmd) { sys("No command /" + name + ". /help lists them — or start with // to send it as a message."); return; }
+    try { await cmd.run(arg); } catch (e) { if (!(e && e.message === "expired")) sys("/" + name + " did not finish — " + (e && e.message ? e.message : "something went wrong.")); }
+  }
+  // The menu: opens on "/", narrows as you type the name, ↑ ↓ to move, Tab or Enter to take, Esc to close.
+  let menuAt = 0, menuHits = [];
+  function closeMenu() { $("cmdMenu").hidden = true; menuHits = []; }
+  function drawMenu() {
+    const v = $("prompt").value;
+    if (!v.startsWith("/") || v.startsWith("//") || v.includes(" ") || v.includes("\\n")) { closeMenu(); return; }
+    const q = v.slice(1).toLowerCase();
+    menuHits = COMMANDS.filter((c) => c.name.startsWith(q)).concat(COMMANDS.filter((c) => !c.name.startsWith(q) && c.name.includes(q)));
+    if (!menuHits.length) { closeMenu(); return; }
+    menuAt = Math.min(menuAt, menuHits.length - 1);
+    const box = $("cmdMenu"); box.replaceChildren();
+    menuHits.forEach((c, i) => {
+      const b = el("button"); b.type = "button"; b.setAttribute("role", "option"); b.setAttribute("aria-selected", String(i === menuAt));
+      b.append(el("b", "", "/" + c.name + (c.args ? " " + c.args : "")), el("span", "small", c.help));
+      b.onmousedown = (e) => { e.preventDefault(); menuAt = i; takeMenu(); };
+      box.append(b);
+    });
+    box.hidden = false; box.children[menuAt].scrollIntoView({ block: "nearest" });
+  }
+  function takeMenu() {
+    const c = menuHits[menuAt]; if (!c) return;
+    closeMenu();
+    // No arguments, or the whole name typed with only optional ones: run it now. Otherwise leave "/name " for the rest.
+    const typed = $("prompt").value.trim().toLowerCase();
+    if (!c.args || (typed === "/" + c.name && c.args.startsWith("["))) { send("/" + c.name); return; }
+    $("prompt").value = "/" + c.name + " "; $("prompt").focus();
+  }
+  $("prompt").addEventListener("input", () => { menuAt = 0; drawMenu(); });
+  $("prompt").addEventListener("blur", () => setTimeout(closeMenu, 150));
+  $("prompt").addEventListener("keydown", (e) => {
+    if ($("cmdMenu").hidden) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); menuAt = (menuAt + (e.key === "ArrowDown" ? 1 : -1) + menuHits.length) % menuHits.length; drawMenu(); }
+    else if ((e.key === "Enter" && !(e.ctrlKey || e.metaKey)) || e.key === "Tab") { e.preventDefault(); e.stopImmediatePropagation(); takeMenu(); }
+    else if (e.key === "Escape") { e.preventDefault(); closeMenu(); }
+  });
+  // A finished command sends on plain Enter too — a one-line command is not a paragraph.
+  $("prompt").addEventListener("keydown", (e) => {
+    const v = $("prompt").value;
+    if (e.key === "Enter" && !e.shiftKey && !(e.ctrlKey || e.metaKey) && $("cmdMenu").hidden && v.startsWith("/") && !v.startsWith("//") && !v.includes("\\n")) { e.preventDefault(); send(v); }
+  });
   $("send").onclick = () => send($("prompt").value);
   $("prompt").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) send($("prompt").value); });
   $("stopBtn").onclick = async () => {
@@ -1225,8 +1480,9 @@ ${MARKDOWN_JS}
   }
   let subject = "";
   function showModelNow() { const p = choice(); $("modelNow").textContent = p.backend || p.model ? "Using " + (p.backend || "the default backend") + (p.model ? " · " + p.model : "") : "Using the default."; }
-  $("saveModel").onclick = () => { store.set("ohmyagi-backend", $("backendSel").value); store.set("ohmyagi-model", $("modelIn").value.trim()); showModelNow(); renderEngine(); toast("Saved for this browser."); };
+  $("saveModel").onclick = () => { store.set("ohmyagi-backend", $("backendSel").value); store.set("ohmyagi-model", $("modelIn").value.trim()); showModelNow(); syncPicker(); toast("Saved for this browser."); };
   $("checkUpdate").onclick = async () => { $("checkUpdate").disabled = true; const r = await api("/api/update-check", {}); toast(r.message || (r.ok ? "Checked." : "Could not check.")); $("checkUpdate").disabled = false; loadSettings(); };
+  pickSummary(); loadModels();
   refresh().then(() => { if (startTab !== "home") showTab(startTab); }); setInterval(refresh, 5000);
 })();
 </script>
