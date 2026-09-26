@@ -8,11 +8,11 @@
 
 *Capability that stays with the person, not the organization.*
 
-[![Status](https://img.shields.io/badge/status-v0.7.1-green)](.scrum/backlog.md)
+[![Status](https://img.shields.io/badge/status-v0.7.2-green)](.scrum/backlog.md)
 [![Runtime](https://img.shields.io/badge/runtime-Bun-black?logo=bun)](.scrum/decisions.md#d-004)
 [![Protocol](https://img.shields.io/badge/agent--to--agent-A2A%201.0.0-blue)](.scrum/decisions.md#d-016)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](#license)
-[![Decisions](https://img.shields.io/badge/decisions-D--001%20→%20D--095-informational)](.scrum/decisions.md)
+[![Decisions](https://img.shields.io/badge/decisions-D--001%20→%20D--122-informational)](.scrum/decisions.md)
 
 <img src="docs/assets/hero.jpg" alt="An agent of light standing on a terminal, tied to a git branch, a local server and a padlock" width="720">
 
@@ -20,7 +20,7 @@
 
 ---
 
-> **v0.7.1.** The full MVP is met (since v0.1.0): identity, isolation, a git repository per
+> **v0.7.2.** The full MVP is met (since v0.1.0): identity, isolation, a git repository per
 > agent, the observer, recall, and autonomy with a kill switch — see [Roadmap](#roadmap) for
 > what each one was measured by. It is a 0.x: file formats and flags may still change, and
 > anything below marked `not built yet` describes what Oh My AGI is *designed* to do, not what it
@@ -54,7 +54,7 @@
 
 ```bash
 # pick the release and the file for your machine, e.g. Linux x86_64
-V=v0.7.1-alpha
+V=v0.7.2-alpha
 curl -LO https://github.com/bemindlabs/ohmyagi/releases/download/$V/ohmyagi-linux-x64
 curl -LO https://github.com/bemindlabs/ohmyagi/releases/download/$V/SHA256SUMS
 sha256sum -c SHA256SUMS --ignore-missing          # macOS: shasum -a 256 -c SHA256SUMS --ignore-missing
@@ -435,7 +435,7 @@ soul in project-level files; `soul verify` re-measures it on your machine):
 |---|---|---|
 | claude | instruction file · `--append-system-prompt` | 9/9 · 9/9 |
 | codex | `AGENTS.md` | 9/9 |
-| kimi | instruction file (needs level 2 — no read-only mode) | 9/9 |
+| kimi | instruction file | 9/9 (at level 2, 2026-09-23; since D-120 level 1 runs through om-agi's profile file, which kept `AGENTS.md` in the prompt 2/2 — `soul verify` not yet re-run under it) |
 | copilot | instruction file | 8/9 |
 | ollama (local 27B) | system field | 9/9 |
 | grok | project `CLAUDE.md` | **0/9 — not supported; use the `--rules` flag (9/9)** |
@@ -453,7 +453,14 @@ behind one `ExecBackend` interface — and only grows a native runtime if measur
 | **C — Observer** ✅ | observer: capture actions at the moment they happen · local-only guard | the reader, the extractor and the local-only guard are built and tested. Capture is **live on the owner's machine** since 2026-09-22 (D-034), and since 2026-09-23 a fleet launcher declares itself with `OM_AGI_FLEET` so its work never lands in the owner's data (D-036). The extractor's accuracy bar (S3.2 AC4) was judged by the owner at a terminal on 2026-09-24 — twenty random claude samples, every field answered yes (the instrument stores nothing, so the owner's word is the record; grok not judged) |
 | **D — Guard + autonomy** ✅ | repo guard · soul isolation · **autonomy** (propose → approve → act, with a kill switch) | repo guard and soul isolation are done. The autonomy dial, the proposal store and `ohmyagi stop` are built (`666f894`, `1f320c3`); the kill switch (S5.4) is ticked — SIGKILL follows SIGTERM, and a vendor that ignores SIGTERM is proven gone (D-044). So are proposals (S5.2): at level 1 the agent proposes instead of acting and Oh My AGI files what it proposes (D-045), and a level-2 turn reports what it changed (D-043). Levels now differ as S5.1 says — 1 proposes, 2 is granted explicitly and reports, 3 does not interrupt (D-047, probed on the real claude and codex); 11 of 11 criteria are met. The categories are set apart and act together at the lowest of write, run and reach, because a shell both writes and reaches out (measured); every turn whose settings disagree names the one in force (D-052) |
 | **E4 — recall** ✅ | per-identity recall: full-text + vectors, rebuildable from git, erasable | S4.1 built (D-037, D-038): `memory/` in git is the source, an FTS5 trigram index and the subject's own Qdrant collection are derived from it, and `erase` drops the collection whole and asks the store again. S4.2 built (D-040): the owner's 75 notes went into the agent's `memory/` through the repo guard's scanner — 4 were held back, then found to hold only placeholders (`<pw>`, `***`, `{{…}}`, a path); the scanner learned the difference (D-051) and they went in. S4.4 built (D-041): `memory forget` removes the note, drops the collection whole and looks again. S4.3 built (D-039): every turn carries related pieces of memory beside the soul, named on stderr before they go — ten invented facts, **0/10 without recall, 10/10 with it** on a local 27B model |
-| Later | A2A · chat connectors · persona inheritance · LoRA *(only if a spike proves it beats RAG)* | each behind an explicit gate |
+| **E8/E9/E6 — reach & inheritance** ✅ | A2A · Telegram · persona from artifacts · eval | shipped v0.4.0–v0.5.1; the owner's own reviews of S6.1 and the S6.5 task set are the open part |
+| **E10/E11 — console & knowledge** ✅ | web console · knowledge memory (import, collections, the things memories share, distilled facts) | shipped v0.4.1–v0.7.1 (D-060 → D-095) |
+| **E12 — Local action** ⭐ next | a model on this machine that can use tools, so work that needs personal data can be done without it leaving | SP-5 answered (D-116): Claude Code, Grok and Kimi each did 15 of 15 tasks on the local 27B model with nothing leaving the machine — so no loop of our own. Built as a claude → grok chain over LiteLLM (D-117), every local turn inside a Landlock fence that allows writes only where granted and connections only to LiteLLM (D-118) |
+| **E13 — Deploy** | `ohmyagi deploy` to a VPS (Hostinger, over ssh), GCP (`gcloud`) or AWS (`aws`) the owner rents — the whole agent, running around the clock | encrypted disk with the owner's key, `erase` reaching the remote, nothing listening in public by default (D-100) |
+| **E14 — Companion app** | React Native for iOS and Android; free with a self-hosted agent, a paid plan (in-app purchase) where we host an agent per customer | one VM and one key per customer, leave any time with `git clone`, erase verified (D-101) |
+| **E16 — Platform** | the services we host, in a repository of their own so the self-hosted engine carries no billing or accounts: users, entitlements (in-app purchase in the app, Stripe on the web), Stripe Connect escrow, the marketplace's GitHub App, push relay, provisioning | sees no prompt or memory of any agent; order E12 → E13 → E16a → E15 → E16b → E14, about 60–82 person-days (D-115, D-118) |
+| **E15 — Agent hiring** | a web app where agents take on jobs, priced by the tokens they really used (negotiable, or free), delivered through a git repository — GitHub by default | the owner approves every job; escrow pays on merge, never above the agreed ceiling; usage reports signed by the agent, no proxy sees the prompts (D-104 → D-106) · order E12 → E13 → E15 → E14 (D-107) |
+| Later | proactive signals over Telegram · Thai UI · a second chat platform · LoRA *(only under D-076's four conditions)* | each behind an explicit gate |
 
 Full detail: [`.scrum/backlog.md`](.scrum/backlog.md) · every decision and its evidence: [`.scrum/decisions.md`](.scrum/decisions.md)
 
@@ -467,9 +474,9 @@ Full detail: [`.scrum/backlog.md`](.scrum/backlog.md) · every decision and its 
 
 ## Status
 
-v0.7.1. 10 epics · 43 stories · 4 spikes · 95 recorded decisions.
+v0.7.2. 17 epics · 100 stories · 5 spikes · 122 recorded decisions.
 The full MVP is met (`.scrum/backlog.md` §7) as of v0.1.0: Phases A and B, the observer, the autonomy core and
-recall (E4). v0.2.0 added scheduled triggers (S5.3), the `ohmyagi` name, `ohmyagi setup` and a macOS installer; v0.3.0 the pattern miner (S3.3); v0.4.0 adds agent-to-agent over A2A (E8), a chat connector for Telegram (E9), the web page, the local egress judge, proposal triage, the interest tracker (S3.4) and `ohmyagi update`; v0.4.1 grows the web page (Settings, Agent, Memories, the mascot, https behind tailscale serve, a key that survives restarts); v0.4.2 renders markdown, gives the local fallback a default model, and has the judge read the question rather than the soul; v0.5.0 starts identity inheritance (E6) — `persona` drafts a soul from real artifacts with every line tied to its source (S6.1), `eval` measures how much of the job an agent does (S6.5) — and adds a Profile wizard to the web page; v0.5.1 makes recall find the answer 91.7% of the time (was 79.2%), closes S6.2, and closes SP-3 as not passed for now; v0.6.0 records the basis a subject's data comes in on (S7.3) and turns the web page into an agent console — a Privacy tab, persona drafts answered on the page, memories created, edited, deleted and imported from files and web links, and a 3D map of how they link; v0.6.1 lets the chat switch backend and model, adds "/" commands for every action on the page, and imports pages built by JavaScript; v0.7.0 keeps knowledge apart from memory, gathers memories into collections, maps the ports, services, hosts and paths they share (`memory who`), and has a local model offer facts that a person confirms one by one (`memory distill`); v0.7.1 lets the web chat act again — a recalled note with a personal word is left out of what goes to a cloud backend instead of holding the whole turn on the tool-less local model — keeps the chat's last six exchanges, and fixes what a phone audit found. Next: the owner's review of S6.1 and the task set, and a second chat platform (S9.3).
+recall (E4). v0.2.0 added scheduled triggers (S5.3), the `ohmyagi` name, `ohmyagi setup` and a macOS installer; v0.3.0 the pattern miner (S3.3); v0.4.0 adds agent-to-agent over A2A (E8), a chat connector for Telegram (E9), the web page, the local egress judge, proposal triage, the interest tracker (S3.4) and `ohmyagi update`; v0.4.1 grows the web page (Settings, Agent, Memories, the mascot, https behind tailscale serve, a key that survives restarts); v0.4.2 renders markdown, gives the local fallback a default model, and has the judge read the question rather than the soul; v0.5.0 starts identity inheritance (E6) — `persona` drafts a soul from real artifacts with every line tied to its source (S6.1), `eval` measures how much of the job an agent does (S6.5) — and adds a Profile wizard to the web page; v0.5.1 makes recall find the answer 91.7% of the time (was 79.2%), closes S6.2, and closes SP-3 as not passed for now; v0.6.0 records the basis a subject's data comes in on (S7.3) and turns the web page into an agent console — a Privacy tab, persona drafts answered on the page, memories created, edited, deleted and imported from files and web links, and a 3D map of how they link; v0.6.1 lets the chat switch backend and model, adds "/" commands for every action on the page, and imports pages built by JavaScript; v0.7.0 keeps knowledge apart from memory, gathers memories into collections, maps the ports, services, hosts and paths they share (`memory who`), and has a local model offer facts that a person confirms one by one (`memory distill`); v0.7.1 lets the web chat act again — a recalled note with a personal word is left out of what goes to a cloud backend instead of holding the whole turn on the tool-less local model — keeps the chat's last six exchanges, and fixes what a phone audit found; v0.7.2 fixes how each vendor CLI is run — grok acts at levels 2 and 3 and no longer loads Claude Code's hooks and MCP servers, kimi runs read-only through a profile om-agi writes, codex stops fetching plugins and leaking keys to its shell, and a turn a vendor did not finish no longer counts as an answer. Next (D-096): local action (E12) — a model on this machine that can use tools; the SP-5 spike found three agent CLIs that do it on the local model (D-116), so E12 builds on them inside a kernel fence (D-117, D-118); and the owner's own reviews of S6.1, the S6.5 task set and distilled facts.
 
 Those four numbers are counted out of `.scrum/` by `test/docs/readme-counts.test.ts`
 every time the suite runs, because a number in a README is the thing nobody comes

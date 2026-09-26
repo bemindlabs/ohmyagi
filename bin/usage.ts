@@ -547,8 +547,8 @@ rather than re-answered. Exit 1 is the local route only: a missing commercial CL
 is a machine with fewer hands, not a broken one (I-1).
 
 The autonomy dial (\`${AUTONOMY_FILE}\`, beside the soul, in git) points the opposite
-way to its name. Every vendor's read-only flag has gone onto every turn om-agi
-starts since long before the dial existed, so **level 1 — the default in every
+way to its name. Every vendor's read-only flag (kimi's since S12.6) has gone onto
+every turn om-agi starts since before the dial, so **level 1 — the default in every
 category — is what om-agi has always done**, and levels 2 and 3 are the new
 thing: at 2 that flag is not sent, and the turn may write files and run commands.
 A turn runs at \`min(write, run, reach)\`, never the maximum, so raising one
@@ -559,9 +559,9 @@ raises a level, because a variable that could would be one an agent running as
 you could export for itself.
 
 At level 1 a turn that lands on a vendor with no read-only mechanism is
-**refused**, not run and hoped over. There is exactly one such vendor and
-\`ohmyagi backends\` names it; running there means raising write, run and reach to
-2 together, which is a sentence somebody has to mean.
+**refused**, not run and hoped over. None is left since kimi got a profile file,
+and \`ohmyagi backends\` names one the day a vendor declares it; running there
+means raising write, run and reach to 2 together, which somebody has to mean.
 
 Proposals live in a store of their own, outside git and outside the ledger:
 \$XDG_DATA_HOME/om-agi/<subject>/personal/proposals/, one JSON file each. Outside

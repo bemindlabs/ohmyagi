@@ -26,7 +26,7 @@ import {
   restrain,
   restraintRefusal,
 } from "../../src/exec/restraint.ts";
-import { readOnlyArgs, restraintArgs, VENDORS, vendor } from "../../src/exec/registry.ts";
+import { readOnlyArgs, restraintArgs, VENDORS, vendor, type VendorSpec } from "../../src/exec/registry.ts";
 import { assertionEscapes, sourceFiles } from "../support/ast.ts";
 import { atLevel, LOOSENED, RESTRAINED } from "../support/restraint.ts";
 
@@ -104,9 +104,20 @@ describe("the argv is the only thing the dial changes", () => {
 });
 
 describe("the vendor with no mechanism is refused, not run hopefully", () => {
-  const kimi = vendor("kimi");
+  // Synthetic since S12.6: kimi, the last real vendor with nothing to pass,
+  // now has a profile file (D-120). The refusal has to keep working for the
+  // next one, so it is tested on a vendor that declares `none` on purpose.
+  const kimi: VendorSpec = {
+    ...vendor("kimi"),
+    id: "example",
+    readOnly: {
+      kind: "none",
+      why: "a synthetic vendor with no tool filter and no sandbox; a turn told to write a file would write it",
+      evidence: "writes",
+    },
+  };
 
-  test("kimi at level 1 is refused, in the registry's own words", () => {
+  test("a vendor with no mechanism at level 1 is refused, in the registry's own words", () => {
     expect(kimi.readOnly.kind).toBe("none");
     const refusal = restraintRefusal(kimi, RESTRAINED);
     expect(refusal).toBeDefined();

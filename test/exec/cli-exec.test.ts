@@ -19,11 +19,11 @@
 
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { realpathSync } from "node:fs";
-import { chmod, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CliExec, extractReply, extractUsage } from "../../src/exec/cli-exec.ts";
-import type { VendorSpec } from "../../src/exec/registry.ts";
+import { CliExec, extractReply, extractUsage, unfinished } from "../../src/exec/cli-exec.ts";
+import { restraintArgs, type ReadOnlySpec, type VendorSpec } from "../../src/exec/registry.ts";
 import { subjectId } from "../../src/types.ts";
 import { BUN } from "../support/bare-path.ts";
 import { atLevel, LOOSENED, RESTRAINED } from "../support/restraint.ts";
@@ -74,6 +74,12 @@ if (mode === "hang") {
     cwd: process.cwd(),
   };
   const payload = { result: JSON.stringify(seen) };
+
+  // How the vendor says the turn ended, and a reply field that is there and
+  // blank — the two halves of a grok turn whose tool call was cancelled.
+  const stop = process.env["OM_AGI_STUB_STOP"];
+  if (stop) payload.stopReason = stop;
+  if (process.env["OM_AGI_STUB_BLANK"]) payload.result = "";
 
   // Whatever a case wants in the vendor's own accounting block, verbatim.
   const usage = process.env["OM_AGI_STUB_USAGE"];
@@ -149,10 +155,9 @@ function stubSpec(binary: string, overrides: Partial<VendorSpec> = {}): VendorSp
 /**
  * The vendor with no read-only mechanism — the hole, as a stub.
  *
- * kimi is the real one, and what it costs is measured in `src/exec/registry.ts`:
- * a headless turn told to write a file wrote it. Here it is synthetic, so that
- * the refusal can be tested without a case that changes when a vendor ships a
- * flag.
+ * kimi was the real one until S12.6 found it a profile file (D-120). Synthetic
+ * here, so that the refusal can be tested without a case that changes when a
+ * vendor ships a flag — which is exactly what happened.
  */
 const NO_MECHANISM = {
   kind: "none",
@@ -246,9 +251,32 @@ describe("extractReply", () => {
 
   test("JSON with no matching pointer falls back to the raw text", () => {
     expect(extractReply(spec, '{"other":"field"}')).toBe('{"other":"field"}');
-    // Present but not a string, and present but blank, are both no answer.
+    // Present but not a string is a shape that moved: the raw text, as before.
     expect(extractReply(spec, '{"result":42}')).toBe('{"result":42}');
-    expect(extractReply(spec, '{"result":"   "}')).toBe('{"result":"   "}');
+  });
+
+  test("a reply field that is there and blank is no answer, not the whole document", () => {
+    // S12.6. Measured 2026-09-26 on grok 1.0.40: a cancelled turn printed
+    // `"text": ""` and exited 0, and falling back to the raw JSON here made
+    // `classify` call it confirmed. A blank field is the vendor saying the
+    // model said nothing — a changed shape is the case the fallback is for.
+    expect(extractReply(spec, '{"result":"   "}')).toBe("");
+    expect(extractReply(spec, '{"result":"","stopReason":"cancelled"}')).toBe("");
+    const twoPointers = stubSpec("unused", { replyPointers: ["/text", "/result"] });
+    // A blank first field does not hide a real answer under the second.
+    expect(extractReply(twoPointers, '{"text":"","result":"the answer"}')).toBe("the answer");
+  });
+
+  test("a notice printed before the document does not turn it back into raw text", () => {
+    // One line of noise used to make the whole output unparseable, and the
+    // fallback then handed it on as the answer — a cancelled turn included.
+    const grokish = stubSpec("unused", { replyPointers: ["/text", "/result"] });
+    expect(extractReply(grokish, 'Update available: 1.0.41\n{"text":"","stopReason":"cancelled"}')).toBe("");
+    expect(extractReply(grokish, 'notice\n{\n  "text": "pretty answer",\n  "stopReason": "end_turn"\n}')).toBe(
+      "pretty answer",
+    );
+    // Prose with no document in it is still the reply itself.
+    expect(extractReply(grokish, "first line\nsecond line")).toBe("first line\nsecond line");
   });
 
   test("a vendor with no pointers prints its reply verbatim", () => {
@@ -259,6 +287,31 @@ describe("extractReply", () => {
   test("empty output is empty, whatever the pointers say", () => {
     expect(extractReply(spec, "")).toBe("");
     expect(extractReply(spec, "   \n  ")).toBe("");
+  });
+});
+
+describe("unfinished — the vendor's own word on how a turn ended", () => {
+  const finishing = stubSpec("unused", { completion: { pointer: "/stopReason", value: "end_turn" } });
+
+  test("a value that is there and different is the turn not finishing", () => {
+    expect(unfinished(finishing, '{"text":"I will run it.","stopReason":"cancelled"}')).toBe("cancelled");
+    expect(unfinished(finishing, '{"text":"done","stopReason":"end_turn"}')).toBeUndefined();
+  });
+
+  test("silence about it is not evidence of anything", () => {
+    // Not JSON, no field, or a field that is not a string: none of these says
+    // how the turn ended, and reading them as unfinished would turn a vendor's
+    // shape change into every turn being thrown away.
+    expect(unfinished(finishing, "plain prose")).toBeUndefined();
+    expect(unfinished(finishing, '{"text":"done"}')).toBeUndefined();
+    expect(unfinished(finishing, '{"stopReason":7}')).toBeUndefined();
+    expect(unfinished(stubSpec("unused"), '{"stopReason":"cancelled"}')).toBeUndefined();
+  });
+
+  test("a notice before the document does not hide how the turn ended", () => {
+    expect(unfinished(finishing, 'Update available\n{"text":"I will run it.","stopReason":"cancelled"}')).toBe(
+      "cancelled",
+    );
   });
 });
 
@@ -821,6 +874,209 @@ describe("CliExec never returns `failed`", () => {
 
     expect([...outcomes].sort()).toEqual(["confirmed", "silent"]);
   }, 20_000);
+});
+
+/** A profile-file mechanism, kimi-shaped (D-120), synthetic. */
+const PROFILE: ReadOnlySpec & { readonly kind: "agent-file" } = {
+  kind: "agent-file",
+  flag: "--agent-file",
+  values: ["~/.local/state/om-agi/vendors/stub/readonly-agent.md"],
+  content: "---\nname: stub-readonly\ntools:\n  - Read\n---\n${base_prompt}\n",
+  evidence: "probed",
+};
+
+/** A stub held by {@link PROFILE}, whose argv carries it the way kimi's does. */
+function profiled(): VendorSpec {
+  return stubSpec(binary, {
+    readOnly: PROFILE,
+    headlessArgv: ({ prompt, restraint }) => ["-p", prompt, ...restraintArgs(PROFILE, restraint)],
+  });
+}
+
+describe("a profile file is written before every restrained turn (D-120)", () => {
+  const where = (home: string) => join(home, ".local", "state", "om-agi", "vendors", "stub", "readonly-agent.md");
+
+  test("a restrained turn rewrites the profile in the child's home, private, and names it verbatim", async () => {
+    const home = await tempHome();
+    // What a level-2 turn with a shell could have left behind.
+    await mkdir(join(where(home), ".."), { recursive: true });
+    await writeFile(where(home), "---\nname: stub-readonly\ntools:\n  - Bash\n---\n");
+
+    const result = await new CliExec(profiled()).run({
+      restraint: RESTRAINED,
+      subject: SUBJECT,
+      prompt: "anything",
+      env: { HOME: home },
+    });
+
+    expect(result.confidence).toBe("confirmed");
+    expect(await readFile(where(home), "utf8")).toBe(PROFILE.content);
+    expect((await stat(where(home))).mode & 0o777).toBe(0o600);
+    // The `~/` goes through untouched: the vendor expands it against the
+    // same HOME the file was written under.
+    expect(seen(result.text).argv).toEqual(["-p", "anything", "--agent-file", PROFILE.values[0]]);
+  });
+
+  test("a fresh home gets a private directory for it", async () => {
+    const home = await tempHome();
+    await new CliExec(profiled()).run({ restraint: RESTRAINED, subject: SUBJECT, prompt: "p", env: { HOME: home } });
+    expect((await stat(join(where(home), ".."))).mode & 0o777).toBe(0o700);
+  });
+
+  test("a loosened turn writes no profile and names none", async () => {
+    const home = await tempHome();
+    const result = await new CliExec(profiled()).run({
+      restraint: LOOSENED,
+      subject: SUBJECT,
+      prompt: "anything",
+      env: { HOME: home },
+    });
+    expect(result.confidence).toBe("confirmed");
+    expect(seen(result.text).argv).toEqual(["-p", "anything"]);
+    expect(await Bun.file(where(home)).exists()).toBe(false);
+  });
+
+  test("a HOME that is not an absolute path means the turn does not run", async () => {
+    // Given "" or a relative HOME, the vendor resolves `~/` against its working
+    // directory — one a repository controls — while om-agi would write
+    // somewhere else. Refused before either happens.
+    for (const home of ["", "relative/home"]) {
+      const result = await new CliExec(profiled()).run({
+        restraint: RESTRAINED,
+        subject: SUBJECT,
+        prompt: "anything",
+        env: { HOME: home },
+      });
+      expect(result.confidence, home).toBe("silent");
+      expect(result.evidence.exitCode).toBeUndefined();
+      expect(result.evidence.raw).toContain("not an absolute path");
+    }
+  });
+
+  test("a directory planted at the profile's path is refused, and leaves no temporary file", async () => {
+    const home = await tempHome();
+    await mkdir(where(home), { recursive: true });
+    const result = await new CliExec(profiled()).run({
+      restraint: RESTRAINED,
+      subject: SUBJECT,
+      prompt: "anything",
+      env: { HOME: home },
+    });
+    expect(result.confidence).toBe("silent");
+    expect(result.evidence.raw).toContain("could not be written");
+    const left = await readdir(join(where(home), ".."));
+    expect(left.filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  });
+
+  test("a profile directory someone opened up is closed again", async () => {
+    const home = await tempHome();
+    await mkdir(join(where(home), ".."), { recursive: true, mode: 0o777 });
+    await chmod(join(where(home), ".."), 0o777);
+    await new CliExec(profiled()).run({ restraint: RESTRAINED, subject: SUBJECT, prompt: "p", env: { HOME: home } });
+    expect((await stat(join(where(home), ".."))).mode & 0o777).toBe(0o700);
+  });
+
+  test("a profile that cannot be written means the turn does not run", async () => {
+    const home = await tempHome();
+    // A file where the directory has to go: `mkdir` cannot get past it.
+    await writeFile(join(home, ".local"), "not a directory");
+    const result = await new CliExec(profiled()).run({
+      restraint: RESTRAINED,
+      subject: SUBJECT,
+      prompt: "anything",
+      env: { HOME: home },
+    });
+    expect(result.confidence).toBe("silent");
+    expect(result.identityStrength).toBe("none");
+    expect(result.evidence.exitCode).toBeUndefined();
+    expect(result.evidence.raw).toContain("could not be written");
+  });
+});
+
+describe("a vendor's hardening switches reach the child, over the caller's (S12.6)", () => {
+  test("the switch is set in the child, and a caller's value for it does not win", async () => {
+    const spec = stubSpec(binary, {
+      hardening: { args: [], env: { OM_AGI_STUB_MARKER: "hardened" }, why: "a synthetic switch for this test" },
+    });
+    const result = await new CliExec(spec).run({
+      restraint: RESTRAINED,
+      subject: SUBJECT,
+      prompt: "anything",
+      env: { HOME: await tempHome(), OM_AGI_STUB_MARKER: "caller" },
+    });
+    expect(result.confidence).toBe("confirmed");
+    expect(seen(result.text).marker).toBe("hardened");
+  });
+
+  test("the subject still goes last, over a hardening list too", async () => {
+    const spec = stubSpec(binary, {
+      hardening: { args: [], env: { OM_AGI_SUBJECT: "someone-else" }, why: "a synthetic switch for this test" },
+    });
+    const result = await new CliExec(spec).run({
+      restraint: RESTRAINED,
+      subject: SUBJECT,
+      prompt: "anything",
+      env: { HOME: await tempHome() },
+    });
+    expect(seen(result.text).subject).toBe(SUBJECT);
+  });
+});
+
+describe("a turn the vendor says it did not finish is silent (S12.6)", () => {
+  const finishing = () => stubSpec(binary, { completion: { pointer: "/stopReason", value: "end_turn" } });
+
+  test("exit 0 with a sentence, and a stop reason that is not the finished one", async () => {
+    const result = await new CliExec(finishing()).run({
+      restraint: RESTRAINED,
+      subject: SUBJECT,
+      prompt: "anything",
+      env: { HOME: await tempHome(), OM_AGI_STUB_STOP: "cancelled" },
+    });
+    expect(result.evidence.exitCode).toBe(0);
+    expect(result.text.length).toBeGreaterThan(0);
+    expect(result.confidence).toBe("silent");
+    expect(result.evidence.raw).toStartWith('ended "cancelled", not "end_turn"');
+  });
+
+  test("the finished value, and no value at all, are both still answers", async () => {
+    for (const stop of ["end_turn", ""]) {
+      const result = await new CliExec(finishing()).run({
+        restraint: RESTRAINED,
+        subject: SUBJECT,
+        prompt: "anything",
+        env: { HOME: await tempHome(), OM_AGI_STUB_STOP: stop },
+      });
+      expect(result.confidence, stop).toBe("confirmed");
+    }
+  });
+
+  test("a cap hit keeps its stderr, so it is not mistaken for an approval cancel", async () => {
+    const result = await new CliExec(finishing()).run({
+      restraint: RESTRAINED,
+      subject: SUBJECT,
+      prompt: "anything",
+      env: {
+        HOME: await tempHome(),
+        OM_AGI_STUB_STOP: "cancelled",
+        OM_AGI_STUB_EXIT: "1",
+        OM_AGI_STUB_STDERR: "Error: max turns reached",
+      },
+    });
+    expect(result.confidence).toBe("silent");
+    expect(result.evidence.raw).toStartWith('ended "cancelled", not "end_turn"\nError: max turns reached\n');
+  });
+
+  test("exit 0 with the reply field blank is silent, not the JSON handed on as an answer", async () => {
+    const result = await new CliExec(stubSpec(binary)).run({
+      restraint: RESTRAINED,
+      subject: SUBJECT,
+      prompt: "anything",
+      env: { HOME: await tempHome(), OM_AGI_STUB_BLANK: "1" },
+    });
+    expect(result.evidence.exitCode).toBe(0);
+    expect(result.text).toBe("");
+    expect(result.confidence).toBe("silent");
+  });
 });
 
 describe("the autonomy dial, at the one place it can be silently wrong", () => {

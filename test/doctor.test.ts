@@ -36,7 +36,7 @@ import {
   type JsonProbe,
   type ProbeRun,
 } from "../src/doctor.ts";
-import { VENDORS } from "../src/exec/index.ts";
+import { readOnlySummary, VENDORS } from "../src/exec/index.ts";
 import { COLLECTION_PREFIX } from "../src/memory/collection.ts";
 import { splice } from "../src/soul/block.ts";
 import { loadSoul } from "../src/soul/load.ts";
@@ -398,11 +398,12 @@ describe("AC1 — what is installed, and whether the registry still describes it
 
   test("each installed vendor's row carries the registry's own read-only answer", async () => {
     const report = await runDoctor(await healthy());
-    const kimi = VENDORS.find((spec) => spec.readOnly.kind === "none");
-    expect(kimi).toBeDefined();
     // Not a second list: `readOnlySummary` is the function `ohmyagi backends`
-    // prints, and the vendor with no mechanism says so here too.
-    expect(findingById(report, `cli.${kimi!.id}`)?.detail).toContain("yes — no limit");
+    // prints, and every vendor's row says what it says — including the day a
+    // vendor declares `none` again and its row reads "yes — no limit".
+    for (const spec of VENDORS) {
+      expect(findingById(report, `cli.${spec.id}`)?.detail, spec.id).toContain(`writes? ${readOnlySummary(spec)}`);
+    }
   });
 });
 

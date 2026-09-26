@@ -39,7 +39,31 @@ import {
   writeDial,
 } from "../../bin/dial.ts";
 import { defaultEffective } from "../../src/decide/effective.ts";
+import { VENDORS, vendor, type VendorSpec } from "../../src/exec/registry.ts";
+import { sayDial } from "../../bin/commands/autonomy.ts";
 import { BUN } from "../support/bare-path.ts";
+
+/**
+ * A vendor with nothing to pass. None is left in the real registry since S12.6
+ * (D-120), so the refusal is exercised on a synthetic one — the sentence has to
+ * keep working for the next vendor that declares `none`.
+ */
+const HOLE: VendorSpec = {
+  ...vendor("kimi"),
+  id: "example",
+  readOnly: {
+    kind: "none",
+    why: "a synthetic vendor with no tool filter and no sandbox, used to keep the refusal honest",
+    evidence: "writes",
+  },
+};
+
+/** What `sayDial` prints, as one string. */
+function said(verdict: Parameters<typeof sayDial>[1], vendors: readonly VendorSpec[]): string {
+  const lines: string[] = [];
+  sayDial({ line: (text = "") => lines.push(text), dim: (s) => s, bold: (s) => s }, verdict, vendors);
+  return lines.join("\n");
+}
 
 const ROOT = join(import.meta.dir, "..", "..");
 const BIN = join(ROOT, "bin", "om-agi.ts");
@@ -214,8 +238,9 @@ describe("the summary line and the vendors with no mechanism", () => {
   test("exactly the vendors the registry declares `none` are named", () => {
     // Derived from the registry rather than listed here: close the hole in a
     // vendor and this list shortens by itself, which is the whole design of
-    // `readonlyLimits`.
-    expect(vendorsWithNoMechanism()).toEqual(["kimi"]);
+    // `readonlyLimits`. S12.6 closed the last one (D-120).
+    expect(vendorsWithNoMechanism()).toEqual([]);
+    expect(vendorsWithNoMechanism([...VENDORS, HOLE])).toEqual(["example"]);
   });
 });
 
@@ -246,7 +271,7 @@ describe("ohmyagi autonomy show", () => {
   test("the per-backend table and its limits come from the same place `backends` uses", async () => {
     const home = await sandbox();
     const result = await runCli(home, ["autonomy", "show", home, "--subject", "example"]);
-    expect(result.stdout).toContain("kimi     writes? yes — no limit");
+    expect(result.stdout).toContain("kimi     writes? no (measured)");
     expect(result.stdout).toContain("gemini   writes? no (on trust)");
     expect(result.stdout).toContain("claude   writes? no (measured)");
     // `readonlyLimits()` — the one `ohmyagi backends` prints, not a second copy.
@@ -321,17 +346,29 @@ describe("ohmyagi autonomy set", () => {
     expect(result.stdout).toContain("the vendor's read-only flag is NOT sent");
   });
 
-  test("the kimi refusal is said while setting, not when it is too late", async () => {
-    // The other half of the owner's rule. A person who raises the dial should
-    // learn now that one backend cannot honour level 1 — not in the middle of
-    // a turn that has already been dispatched to it.
+  test("a refusal is said while setting, not when it is too late", async () => {
+    // The other half of the owner's rule. A person who lowers the dial should
+    // learn now that a backend cannot honour level 1 — not in the middle of a
+    // turn that has already been dispatched to it. Exercised on a synthetic
+    // vendor: the real registry has none left to refuse (D-120).
+    const verdict = await decideDial(null, { home: await sandbox(), env: {} });
+    const refusing = said(verdict, [...VENDORS, HOLE]);
+    expect(refusing).toContain("At level 1, a turn that lands on example is REFUSED, not run hopefully.");
+    expect(refusing).toContain("--backend example");
+    expect(refusing).toContain(HOLE.readOnly.kind === "none" ? HOLE.readOnly.why : "unreachable");
+    // And the control: with every vendor holding a mechanism, nothing is said.
+    expect(said(verdict, VENDORS)).not.toContain("REFUSED");
+  });
+
+  test("setting level 1 on the real registry refuses no backend, and still names the believed one", async () => {
     const home = await sandbox();
     const result = await runCli(home, ["autonomy", "set", "write", "1", home, "--subject", "example"]);
-    expect(result.stdout).toContain("is REFUSED, not run hopefully");
-    expect(result.stdout).toContain("kimi");
-    expect(result.stdout).toContain("--backend kimi");
-    // And gemini's `documented` reading, from `readonlyLimits()`.
+    expect(result.stdout).not.toContain("REFUSED");
+    expect(result.stdout).toContain("kimi     writes? no (measured)");
+    // gemini's `documented` reading, from `readonlyLimits()`.
     expect(result.stdout).toContain("Believed rather than measured: gemini");
+    // kimi's profile file is named for what it is, not passed off as a sandbox.
+    expect(result.stdout).toContain("is held by a profile file om-agi writes");
   });
 
   test("level 3 outside a terminal is refused, and says there is no --yes", async () => {

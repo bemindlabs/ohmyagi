@@ -22,6 +22,12 @@ moved already: `grok 1.0.40` and `codex 0.155.1`. The grok row in *Built-in
 tool names* is the 1.0.40 reading; the rest of that column is from the first
 survey.
 
+Re-measured 2026-09-26 for S12.6 (D-119 → D-121) against `grok 1.0.40`, `kimi 2.0.2` and
+`codex 0.155.1`, on a local model through LiteLLM in isolated homes, every connection counted
+with `strace`, then re-run through om-agi's own `CliExec`. The probe logs are in
+`notes/2026-09-26_s12.6/`; what they showed is in
+[§ S12.6](#s126-what-the-2026-09-26-probes-changed) below and in the registry's comments.
+
 ## How to re-measure
 
 ```sh
@@ -57,7 +63,7 @@ The column that matters most, and the reason om-agi exists.
 | codex | — | `$CODEX_HOME/AGENTS.md` | user |
 | gemini | — | `~/.gemini/GEMINI.md` | user |
 | copilot | — | `AGENTS.md` **in the working directory** | user |
-| kimi | — | `AGENTS.md` **in the working directory** | user |
+| kimi | — | `AGENTS.md` **in the working directory** — and, measured 2026-09-26, `$KIMI_CODE_HOME/AGENTS.md`, which the registry does not write yet | user |
 
 Two consequences:
 
@@ -73,9 +79,12 @@ compatibility. That means an identity written for `claude` already reaches
 `grok` with no setup — and is exactly why it should not be relied on: it is a
 courtesy, switchable with one environment variable, not a contract.
 
-`copilot` and `kimi` have **no home-scoped file at all**. An identity reaches
-them per project or not at all. That is a vendor limitation om-agi reports; it
-cannot fix it.
+`copilot` has **no home-scoped file at all**. An identity reaches it per
+project or not at all. That is a vendor limitation om-agi reports; it cannot fix
+it. `kimi` was listed here too until 2026-09-26, when a probe showed 2.0.2 also
+reading `$KIMI_CODE_HOME/AGENTS.md` (default `~/.kimi-code/AGENTS.md`); the
+registry still names only the project file, because writing the home one would
+put a soul into every kimi session on the machine (D-120, open).
 
 ## Built-in tool names
 
@@ -86,10 +95,10 @@ names each CLI actually accepts.
 |---|---|
 | claude | `Read`, `Write`, `Edit`, `Bash`, `Grep`, `Glob`, `Task`, `WebFetch`, `WebSearch` |
 | grok (1.0.40) | `read_file`, `search_replace`, `grep`, `list_dir`, `run_terminal_command`, `web_search`, `web_fetch`, `todo_write`, `spawn_subagent`, `memory_search` |
-| codex | `apply_patch`, and `unified_exec` **or** `shell` depending on a feature flag |
+| codex | `apply_patch`, and the shell as `exec_command` on 0.155.1 with `features.unified_exec` on (the default); earlier readings saw `unified_exec` or `shell` |
 | gemini | `read_file`, `write_file`, `replace`, `run_shell_command`, `list_directory`, `glob`, `search_file_content`, `web_fetch`, `google_web_search`, `save_memory`, `read_many_files` |
 | copilot | kinds, not tools: `shell(cmd:*)`, `write`, `<mcp-server>(tool)` |
-| kimi | no way to name them: 2.0.2 has no tool filter at all |
+| kimi | `Read`, `Glob`, `Grep`, `FetchURL`, `Bash`, … — named in an agent profile's front matter (`--agent-file`), not on the argv |
 
 **grok renamed two of these between 1.0.24 and 1.0.40** — `run_terminal_cmd` →
 `run_terminal_command`, `task` → `spawn_subagent` — and accepts an unknown name
@@ -102,8 +111,13 @@ These all fail by **exiting 0**. None of them prints an error.
 
 1. **grok, `--permission-mode plan` in headless.** Plans the work, waits for
    an approval nobody will give, exits 0 having changed nothing.
-2. **grok, no `--max-turns`.** Answers the first sentence and exits without
-   entering its tool loop. Looks like a short answer; is a half-run.
+2. **grok, a tool call nobody approves.** In headless it is *cancelled*, not
+   refused, and the cancel ends the whole turn with exit 0 — `text` empty or
+   holding the one sentence the model said first. Looks like a short answer; is
+   a half-run. Once blamed on a missing `--max-turns`; measured 2026-09-26, the
+   cap is innocent (with none, a fix-and-test task finished 3/3) and the cause
+   is approval. `--allow Bash` does not cover `rm` or anything using `$?`; only
+   `--always-approve` does (D-119).
 3. **grok, tool ids are not display names — and they move.** `run_terminal_cmd`
    not `bash` at 1.0.24; `run_terminal_command` at 1.0.40. The vendor's own
    documentation ships several spellings in different tables. A filter written
@@ -114,9 +128,9 @@ These all fail by **exiting 0**. None of them prints an error.
 4. **grok, large prompts truncate in the middle.** Head and tail arrive, the
    centre does not. Detect it by asking two questions at once — one about the
    very end of the prompt, one about the whole — and comparing.
-5. **codex, tool names follow a feature flag.** With `features.unified_exec`
-   enabled the shell tool is `unified_exec`; otherwise `shell`. Same binary,
-   same version, different name.
+5. **codex, tool names follow a feature flag.** On 0.155.1 with
+   `features.unified_exec` on (the default) every shell call is `exec_command`;
+   earlier readings saw `unified_exec` or `shell`. Same binary, different name.
 6. **copilot, `--no-custom-instructions`** disables the only identity channel
    there is.
 7. **gemini's instruction file is shared.** The CLI writes its own auto-saved
@@ -124,7 +138,9 @@ These all fail by **exiting 0**. None of them prints an error.
 8. **kimi, `--plan` cannot be combined with `-p`.** The one flag that sounds
    like it would make a headless turn read-only exits 1 before the turn starts:
    `Cannot combine --prompt with --plan`. A wrapper that adds it to look safe
-   gets no turn at all.
+   gets no turn at all. `--agent <name>` and `--agent-file <path>` *can* be
+   combined with it — the 2026-09-21 survey missed them — and the second is
+   what om-agi uses (D-120).
 9. **Session-start hooks inject context no file check can see.** Several of
    these CLIs let a user's settings run a command at session start and prepend
    its output to the context. A second identity can therefore be in front of
@@ -159,7 +175,7 @@ the working directory is the flag in this table.
 | grok | `1.0.40` | `--tools read_file,grep,list_dir` — allow list | nothing (*"I don't have a write tool"*) | measured |
 | copilot | `0.0.367` | `--deny-tool shell --deny-tool write` | nothing | measured |
 | gemini | `0.38.2` | `--approval-mode plan` | **not measurable here** — the CLI refused to authenticate (`IneligibleTierError`, a tier being retired) | vendor's own `--help` only |
-| kimi | `2.0.2` | **none exists** | **`probe.txt`** — and the reply said `Done` | measured, and the hole is real |
+| kimi | `2.0.2` | `--agent-file ~/.local/state/om-agi/vendors/kimi/readonly-agent.md` — a profile om-agi writes, tools `Read`, `Glob`, `Grep` | nothing (7/7 in the probe, 2026-09-26, and 3/3 through `CliExec`, one after the file was tampered with — on a local model in an isolated home; `OM_AGI_REAL_READONLY=1` not yet re-run) | measured — before 2026-09-26: **none**, and the plain turn wrote `probe.txt` |
 
 Four findings, each of which looked like a detail first:
 
@@ -169,18 +185,35 @@ Four findings, each of which looked like a detail first:
    file. **A deny list fails open** — a renamed tool comes back — so the
    registry holds an *allow* list here: a drifted name there costs the turn a
    tool rather than returning one.
-2. **kimi has nothing to pass.** No tool filter, no sandbox; `-y/--yolo` and
-   `--auto` only loosen, and `--plan` is refused together with `-p`. The plain
-   headless turn wrote the file. This is declared as `readOnly.kind: "none"`
-   with the reason, printed on every `ohmyagi backends` run. It also reaches
-   past ohmyagi: **any fallback chain that can land on this CLI inherits the
-   hole**, including chains in other tools on the same machine.
+2. **kimi had nothing to pass — until 2026-09-26.** No tool filter, no
+   sandbox; `-y/--yolo` and `--auto` only loosen, and `--plan` is refused
+   together with `-p`. The plain headless turn wrote the file, and the registry
+   declared `readOnly.kind: "none"`. The survey had missed `--agent-file`: a
+   profile whose front matter names the only tools a turn gets. om-agi now
+   writes one before every restrained turn (D-120). A plain `-p` turn is still
+   the 25-tool agent with a shell, and **any fallback chain elsewhere that lands
+   on this CLI without the profile still inherits that**.
 3. **grok's `--sandbox` is not an argv mechanism.** It names a profile defined
    in a config file, and refuses to start when it cannot build its bubblewrap
    plan. Out of scope here, which is why the tool list does the work.
 4. **copilot needs `--allow-all-tools` to run headless at all.** The denials
    outrank it — the probe confirmed that — but the flag is declared in the
    registry as a loosening one rather than left sitting in an argv.
+
+## S12.6: what the 2026-09-26 probes changed
+
+Measured on a local model through LiteLLM in isolated homes, every `connect()` counted.
+
+| CLI | before | after | what decided it |
+|---|---|---|---|
+| grok | `--max-turns 2`, **no grant** at levels 2–3 | `--max-turns 20`; `--always-approve` at 2–3; `--disallowed-tools search_tool,use_tool,…` and the Claude/Cursor compat switches (`GROK_CLAUDE_HOOKS_ENABLED=0`, …) at every level; usage read from `/usage/*`; a turn not ending `end_turn` is `silent` | no grant: the first shell call cancelled, exit 0 (0/2). `--allow` rules: silent cancels on `rm`, `$?` and 3/11 multi-step runs. `--always-approve`: fix-and-test 14/14 (+1/1 as `bypassPermissions`), `$?` 7/7, `rm` 3/3. A level-1 turn tried to reach a shell through `use_tool` (1/3 — stopped only because nobody approved it, which ended the turn silently) until the meta-tools were removed (4/4 clean). On the owner's home `grok inspect` listed 5 Claude hooks and 7 MCP servers active until the compat switches were set; hooks inside Claude *plugins* have no switch and stay. |
+| kimi | `none` — refused at level 1 | `--agent-file` with Read, Glob, Grep | the built-in `plan` fetched a web page and was replaceable by a repository's `plan.md` that wrote a file; the om-agi profile: 0 writes 7/7, 0 requests 4/4, still answers 2/2. |
+| codex | nothing at any level | `--disable plugins --disable shell_snapshot --disable apps --disable remote_plugin -c shell_environment_policy.ignore_default_excludes=false` at every level | default: github.com and chatgpt.com contacted before the turn (2/2, in a home with no ChatGPT sign-in); a `*KEY*` canary reached the model's shell with the snapshot on **and** with it off under the default policy. With the plugin and snapshot switches: 0 non-loopback connects in that home, canary hidden (4/4). `apps` and `remote_plugin` act only under a sign-in and were not measured. On a cloud config the turn itself still reaches the model's endpoint. |
+
+Also found, and written into the registry's traps rather than fixed here: a codex turn at
+workspace-write or danger-full-access appends a `trusted` project entry to `$CODEX_HOME/config.toml`;
+only environment names holding KEY, SECRET or TOKEN are filtered from codex's shell; kimi also reads
+`$KIMI_CODE_HOME/AGENTS.md` (the registry still lists only `./AGENTS.md`).
 
 What no flag in this table reaches: MCP servers and session-start hooks
 configured in the operator's own vendor settings. They add tools and context to
@@ -210,7 +243,8 @@ field that moves turns every line om-agi writes into `missing`, silently.
 | claude | `2.1.278` | stdout (the reply JSON) | `usage.input_tokens`, `usage.cache_creation_input_tokens`, `usage.cache_read_input_tokens`, `usage.output_tokens` — plus `cache_creation`, `inference_geo`, `iterations`, `output_tokens_details`, `server_tool_use`, `service_tier`, `speed` | the three input fields **summed**, and `output_tokens` |
 | codex | `0.153.4` | **stderr** (stdout holds the answer) | a line reading `tokens used`, the figure on the line after it, thousands separated (`2,243`) | that figure, as `total` |
 | ollama | `0.32.13` | HTTP response body | `prompt_eval_count`, `eval_count`, plus `total_duration`, `prompt_eval_duration`, `eval_duration`, `load_duration` | both counts |
-| grok · gemini · copilot · kimi | — | — | **not surveyed** | nothing — reported as `unreported` |
+| grok | `1.0.40` | stdout (`--output-format json`) | `usage.input_tokens` (uncached, per the vendor's docs), `usage.cache_read_input_tokens`, `usage.cache_creation_input_tokens`, `usage.output_tokens`, `usage.total_tokens` | the three input fields **summed**, `output_tokens`, `total_tokens` — present on 76 of 76 local-model runs, cache fields always 0 there (S12.6) |
+| gemini · copilot · kimi | — | — | **not surveyed** | nothing — reported as `unreported` |
 
 Three things the measurement settled, each of which looks like a detail and is not:
 

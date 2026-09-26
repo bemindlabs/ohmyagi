@@ -27,11 +27,12 @@
  *
  * ## The vendor with no mechanism is refused, not run hopefully
  *
- * kimi declares `readOnly.kind: "none"` with `evidence: "writes"` — measured, a
- * headless turn told to write a file wrote it (`src/exec/registry.ts`). Before
- * this file, a turn on kimi at any level ran exactly the same way: there was no
- * flag to add and nothing said so out loud. That is the dial lying by omission —
- * the owner sets a level, and one path through the program ignores it silently.
+ * A vendor may declare `readOnly.kind: "none"` with `evidence: "writes"` —
+ * measured, a headless turn told to write a file wrote it. kimi did until
+ * S12.6 found it a profile file (D-120); none does today. Before this file, a
+ * turn on such a vendor at any level ran exactly the same way: there was no flag
+ * to add and nothing said so out loud. That is the dial lying by omission — the
+ * owner sets a level, and one path through the program ignores it silently.
  *
  * {@link restraintRefusal} closes it: at an acting level of 1, a vendor with no
  * mechanism is **refused**, and the refusal quotes `readOnly.why` word for word
@@ -102,7 +103,7 @@ export function restrain(effective: EffectiveDial): Restraint {
  * from a file the turn read or wrote on the way past, and an instrument whose
  * permissions follow a setting is an instrument whose readings follow a setting
  * too. So this is pinned at the dial's default level — read-only everywhere a
- * vendor offers it, and a refusal at the one vendor that offers nothing — no
+ * vendor offers it, and a refusal at any vendor that offers nothing — no
  * matter what `autonomy.md` says.
  *
  * It is deliberately the only function besides {@link restrain} that produces

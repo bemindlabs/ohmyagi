@@ -1,7 +1,7 @@
 # Oh My AGI (`ohmyagi`) — Product Backlog
 
-> **ฉบับตกผลึก** · เขียนใหม่ 2026-09-20 หลังเคาะ D-001 → D-013 · **อัปเดตถึง D-058 (2026-09-24)** — ออกแล้ว v0.1.0 (MVP เต็ม) · v0.2.0 · v0.3.0
-> workspace = `~/workspaces/om-agi` (bwoc workspace, validate 7/7) · engine repo = `projects/om-agi` (private — ประวัติครบ) · repo สาธารณะ = [`bemindlabs/ohmyagi`](https://github.com/bemindlabs/ohmyagi) (snapshot ของ release · `v0.3.0-alpha` · D-058) · คำสั่ง = `ohmyagi` (ชื่อสำรอง `om-agi` · D-055)
+> **ฉบับตกผลึก** · เขียนใหม่ 2026-09-20 หลังเคาะ D-001 → D-013 · **rewrite 2026-09-26 ถึง D-098** (grooming — เพิ่ม E10 Web console · E11 Knowledge memory ย้อนหลัง และ E12 Local action เป็นงานถัดไป) — ออกแล้ว v0.1.0 (MVP เต็ม) → **v0.7.1**
+> workspace = `~/workspaces/om-agi` (bwoc workspace, validate 7/7) · engine repo = `projects/om-agi` (private — ประวัติครบ) · repo สาธารณะ = [`bemindlabs/ohmyagi`](https://github.com/bemindlabs/ohmyagi) (snapshot ของ release · `v0.7.1-alpha` · D-058) · คำสั่ง = `ohmyagi` (ชื่อสำรอง `om-agi` · D-055)
 > การตัดสินใจทั้งหมดอยู่ใน [`decisions.md`](decisions.md)
 
 ---
@@ -73,11 +73,18 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
             └─> E3 ความจำจากการกระทำ ─> E4 ความรู้ที่ใช้ได้ ─> E6 สืบทอดตัวตน
                                                     │
                         E7 ความเป็นเจ้าของข้อมูล ───┴────────────┘
+
+E9 chat ─┐                                   E4 ──> E11 Knowledge memory ──┐
+E5 ──────┴──> E10 Web console (ทุกปุ่มคือคำสั่ง) ──────────────────────────┴──> E12 Local action ◀ ถัดไป (D-096)
+                                                                                     │
+                                                          E13 Deploy (VPS·GCP·AWS) ◀─┘ ──> E16a Platform ──> E15 Agent hiring ──> E16b ──> E14 App (RN · IAP)   (D-115)
 ```
 
 **เส้นวิกฤต:** `E0 → E1 → E2 → E5` = จุดที่ agent ยืนเองได้และลงมือเองได้ (นิยามของ D-015)
 **ประตูบังคับ 1:** `S3.5` (local-only) + `S7.2` (erase) ต้องเสร็จ **ก่อน**รับข้อมูลส่วนตัว (D-010)
 **ประตูบังคับ 2:** `S8.3` (egress guard) ต้องเสร็จ **ก่อน**เปิด A2A (E8) หรือ chat connector (E9) — D-017 / D-018 / I-6
+**ประตูบังคับ 3 (D-097):** `SP-5` ต้องตอบก่อนเลือกกลไกของ E12 — วัดของจริง ไม่เลือกจากความเชื่อ · ✅ ตอบแล้ว 2026-09-26 (D-116)
+**ประตูบังคับ 4 (D-118):** backend ในเครื่องที่มีมือ รันได้เฉพาะใน fence ระดับ OS (Landlock) — สร้าง fence ไม่ได้ = ไม่รัน
 
 ### Positioning (D-019)
 **Grok Bot ของ xAI (ส.ค. 2026) ทำสิ่งเดียวกันเกือบทุกข้อ** — memory · autonomy · runtime ของตัวเอง
@@ -111,7 +118,7 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
 - ✅ AC4: ทุก interface ที่แตะข้อมูลรับ `subject_id` — บังคับที่ type ไม่ใช่ความตั้งใจ (D-003) · 2026-09-23: 12 โมดูลที่แตะข้อมูลของ subject — ทุก export ต้องเป็น *door* (ต้องมี `SubjectId` ใน parameter ตรวจด้วย type checker) หรือ *downstream* พร้อมเหตุผล · export ใหม่ที่ไม่ได้จัดประเภท = แดง · `SubjectId` เป็น brand ที่ string ธรรมดาใส่ไม่ได้ (`@ts-expect-error`)
 - AC5 (D-021): engine **ไม่มี path/ชื่อ/บัญชีของเจ้าของ** · fixture ทดสอบเป็นข้อมูลสังเคราะห์ · ADR มีช่อง license — ออกแบบให้เปิด opensource ได้ตั้งแต่ commit แรก
 
-**S0.2** 🔸 **6/7 (`w6`, 2026-09-21 · ถอนติ๊ก 2026-09-22 · `recon1`)** — *รู้ว่าเครื่องพร้อมแค่ไหน ก่อนเจอ error กลางทาง*
+**S0.2** ✅ **7/7 (ตามตาราง — ปิดครบหลัง `recon1`)** · ประวัติ: 6/7 (`w6`, 2026-09-21 · ถอนติ๊ก 2026-09-22 · `recon1`) — *รู้ว่าเครื่องพร้อมแค่ไหน ก่อนเจอ error กลางทาง*
 > วัดจริงบนเครื่องนี้: CLI 7/7 · **เตือน drift ของ codex (0.155.1 vs registry 0.153.4)** ·
 > **เอ่ยชื่อรูของ kimi (`writes? yes — no limit`)** · แยก `no (measured)` จาก `no (on trust)` ·
 > เตือนว่า `docs` ไม่ใช่ของ om-agi · `exit 1` เมื่อ ollama ตาย · `exit 0` เมื่อเส้นทาง local พร้อม
@@ -398,7 +405,7 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
 | ✅ S4.3 | recall ตอนเริ่ม turn — D-039 · AC4 0/10 → 10/10 | 2 | สูง |
 | ✅ S4.4 | `memory forget` — D-041 · token หายจากไฟล์ดิบของ Qdrant 2 → 0 | 1 | สูง |
 
-**S4.1** — *ข้อมูลแต่ละตัวตนแยกกัน ลบของตัวหนึ่งไม่กระทบอีกตัว* (I-3, I-4, D-007) · 🔸 **ลงแล้ว D-038 (2026-09-23)** — `ohmyagi memory index|search`
+**S4.1** — *ข้อมูลแต่ละตัวตนแยกกัน ลบของตัวหนึ่งไม่กระทบอีกตัว* (I-3, I-4, D-007) · ✅ **ลงแล้ว D-038 (2026-09-23)** — `ohmyagi memory index|search`
 - AC1: collection `omagi__<subject_id>` บน Qdrant :10300 — **ห้ามแตะ `docs`** · ✅ ทุก request สร้างจาก `collectionFor` · เทสต์ fake store ยืนยัน `docs` ไม่ถูกแตะ (`test/erase/plan.test.ts`, `test/memory/store-admin.test.ts`) · รันจริงบนเครื่อง `docs` ยังอยู่
 - AC2: ลบทั้ง collection ได้ในคำสั่งเดียว ยืนยันได้ว่าหายจริง · ✅ `rag` = `implemented` · `erase` drop ทั้ง collection แล้ว**ถามกลับ**ว่า 404 · รันจริงกับ Qdrant 1.18.2: `erased-and-verified` · ไม่มี per-point delete ในโค้ด (เทสต์แดงถ้ามี)
 - AC3: embedding ใช้ `bge-m3` ที่มีอยู่ · ✅ ที่ Ollama จริง `:11435` ไม่ผ่าน shim (D-038) · มิติผิด = error
@@ -592,7 +599,7 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
 - ⚠ **ทดสอบกับบุษบาไม่ได้** (บุษบาเป็น AI ไม่ใช่คนจริง) — ต้องมี fixture คนจริง (D-009)
 > **2026-09-23 (D-046):** AC3 ✅ `inherits_from` ใน `person.md` · ชื่อ agent หรือชื่อที่ใช้เรียกตัวเองมีชื่อคนต้นทาง = soul ไม่โหลด (`test/soul/firewall.test.ts`) ·
 > AC1 ✅ **10/10** · AC2 ✅ **3/3** กับ qwen3.8-27b local (`test/soul/firewall.real.test.ts` opt-in · `notes/2026-09-23_s64-firewall-real.md`) — คนต้นทาง**สมมติ** (D-021 ห้ามชื่อคนจริงใน fixture) ·
-> AC4 🔸 ใน CI มีแค่ส่วนที่ไม่ต้องใช้โมเดล (AC3 + soul ที่ render มีประโยคประกาศ AI/ห้ามลงชื่อแทน) — พฤติกรรมโมเดลอยู่นอก CI เพราะ CI ไม่มีโมเดล · vendor บน cloud ยังไม่ได้ถาม
+> AC4 ✅ (D-062: `release:check` บังคับวัดกับโมเดลจริงก่อนทุก release) · เดิม: ใน CI มีแค่ส่วนที่ไม่ต้องใช้โมเดล (AC3 + soul ที่ render มีประโยคประกาศ AI/ห้ามลงชื่อแทน) — พฤติกรรมโมเดลอยู่นอก CI เพราะ CI ไม่มีโมเดล · vendor บน cloud ยังไม่ได้ถาม
 
 **S6.5** — *รู้ว่าแทนงานได้จริงกี่ % ก่อนเอาไปใช้*
 - AC1: ชุดงานจริง ≥ 20 งาน พร้อมคำตอบที่ถือว่าถูก
@@ -658,9 +665,171 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
 
 ---
 
+---
+
+### E10 — Web console (D-060 → D-094) · ✅ ย้อนหลัง (D-098)
+
+> **ส่วนเสริม ไม่แทน CLI** · ทุกปุ่มคือคำสั่ง (`deps.run` → `runGuarded`) — หน้าเว็บทำได้ไม่เกินที่ CLI ทำได้ และไม่ข้ามด่านใด
+
+| # | Story | วัน | ค่า/แรง |
+|---|---|---|---|
+| ✅ S10.1 | `ohmyagi web` — loopback, key ใน fragment, host guard, `--https` หลัง tailscale serve, `--key-file` คงที่ข้าม restart (D-060, D-069) | 2 | สูง |
+| ✅ S10.2 | Settings · Agent · Memories (อ่าน) · mascot · `ohmyagi update` (D-065, D-067, D-068, D-070) | 2 | กลาง |
+| ✅ S10.3 | agent console — rail, Engine box, chat อยู่หน้า, sticky, full width, 2K (D-078, D-080) | 2 | สูง |
+| ✅ S10.4 | ข้อเสนอแบบ bulk · แชทจำใน browser · Privacy tab · ตอบ persona draft บนเว็บ (D-079) | 2 | สูง |
+| ✅ S10.5 | Profile wizard ครบทุกแกน + `soul edit` (D-074) | 1 | กลาง |
+| ✅ S10.6 | แชทเปลี่ยน backend/model · คำสั่ง `/` 21 คำสั่ง (D-085, D-086) | 2 | สูง |
+| ✅ S10.7 | ฟอนต์ · footer เวอร์ชัน · favicon · phone audit 42 checks (D-083, D-089, D-094) | 1 | กลาง |
+| ✅ S10.8 | restart ไม่ตัดงานที่ค้าง — graceful stop + `KillMode=mixed` (D-088) | 1 | สูง |
+| S10.9 | UI ภาษาไทย (สลับได้) — ค้างตั้งแต่ D-079 | 2 | กลาง |
+| S10.10 | สร้าง agent · ตั้ง trigger · บันทึก consent/basis จากเว็บ — ช่องที่ D-074 บอกไว้ | 2 | กลาง |
+
+**S10.1** — *ใช้ agent ได้โดยไม่ต้องเปิด terminal แต่ไม่เปิดประตูใหม่* · AC1 ✅ ไม่มี token = 401 ทุก `/api/` · AC2 ✅ Host ที่ไม่รู้จัก = 421 (DNS rebinding) · AC3 ✅ CSP `default-src 'self'` ไม่โหลดอะไรจากนอก · AC4 ✅ ค่าจาก server ใส่ด้วย `textContent` เท่านั้น (เทสต์ `test/web/web.test.ts`)
+**S10.9** — AC1: ทุกข้อความบนหน้ามีภาษาไทย สลับได้และจำไว้ · AC2: test ที่อิงข้อความอังกฤษยังผ่าน (ใช้ id ไม่ใช่ข้อความ) · AC3: ฟอนต์ Plex Thai (D-083) ครอบคลุม
+**S10.10** — AC1: สร้าง agent ได้เท่า `ohmyagi new` · AC2: consent/basis **ยังต้องพิมพ์วลียืนยัน** (ไม่ใช่ปุ่มเดียว) — ออกแบบใหม่ให้เทียบเท่าการพิมพ์ที่ terminal หรือคงไว้ที่ terminal ถ้าเทียบไม่ได้
+
+---
+
+### E11 — Knowledge memory (D-081 → D-095) · ✅ ย้อนหลัง (D-098)
+
+> ความจำของบุคคล (`memory/`) กับความรู้ (`memory/knowledge/`) อยู่ใน git ทั้งคู่ · ทุกการเขียนผ่าน `memory write` ด่านเดียว (path · credential scan · basis S7.3 · rebuild ทั้ง collection D-035)
+
+| # | Story | วัน | ค่า/แรง |
+|---|---|---|---|
+| ✅ S11.1 | memory CRUD บนเว็บ + `memory write` (D-081) | 1 | สูง |
+| ✅ S11.2 | `memory import` ไฟล์ (md/pdf/docx/office) + ลิงก์เว็บ รวมหน้า JS ผ่าน headless Chrome (D-084, D-087) | 2 | สูง |
+| ✅ S11.3 | memory map 3D — neuron/synapse จาก `[[link]]` (D-082) | 1 | กลาง |
+| ✅ S11.4 | knowledge แยกจาก memory · `memory move` · `--scope` (D-090) | 1 | สูง |
+| ✅ S11.5 | collections — `tags:` ใน front matter (D-091) | 1 | กลาง |
+| ✅ S11.6 | knowledge graph — entity ร่วม + `memory who` (D-092) | 1 | สูง |
+| 🔸 S11.7 | `memory distill` — fact จาก local model พร้อม quote, ตอบทีละข้อ (D-093) · 3/4 — AC4 ค้าง | 2 | สูง |
+| ✅ S11.8 | แชทจำบทสนทนา 6 รอบ · recall ที่ติดคำส่วนตัวไม่บล็อกทั้ง turn (D-095) | 1 | **สูงสุด** |
+
+**S11.7** — AC1 ✅ ทุก fact มี quote ที่หาเจอในต้นฉบับ ไม่เจอ = ตัด (`test/memory/distill.test.ts`) · AC2 ✅ model ต้องอยู่ในเครื่อง (loopback) · AC3 ✅ เขียนเฉพาะ yes ผ่าน `planWrite` (`test/cli/distill.test.ts`) · **AC4 🔸 เจ้าของรันกับ knowledge จริงและตอบอย่างน้อย 20 ข้อ** (วัดบนสำเนาแล้ว 22 fact / 2 ตัด — ยังไม่ใช่ของจริง)
+**S11.8** — AC1 ✅ needle ใน history/recall ไม่อยู่ใน argv ที่ส่ง claude แต่ claude ยังตอบ (`test/cli/turn-egress.test.ts`) · AC2 ✅ ข้อความที่พิมพ์ยังถูกตรวจ · AC3 ✅ วัดจริง: turn บน agent จริงไปถึง claude และใช้เครื่องมือ (เดิม 60 turn ตกไป ollama)
+
+---
+
+### E12 — Local action ⭐ **ถัดไป (D-096)**
+
+> **ปัญหาที่เหลือจาก D-095:** cloud ลงมือได้แต่ไม่เห็นชิ้นส่วนตัว · local เห็นทุกอย่างแต่ไม่มีมือ ⇒ งานที่ต้องใช้ข้อมูลส่วนตัว**และ**ต้องลงมือยังทำไม่ได้
+> **ประตู:** `SP-5` (D-097) เลือกกลไกจากตัวเลข · ตรงกับ I-1 + I-6 พร้อมกัน · ✅ ตอบแล้ว (D-116): claude/grok/kimi 15/15 บน qwen 27B · ไม่ทำ NativeExec
+> **กลไก (D-117):** `CliExec` เดิม · chain ในเครื่อง claude → grok ผ่าน LiteLLM → `local-coder` · ระดับ 1 ใช้ grok เป็นหลัก · kimi ตัวที่ 3 ทีหลัง
+> **รั้ว (D-118):** Landlock ครอบทุก turn ในเครื่อง — เขียนเฉพาะที่ grant · TCP ได้แค่ LiteLLM · **ลำดับ: S12.6 → S12.2 → S12.1 → S12.3 → S12.4 → S12.5** · ~8–10 วัน
+
+| # | Story | วัน | ค่า/แรง |
+|---|---|---|---|
+| S12.1 | backend ในเครื่องที่ใช้เครื่องมือได้ — chain claude → grok ผ่าน LiteLLM→qwen บน `CliExec` เดิม (D-117) | 3 | **สูงสุด** |
+| S12.2 | restraint ของ backend ใหม่ — fence Landlock ทุก turn ในเครื่อง (D-118) · read-only ที่ระดับ 1 · grant ที่ระดับ 2 · วัดของจริงแบบ S1.3 | 3 | **สูงสุด** (ประตู) |
+| S12.3 | เลือกเส้นทาง — เมื่อชิ้นที่งานต้องใช้ถูกเก็บในเครื่อง ให้ turn ไปที่ backend ในเครื่องที่มีมือ | 1 | สูง |
+| S12.4 | เว็บบอกว่ารอบนี้ใครทำ ทำในเครื่องหรือไม่ และทำอะไรไป (Engine box + รายงาน D-043) | 1 | กลาง |
+| S12.5 | วัดผลด้วยชุดงาน S6.5 บน backend ในเครื่อง — soul+RAG+tools เทียบ cloud | 1 | สูง |
+| S12.6 | แก้ registry ตามที่ SP-5 เจอ — grok `--always-approve` + hardening + `--max-turns 20` (D-119) · kimi ระดับ 1 = profile file ของ om-agi (D-120) · codex `--disable plugins/shell_snapshot` + `ignore_default_excludes=false` (D-121) · turn ที่ vendor บอกว่าไม่จบ = silent | 1 | **สูง** (บั๊ก) |
+
+**S12.1** — AC1: อ่านไฟล์ · รันคำสั่ง · แก้ไฟล์ ได้จริงบนงานของ agent ด้วย model ในเครื่อง · AC2: ไม่มี request ออกนอกเครื่องระหว่าง turn (วัด socket) · AC3: ledger บันทึกเหมือน backend อื่น · AC4: ล่มแล้วตกไปตาม chain ไม่เงียบ · AC5: key ของ LiteLLM อยู่แค่ใน env ของ child — ไม่อยู่ใน argv, disk หรือ shell ของ model · AC6: grant ในเครื่องไม่มี WebFetch/WebSearch
+**S12.2** — AC1: ระดับ 1 = 0 การเขียน (probe จริง) · AC2: ระดับ 2 เขียนได้เฉพาะที่ grant · AC3: `ohmyagi stop` หยุดได้ (S5.4) · AC4: connect ที่ไม่ใช่ `127.0.0.1:10400` ถูกปฏิเสธที่ kernel (probe `curl` จาก Bash ของ model) · AC5: kernel ไม่มี Landlock → ไม่รัน backend ในเครื่อง และบอกเหตุผล
+**S12.6** ✅ `7346b6a` — AC1 ✅ grok ทำงานหลายขั้นจบ ไม่ exit 0 แบบข้อความว่าง และ turn ที่ไม่จบถูกนับเป็น silent · AC2 ✅ grok ระดับ 2 แก้ไฟล์และรัน shell ได้จริง (รวม `$?`) · AC3 ✅ kimi ระดับ 1 ไม่ถูกปฏิเสธ และ 0 การเขียน (ผ่าน `CliExec` รวมหลังไฟล์ถูกแก้) · 0 การดึงเว็บวัดใน probe ส่วนผ่าน `CliExec` ยืนยันจากรายการเครื่องมือ · AC4 ✅ codex ไม่มี connect ไป plugin และ shell ของ model ไม่เห็น env ชื่อ KEY/SECRET/TOKEN (ชื่ออื่นยังเห็น — S12.2) · ค้าง: `OM_AGI_REAL_READONLY=1` บน config จริงของเจ้าของ · hook ของ Claude plugin ใน grok
+**S12.3** — AC1: turn ที่มีชิ้นถูกเก็บ (D-095 `held > 0`) และงานต้องลงมือ → ไป local-with-tools · AC2: บอกเหตุผลของเส้นทางใน stderr/เว็บ · AC3: เจ้าของตั้งให้เลือกเองได้
+**S12.5** — AC1: รันชุด 24 งานของ tonkla-agi ด้วย backend ใหม่ · AC2: บันทึก % ต่อชนิดงาน เทียบ D-075 (soul+RAG 91.7%)
+
+---
+
+---
+
+### E13 — Deploy ออกไปอยู่บนเครื่องที่เจ้าของคุม (D-099, D-100) · หลัง E12 (D-102)
+
+> **agent ทั้งตัว** (ohmyagi + repo ของ agent + web/a2a/chat) ไปรัน 24/7 บน VPS Hostinger · GCP · AWS ที่เจ้าของเช่าเอง · ยืมมือ `ssh` / `gcloud` / `aws` ไม่เรียก API เอง (แนว D-002)
+> **ประตู (D-100):** disk เข้ารหัส กุญแจไม่อยู่ในที่ของ provider · `erase` ถึง remote · tailnet/ssh ไม่เปิด port สาธารณะเป็นค่าเริ่มต้น · deploy ครั้งแรกพิมพ์วลียืนยันที่ terminal
+
+| # | Story | วัน | ค่า/แรง |
+|---|---|---|---|
+| S13.1 | `ohmyagi deploy plan` — ไฟล์เป้าหมาย (provider · host/project/region · ขนาด) + dry run บอกว่าอะไรไปอยู่ที่ไหน ก่อนทำจริง | 1 | สูง |
+| S13.2 | VPS ผ่าน ssh (Hostinger) — ติดตั้ง binary · clone repo ของ agent · systemd (web/triggers) · เข้า tailnet · volume เข้ารหัส | 2 | **สูงสุด** |
+| S13.3 | GCP ผ่าน `gcloud` — สร้าง VM + disk ด้วยกุญแจของเจ้าของ (CSEK/CMEK) แล้วใช้ bootstrap เดียวกับ S13.2 | 1 | สูง |
+| S13.4 | AWS ผ่าน `aws` — EC2 + EBS เข้ารหัสด้วย KMS key ของเจ้าของ แล้ว bootstrap เดียวกัน | 1 | สูง |
+| S13.5 | `deploy status · update · destroy` — อัปเดต binary/agent · ทำลายเครื่องแล้ววัดว่าหาย · data map (S7.1) รวม remote | 1 | **สูงสุด** (I-4) |
+| S13.7 | BYOK — backend แบบ API key ของลูกค้า (ไม่ใช้ subscription login ของคนเดียวให้หลายคน) · onboarding ใส่ key · key อยู่บน disk เข้ารหัส (D-109) | 2 | **สูงสุด** |
+| S13.8 | ปลดล็อก disk อัตโนมัติจากเครื่องที่เจ้าของคุมผ่าน tailnet (Tang/Clevis) · ไม่มีใครตอบ = รอ + แจ้ง (D-111) | 2 | สูง |
+| S13.6 | model ที่บ้านผ่าน tailnet — agent บน VPS เรียก LiteLLM/vLLM ที่บ้าน · ล่มแล้วตกไปตาม chain | 1 | สูง |
+
+**S13.2** — AC1: เครื่องเปล่า Ubuntu → agent ตอบบน tailnet ได้ในคำสั่งเดียว · AC2: `ss -ltnp` บน remote ไม่มี port สาธารณะของ om-agi · AC3: volume ของ agent เข้ารหัส (LUKS) กุญแจไม่ถูกเก็บบน remote แบบอ่านได้ · AC4: ย้อนกลับได้ (`destroy`)
+**S13.5** — AC1: `destroy` ลบ VM/disk แล้วถามกลับ provider ว่าไม่มีแล้ว · AC2: `erase <subject>` ครอบคลุม remote และพิมพ์สิ่งที่**ไม่ได้**ค้น (เหมือน I-4 เดิม) · AC3: ledger บันทึกทุกการ deploy
+
+---
+
+### E14 — Companion app: React Native · freemium · in-app purchase (D-099, D-101, D-113) · หลัง E16b (D-115)
+
+> **ฟรี:** แอปเชื่อมกับ agent ที่ self-host เอง · **จ่าย (IAP subscription):** เรา host agent ให้บน VM ของลูกค้าแต่ละคน (managed)
+> **เงื่อนไขบังคับของ managed (D-101):** VM แยกต่อคน · กุญแจ disk ของลูกค้า · ย้ายออกได้ด้วย `git clone` · ลบได้จริงและวัดได้ · PDPA/GDPR พร้อมก่อนขาย
+> **ของเจ้าของ:** Apple Developer · Google Play Console · นิติบุคคลที่รับเงิน · ราคา · สัญญา/นโยบาย
+
+| # | Story | วัน | ค่า/แรง |
+|---|---|---|---|
+| S14.1 | แอป Expo/React Native — แชท · ตอบข้อเสนอ · อ่าน memory · Engine/เวอร์ชัน (ใช้ `/api/*` เดิมของ `ohmyagi web`) | 3 | สูง |
+| S14.2 | จับคู่แอปกับ agent — QR จาก `ohmyagi web` (URL + key) · เก็บ key ใน secure storage · ผ่าน tailnet หรือ https | 1 | **สูงสุด** (ประตู) |
+| S14.3 | push notification — ข้อเสนอใหม่/เหตุผิดปกติ (APNs/FCM ผ่าน relay ที่ไม่เห็นเนื้อหา) | 2 | สูง |
+| S14.4 | in-app purchase — subscription (StoreKit / Play Billing) + ตรวจใบเสร็จฝั่ง server · สิทธิ์รวมกับ Stripe บนเว็บ (D-113) | 2 | สูง |
+| S14.8 | ซื้อบนเว็บด้วย Stripe Checkout/Billing · webhook → สิทธิ์เดียวกับ IAP (D-112, D-113) | 1 | สูง |
+| S14.5 | managed provisioning — จ่ายแล้ว `ohmyagi deploy` สร้าง VM ของลูกค้าตามเงื่อนไข D-101 · ยกเลิกแล้ว destroy | 2 | **สูงสุด** |
+| S14.6 | ย้ายออก — ดาวน์โหลด/โอน repo ของ agent ไป self-host · ยืนยันว่า VM ถูกทำลาย | 1 | **สูงสุด** (D-101 ข้อ 3–4) |
+| S14.7 | ส่ง store — TestFlight/Play internal · privacy label · ประกาศว่าเป็น AI (I-5) · review guideline | 2 | สูง |
+
+**S14.2** — AC1: ไม่มี key = แอปทำอะไรไม่ได้ · AC2: key ไม่อยู่ใน log/backup ที่อ่านได้ · AC3: ยกเลิกการจับคู่จากฝั่ง agent ได้ (หมุน key)
+**S14.4** — AC1: ซื้อ/ต่ออายุ/ยกเลิก/คืนเงิน บน sandbox ของทั้งสอง store · AC2: สิทธิ์ถูกตัดสินจากใบเสร็จที่ server ตรวจ ไม่ใช่จากแอป · AC3: ไม่เก็บข้อมูลบัตร
+**S14.5** — AC1: VM แยกต่อคน (I-3 ข้ามลูกค้า — เทสต์ว่าอีกคนมองไม่เห็น) · AC2: กุญแจ disk ของลูกค้า · AC3: log ของระบบ managed ไม่มีเนื้อหา memory/แชท
+
+---
+
+---
+
+### E15 — Agent hiring: ตลาดจ้างงาน agent (D-103..D-114) · หลัง E16a (D-115)
+
+> agent ของแต่ละเจ้าของ onboard เข้ามารับงาน · ผู้จ้างโพสต์งาน · **ราคา = token ที่ใช้จริง** (ต่อรองได้ · agent ทำฟรีได้) · **ทำและส่งผ่าน git — GitHub เป็นค่าเริ่มต้น**
+> **ประตูที่รู้แล้ว:** รับงาน = reach ออกนอกเครื่อง (dial) · โค้ดของผู้จ้าง = ข้อมูลของ subject อื่น (basis S7.3, I-3) · ของส่วนตัวของเจ้าของต้องไม่หลุดใน PR (I-6) · ผู้จ้างต้องรู้ว่าเป็น AI และ agent ไม่ commit ในนามคน (I-5)
+
+| # | Story | วัน | ค่า/แรง |
+|---|---|---|---|
+| S15.1 | web app ตลาดงาน — onboard agent (agent card A2A · ทักษะ · ราคา/ฟรี) · ผู้จ้างโพสต์งาน | 3 | สูง |
+| S15.2 | รับงาน — agent เห็นงาน · เจ้าของ (หรือ dial) อนุมัติการรับ · workspace แยกต่องาน (I-3) | 2 | **สูงสุด** (ประตู) |
+| S15.3 | ทำและส่งผ่าน git — clone repo ของผู้จ้าง · branch · PR บน GitHub (ค่าเริ่มต้น) · egress ตรวจทุก diff ก่อน push | 2 | **สูงสุด** |
+| S15.4 | วัด token จริงต่องาน — จาก ledger (usage ต่อ turn) · ใบแจ้งที่ทั้งสองฝ่ายตรวจได้ | 2 | สูง |
+| S15.5 | ต่อรองราคา · ทำฟรี — ข้อเสนอ/ตอบรับ ก่อนเริ่มงาน หรือเพดาน token | 1 | กลาง |
+| S15.7 | sandbox ต่องาน — docker container ใหม่ เห็นแค่ repo ของงาน · ไม่ mount memory/soul/home · egress เฉพาะ GitHub + model · ลบเมื่องานจบ (D-108) | 3 | **สูงสุด** (ประตู) |
+| S15.8 | keypair ของ agent — ed25519 · public key ใน agent card · ลงลายมือชื่อรายงาน usage (D-108 แทน "key ของ A2A" ใน D-106) | 1 | สูง |
+| S15.9 | ราคาตามต้นทุนจริง — adapter เก็บ cache read/write แยก · ตารางราคาต่อ model · ledger มี cost · turn ที่ usage หาย = ไม่คิด (D-110) | 2 | สูง |
+| S15.10 | GitHub App ของตลาด — installation token อายุสั้นเฉพาะ repo ต่องาน · commit/PR เป็น [bot] + ชื่อ agent · webhook merge → จ่ายเงิน (D-114) | 2 | **สูงสุด** |
+| S15.6 | ชำระเงิน — **Stripe Connect** (D-112) · ตลาดถือเงินแบบ escrow · จ่ายเมื่อ PR merge ตาม token จริงไม่เกินเพดาน · คืนส่วนต่าง · หักค่าธรรมเนียม % (D-105) | 2 | สูง |
+
+**S15.2** (D-104) — AC1: งานที่เข้ามาเป็น proposal (S5.2) · yes หนึ่งครั้ง = งานเดียว · AC2: อนุมัติได้จากเว็บ แอป และ Telegram · AC3: workspace แยกต่องาน โค้ดของผู้จ้างไม่ปนกับ memory ของเจ้าของ (I-3) · AC4: repo ของผู้จ้างถือเป็นข้อมูลของ subject อื่น ต้องมี basis (S7.3)
+**S15.3** — AC1: ทุก diff ผ่าน egress filter ก่อน push · needle ของเจ้าของ = ไม่ push (I-6) · AC2: commit/PR ระบุว่าเป็น AI agent และไม่ลงชื่อแทนคน (I-5) · AC3: GitHub เป็นค่าเริ่มต้น แต่เป็น adapter (GitLab ฯลฯ ได้ทีหลัง)
+**S15.4** (D-106) — AC1: ตกลงเพดาน token/เงินก่อนเริ่ม ผู้จ้างจ่ายไม่เกินเพดานเสมอ · AC2: รายงาน usage ราย turn จาก ledger ลงลายมือชื่อด้วย key ของ agent (key เดียวกับ A2A) · AC3: ผู้จ้างตรวจลายเซ็นได้ · AC4: prompt/memory **ไม่ผ่านตลาด** (ไม่มี proxy)
+**S15.6** (D-105) — AC1: ไม่ merge ภายในเวลาที่ตกลง → ข้อพิพาท · AC2: งานฟรีไม่ผ่าน escrow · AC3: ใบแจ้งหนี้ระบุ agent และเจ้าของ (I-5) · ของเจ้าของ: payment provider (Stripe Connect/Omise) · นิติบุคคล · ภาษี · ข้อตกลง
+
+---
+
+---
+
+### E16 — Platform backend (D-115) · repo แยก · E16a ก่อน E15 · E16b ก่อน E14
+
+> บริการที่ **เรา** host · **ไม่อยู่ใน engine** (engine ที่คน self-host ไม่มีโค้ดเงินหรือบัญชี) · ไม่เห็น prompt/memory ของ agent ใด (BYOK D-109 · ไม่มี proxy D-106)
+
+| # | Story | วัน | ค่า/แรง |
+|---|---|---|---|
+| S16.1 | (a) บัญชีผู้ใช้ — ผู้จ้าง · เจ้าของ agent · ลูกค้า managed · auth + 2FA | 2 | สูง |
+| S16.2 | (a) Stripe Connect — onboarding เจ้าของ agent เป็น connected account · escrow · application fee · refund บางส่วน (D-112) | 3 | **สูงสุด** |
+| S16.3 | (a) GitHub App — เก็บ private key ใน secret manager · ออก installation token ต่องาน · webhook PR/merge (D-114) | 2 | **สูงสุด** |
+| S16.4 | (a) ที่อยู่ของตลาด (E15) — API ของงาน/ข้อเสนอ/ต่อรอง · ตรวจลายเซ็นรายงาน usage (D-106, D-108) | 2 | สูง |
+| S16.5 | (b) สิทธิ์รวม — ตรวจใบเสร็จ IAP ที่ server + webhook Stripe → entitlement เดียว (D-113) | 2 | สูง |
+| S16.6 | (b) push relay — APNs/FCM · ส่งเฉพาะ "มีเรื่องรอคุณ" ไม่มีเนื้อหา (S14.3) | 1 | กลาง |
+| S16.7 | (b) provisioning managed — สั่ง `ohmyagi deploy` ต่อลูกค้า · destroy เมื่อยกเลิก · ส่งกุญแจปลดล็อกผ่านอุปกรณ์ลูกค้า (D-101, D-111) | 3 | **สูงสุด** |
+
+**ทั้ง epic** — AC1: ไม่มี log/DB ใดเก็บเนื้อหาแชท/memory/prompt · AC2: backup + uptime + secret rotation มีขั้นตอนเขียนไว้ · AC3: PDPA/GDPR — ข้อมูลที่เก็บจริงมีรายการ และลบตามคำขอได้ (I-4)
+
+---
+
 ## 6. Spikes — 1 วัน · ผลลบถือว่าสำเร็จ · เขียนลง `notes/`
 
-### SP-1 — transcript ขุดได้จริงแค่ไหน ⭐ ทำก่อนสุด
+### SP-1 — transcript ขุดได้จริงแค่ไหน ✅ **ตอบแล้ว 2026-09-21 — เปลี่ยน E3 เป็นดักจับ (D-024)**
 - **สมมติฐาน:** จับพฤติกรรมจาก transcript ได้จริง
 - ทำ: สุ่ม 50 จาก 1,054 ไฟล์ ครอบคลุมหลายช่วงเวลา · นับ event type · ลองสกัด 4 ชนิด
 - **ผ่าน:** อ่านได้ ≥ 85% · สกัด action ได้ ≥ 60% ของ turn ที่มี tool use
@@ -692,6 +861,13 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
   ⚠ ยังไม่ได้ตามหา **vector** (ตามแต่ข้อความใน payload) — เป็น story ของ E4
 
 ---
+
+### SP-5 — model ในเครื่องใช้เครื่องมือได้จริงแค่ไหน ✅ **ตอบแล้ว 2026-09-26 (D-116)**
+- **ผล:** claude 15/15 · grok 15/15 · kimi 15/15 (`--agent plan`) · codex ตกบนเครื่องนี้ (bwrap/AppArmor) — leaks 0 ทุกตัว · ไม่ทำ NativeExec · รายชื่อเครื่องมือกันไม่พอ → fence ระดับ OS (D-118) · `notes/2026-09-26_sp5-local-action.md`
+- เทียบ **codex** (provider → LiteLLM :10400 OpenAI-compatible) กับ **Claude Code** (`ANTHROPIC_BASE_URL` → LiteLLM) บน qwen/vLLM
+- ชุดงานเดียวกัน 4 แกน: อ่านไฟล์ · รันคำสั่ง · แก้ไฟล์ · เคารพ read-only (0 การเขียน) · วัดเวลา · วัดว่าไม่มี request ออกนอกเครื่อง
+- ผ่าน = 3 แกนแรกได้ + read-only 0 เขียน · ไม่ผ่านทั้งคู่ → tool loop ของ om-agi เอง (`NativeExec`, เงื่อนไข D-002)
+- ผลลงที่ `notes/` + decision
 
 ## 7. MVP / ทีหลัง / ไม่ทำ
 
@@ -779,16 +955,33 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
 > `S1.6` isolation · `S0.3/S0.4` repo+guard · `S2.1 AC6` local path (D-011/012/013) แล้ว `S5.1/5.2/5.4` (D-015)
 > **ทั้งหมดเป็นแกนของ vision ไม่ใช่ของแถม** — E8 (คุยกันได้) ยังไม่อยู่ใน MVP เพราะต้องรอ S8.3 ซึ่งรอ S3.5
 
-### ทีหลัง (ตามลำดับ) — ปรับ 2026-09-24 หลัง v0.3.0
+### ทีหลัง (ตามลำดับ) — ปรับ 2026-09-26 (grooming D-096..D-098)
 
-✅ ทำไปแล้วจากรายการเดิม: `E4` (S4.1–S4.4) · `S7.1` `S7.2` · `S5.3` trigger (v0.2.0 · D-054) · `S3.3` pattern miner AC1–5 (v0.3.0 · D-057) · `S8.1` agent card
+✅ ทำไปแล้วจากรายการเดิม: `E4` · `S7.1` `S7.2` `S7.3` · `S5.3` · `S3.3` AC1–5 · `E8` ครบ · `E9` S9.1/S9.2 · `E6` S6.1/S6.2/S6.4/S6.5 (รอเจ้าของตรวจ) · `E10` · `E11`
 
-1. `S3.3` AC6 — เจ้าของตรวจ 5 อันดับแรกเมื่อ capture สะสมพอ (หลายสัปดาห์) · แล้ว `S3.4` interest tracker
-2. ~~`S8.3` AC3~~ ✅ D-061 → **`E8` คุยกันได้**: `S8.2` SendMessage · `S8.4` peer allowlist — ประตูเปิดได้เมื่อด่านที่ 2 เปิด
-3. **`E9` chat connector** — ใช้ egress filter ตัวเดียวกับ E8 ⇒ ทำหลัง E8
-4. `E6` — `S6.4` AC4 ก่อน แล้ว S6.1/S6.2/S6.5 · `S6.3` LoRA อยู่หลัง SP-3 · เริ่มที่เจ้าของเอง
-5. `S7.3` + fixture คนจริง — เมื่อมี use case พนักงานจริง
-6. `NativeExec` — เฉพาะเมื่อเข้าเงื่อนไข D-002
+1. **`E12` Local action** — ✅ `SP-5` (D-116) · ต่อด้วย S12.6 → S12.2 → S12.1 → S12.3 → S12.4 → S12.5 (D-117, D-118)
+1b. **`E13` Deploy** — VPS Hostinger · GCP · AWS บนเครื่องที่เจ้าของคุม (D-099, D-100)
+1c. **`E14` Companion app** — React Native · ฟรี self-host / จ่าย managed ผ่าน IAP (D-101) · ลำดับ E12→E13→E14 (D-102)
+1d. **`E15` Agent hiring** — ตลาดงาน · เจ้าของอนุมัติทุกงาน · escrow จ่ายเมื่อ merge · เพดาน + รายงานลงลายมือชื่อ (D-103..D-106) · **ลำดับรวม E12 → E13 → E16a → E15 → E16b → E14 (D-115) · ~60–82 วัน-คน (E12 โตเป็น 8–10 วันจาก fence, D-118)**
+2. **proactive / สัญญาณ** — แจ้งเจ้าของผ่าน Telegram เมื่อมีข้อเสนอหรือเหตุผิดปกติ ตอบ yes/no จากแชท · trigger จาก pattern รอ `S3.3` AC6 (ทางที่ 2 ของ D-096)
+3. `S10.9` UI ไทย · `S10.10` เว็บสร้าง agent/trigger/consent (ทางที่ 3 ของ D-096)
+4. `S9.3` แชทแพลตฟอร์มที่ 2 — LINE ต้องมี webhook สาธารณะ + บัญชี OA ของเจ้าของ (ทางที่ 4 ของ D-096)
+5. `S6.3` fine-tune — เปิดใหม่ได้เฉพาะเมื่อครบ 4 เงื่อนไขของ D-076
+6. fixture คนจริง / use case พนักงาน — เมื่อมีคนจริงยินยอม (D-009)
+
+### รอเจ้าของ (รวมไว้ที่เดียว)
+
+| อะไร | ทำที่ไหน |
+|---|---|
+| S6.1 AC4 — ตอบ y/n persona draft (sub-agent ตอบแทนไม่นับ) | เว็บ → Profile |
+| S6.5 AC1 — ตรวจชุดงาน 24 ข้อ + คำตอบที่คาดไว้ | `agents/om-bmt/evals.md` |
+| S3.3 AC6 — ตัดสินว่า 5 pattern แรกเป็นของจริง | `ohmyagi observe patterns` เมื่อ capture สะสมพอ |
+| S11.7 AC4 — distill บน knowledge จริง ตอบ ≥20 ข้อ | เว็บ → Memories → Facts to confirm |
+| commit memory ของ om-bmt เข้า git | repo ของ agent |
+| E14 — บัญชี Apple Developer · Google Play Console · นิติบุคคล · ราคา · สัญญา PDPA/GDPR | ก่อน S14.4/S14.7 |
+| E13 — บัญชี Hostinger/GCP/AWS และสิทธิ์ของ CLI | ก่อน S13.2–S13.4 |
+| E15 — payment provider แบบ marketplace/escrow · นิติบุคคล · ภาษี · ข้อตกลงและกระบวนการข้อพิพาท | ก่อน S15.6 |
+| A7 — ปล่อยให้ agent ลงมือจริง 2 สัปดาห์ | ใช้งานจริง |
 
 ### ไม่ทำ
 
@@ -817,11 +1010,12 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
 |---|---|---|---|
 | ~~A1~~ | ~~transcript สกัดพฤติกรรมได้จริง~~ → **ตอบแล้ว 2026-09-21 (SP-1)**: สกัดได้จริง 95% บน claude/grok **แต่ย้อนหลังได้แค่ 7 สัปดาห์** ⇒ E3 ต้องเปลี่ยนเป็น *ดักจับ* ไม่ใช่ *ขุดย้อนหลัง* (D-024) | SP-1 ✅ | — |
 | ~~A2~~ | ~~soul ลงได้ผลพอใช้กับ backend ที่ไม่มี flag~~ → **ตอบแล้ว 2026-09-23 (SP-2)**: claude/codex/kimi 9/9 · copilot 8/9 จากไฟล์ · grok ต้องใช้ flag | SP-2 | คำสัญญาหลักของ E1 |
-| A3 | LoRA คุ้มกว่า RAG ที่ขนาดข้อมูลที่หาได้ | SP-3 | S6.3 — ผิดแล้วตัดทิ้ง |
+| ~~A3~~ | ~~LoRA คุ้มกว่า RAG ที่ขนาดข้อมูลที่หาได้~~ → **ปิด 2026-09-25 (SP-3/D-076)**: ยังไม่ผ่าน — soul+RAG 91.7% · เปิดใหม่ได้ตาม 4 เงื่อนไข | SP-3 ⛔ | S6.3 ปิด |
 | ~~A4~~ | ~~ลบข้อมูลได้จริงทุกที่~~ → **ตอบแล้ว 2026-09-23 (SP-4/D-035)**: ได้ เฉพาะเมื่อลบทั้ง collection · ลบราย point ไม่ลบไบต์ · vector ยังไม่ตรวจ | SP-4 ✅ | — |
 | ~~A5~~ | ~~**ollama ล้วน ๆ ทำงานแทน claude/codex ได้พอใช้**~~ → **ตอบแล้ว 2026-09-21**: `soul verify` ได้ `confirmed` **9/9** (3 คำถาม × 3 รอบ ค่าสุ่มใหม่ทุกรอบ) บน 27B ในเครื่อง | S2.1 AC6 ✅ | — |
 | ~~A6~~ | ~~ความจำที่แนบทำให้ผลงานดีขึ้นจริง~~ → **ตอบแล้ว 2026-09-23 (S4.3 AC4)**: 0/10 ไม่มี recall → 10/10 มี recall | S4.3 AC4 | คุณค่าหลักของ E4 |
 | A7 | เจ้าของจะปล่อยให้ agent ลงมือเองจริง | S5.1 ใช้จริง 2 สัปดาห์ | E5 ไม่มีคนใช้ |
+| ~~A9~~ | ~~model ในเครื่อง (27B) ใช้เครื่องมือทำงานจริงได้พอใช้~~ → **ตอบแล้ว 2026-09-26 (SP-5/D-116)**: ได้ — claude/grok/kimi 15/15 บน qwen 27B ไม่มีอะไรออกนอกเครื่อง · งานจริงรอ S12.5 | SP-5 ✅ | — |
 | ✅ A8 | **egress filter จับข้อมูลส่วนตัวได้จริง** — 10/10 เมื่อเปิดด่านที่ 2 (D-061) · filter อย่างเดียว 8/10 | S8.3 AC3 (red-team 10 รูปแบบ) | **I-6 — ถ้าจับไม่ได้ ห้ามเปิด A2A เลย** |
 
 > ~~A5 คือสมมติฐานที่เสี่ยงที่สุดและยังไม่มี spike~~ → ตอบแล้ว (แถว A5 ข้างบน) · ความเสี่ยงที่เหลือมากที่สุดตอนนี้คือ **A8** — ประตูของ E8/E9

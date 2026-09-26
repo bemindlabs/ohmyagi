@@ -48,7 +48,7 @@ import {
   type DialSource,
   type EffectiveDial,
 } from "../src/decide/index.ts";
-import { VENDORS } from "../src/exec/index.ts";
+import { VENDORS, type VendorSpec } from "../src/exec/index.ts";
 import type { SoulIssue } from "../src/soul/index.ts";
 import type { SubjectId } from "../src/types.ts";
 import { runGuarded } from "../src/spawn.ts";
@@ -189,9 +189,15 @@ export async function whoIsSetting(dir: string): Promise<string> {
   }
 }
 
-/** The vendors that would be refused outright at an acting level of 1. */
-export function vendorsWithNoMechanism(): readonly string[] {
-  return VENDORS.filter((spec) => spec.readOnly.kind === "none").map((spec) => spec.id);
+/**
+ * The vendors that would be refused outright at an acting level of 1.
+ *
+ * Empty on the real registry since S12.6 (D-120 gave kimi a profile file). The
+ * list is still derived rather than dropped: the next vendor that offers
+ * nothing lands here by declaring `none`, with no second place to remember.
+ */
+export function vendorsWithNoMechanism(vendors: readonly VendorSpec[] = VENDORS): readonly string[] {
+  return vendors.filter((spec) => spec.readOnly.kind === "none").map((spec) => spec.id);
 }
 
 /** The one-line version, for a command whose output is mostly something else. */

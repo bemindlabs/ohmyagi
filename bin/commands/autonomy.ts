@@ -14,10 +14,11 @@
  * 1. **The number that will be ignored.** A turn runs at `min(write, run,
  *    reach)`, so `write = 3` with `reach = 1` does nothing at all. That is
  *    printed as a clamp, with both numbers and the reason, by `sayDial`.
- * 2. **The vendor that cannot honour the level.** kimi has no read-only
- *    mechanism and a measured turn wrote a file through it. At level 1 om-agi
- *    refuses to run there rather than running and hoping, and the person setting
- *    the level is told while they are setting it.
+ * 2. **The vendor that cannot honour the level.** A vendor that declares no
+ *    read-only mechanism is refused at level 1 rather than run hopefully, and the
+ *    person setting the level is told while they are setting it. kimi was that
+ *    vendor until S12.6 gave it a profile file (D-120); none is today, and the
+ *    sentence comes back by itself the day one is declared.
  * 3. **The flag that a `documented` reading rests on.** gemini's read-only claim
  *    comes from its own `--help` and no turn here has watched it hold. That
  *    sentence comes from `readonlyLimits()` — the one `ohmyagi backends` already
@@ -43,7 +44,7 @@ import {
   type Level,
   type ReachLevel,
 } from "../../src/decide/index.ts";
-import { PHASE_A_BACKENDS, readonlyLimits, readOnlySummary, VENDORS } from "../../src/exec/index.ts";
+import { PHASE_A_BACKENDS, readonlyLimits, readOnlySummary, VENDORS, type VendorSpec } from "../../src/exec/index.ts";
 import { formatIssue } from "../../src/soul/index.ts";
 import { subjectId, type SubjectId } from "../../src/types.ts";
 import {
@@ -69,7 +70,7 @@ const AUTONOMY_USAGE =
  * same dial — and so the clamps are said where a person can still act on them,
  * which is the whole of the no-silent-clamp rule.
  */
-export function sayDial(out: Sink, verdict: DialVerdict): void {
+export function sayDial(out: Sink, verdict: DialVerdict, vendors: readonly VendorSpec[] = VENDORS): void {
   const { effective } = verdict;
 
   out.line(out.bold("What a turn may do, and what took it there:"));
@@ -114,10 +115,10 @@ export function sayDial(out: Sink, verdict: DialVerdict): void {
 
   out.line("");
   out.line(out.bold("Per backend, because the dial is only as real as the vendor's flag:"));
-  for (const spec of VENDORS) out.line(`  ${spec.id.padEnd(8)} writes? ${readOnlySummary(spec)}`);
-  for (const line of readonlyLimits()) out.line(out.dim(`  - ${line}`));
+  for (const spec of vendors) out.line(`  ${spec.id.padEnd(8)} writes? ${readOnlySummary(spec)}`);
+  for (const line of readonlyLimits(vendors)) out.line(out.dim(`  - ${line}`));
 
-  const open = vendorsWithNoMechanism();
+  const open = vendorsWithNoMechanism(vendors);
   if (open.length > 0) {
     out.line("");
     out.line(

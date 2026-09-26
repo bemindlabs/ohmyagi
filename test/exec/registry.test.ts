@@ -5,9 +5,10 @@
  * that you do not. That answer is wrong here for two reasons the file's own
  * header states: these values were read off each CLI's `--help` and they move
  * between vendor releases, and the failures a wrong value causes are *silent* —
- * a missing `--max-turns` makes grok answer the first sentence and exit 0, a
- * missing `--tools ""` lets a probe answer by reading a file instead of from
- * its context. Neither shows up as an error anywhere.
+ * a missing grant makes grok cancel its first tool call and exit 0 with the
+ * sentence it said before it, a missing `--tools ""` lets a probe answer by
+ * reading a file instead of from its context. Neither shows up as an error
+ * anywhere.
  *
  * So what is pinned here is not "the data is correct" — only a person with the
  * CLI installed can say that — but the invariants that hold across every
@@ -46,6 +47,7 @@ import {
   readonlyLimits,
   CLAUDE_GRANT,
   CODEX_GRANT,
+  GROK_GRANT,
   claudeIsolation,
   grantArgs,
   readOnlyArgs,
@@ -218,13 +220,32 @@ describe("the individual flags that cost someone a debugging session", () => {
     expect(vendor("codex").replyPointers).toEqual([]);
   });
 
-  test("grok caps its turns, because without a cap it half-answers and exits 0", () => {
+  test("grok's turn cap is a backstop with room, not the old cap of 2", () => {
+    // Measured 2026-09-26 on 1.0.40 (S12.6): a fix-and-test task took 4 to 6
+    // model calls over 25 runs, and a cap hit exits 1 with no reply. A cap of
+    // 2 could never finish it (0/5). The half-answer the cap was once blamed
+    // for was an approval cancel — the grant below is what fixed that.
     const args = argv(vendor("grok"));
     const at = args.indexOf("--max-turns");
     expect(at).toBeGreaterThan(-1);
-    expect(Number(args[at + 1])).toBeGreaterThan(0);
+    expect(Number(args[at + 1])).toBeGreaterThanOrEqual(6);
     // Two shapes are tried because this vendor prints its reply under either.
     expect(vendor("grok").replyPointers).toEqual(["/text", "/result"]);
+  });
+
+  test("grok is granted at 2 and 3 with the one flag that never cancels a turn silently", () => {
+    // D-119. `--allow Bash --allow Edit --allow Write` still left `rm` and any
+    // `$?` command to a prompt nobody answers, and a headless prompt is a
+    // cancel that ends the turn with exit 0 (3 of 11 multi-step runs).
+    expect(vendor("grok").grant).toBe(GROK_GRANT);
+    expect(grantArgs(GROK_GRANT, RESTRAINED)).toEqual([]);
+    expect(grantArgs(GROK_GRANT, LOOSENED)).toEqual(["--always-approve"]);
+    expect(grantArgs(GROK_GRANT, atLevel(3))).toEqual(["--always-approve"]);
+    expect(argv(vendor("grok"))).not.toContain("--always-approve");
+  });
+
+  test("grok says how a turn ended, and a turn that did not finish is not an answer", () => {
+    expect(vendor("grok").completion).toEqual({ pointer: "/stopReason", value: "end_turn" });
   });
 
   test("copilot denies the two tools that would let a read-only turn write", () => {
@@ -236,25 +257,45 @@ describe("the individual flags that cost someone a debugging session", () => {
     expect(denied.sort()).toEqual(["shell", "write"]);
   });
 
-  test("kimi asks for plain text — and that is the whole of what its argv does", () => {
-    // This assertion used to be `toEqual(["-p", PROMPT, "--output-format",
+  test("kimi's read-only turn is held by a profile file, and the argv follows the declaration", () => {
+    // This assertion was once `toEqual(["-p", PROMPT, "--output-format",
     // "text"])`, and it passed for months. It was also the strongest thing in
-    // this repository keeping a security hole in place: kimi has no tool
-    // filter, an exact-argv pin says *these flags and no others*, and so the
-    // test that looked like coverage would have failed the day somebody added
-    // a limit. A pinned constant cannot tell "this is deliberate" from "this
-    // is all we managed" — it only says "do not change this", including when
-    // changing it is the fix.
+    // this repository keeping a security hole in place: an exact-argv pin says
+    // *these flags and no others*, so the test that looked like coverage would
+    // have failed the day somebody added a limit. A pinned constant cannot tell
+    // "this is deliberate" from "this is all we managed".
     //
-    // The lesson is not about kimi. Any `toEqual` over a value that encodes a
-    // policy freezes the policy, so what is pinned here is the *declaration*
-    // (`readOnly.kind === "none"`, with the reason) rather than the bare list.
-    // Close the hole and this test passes by following the declaration; leave
-    // it open and `readonlyLimits()` says so out loud on every run.
+    // S12.6 is that day (D-120), and the rewrite shows the lesson held: what is
+    // pinned is the *declaration* — the kind, the path, the tools the file
+    // names — and the argv is checked against it, not against a literal list.
     const spec = vendor("kimi");
-    expect(argv(spec)).toEqual(["-p", PROMPT, "--output-format", "text"]);
-    expect(spec.readOnly.kind).toBe("none");
-    expect(readOnlyArgs(spec.readOnly)).toEqual([]);
+    const mechanism = spec.readOnly;
+    expect(mechanism.kind).toBe("agent-file");
+    if (mechanism.kind !== "agent-file") return;
+    expect(argv(spec)).toEqual(["-p", PROMPT, "--output-format", "text", ...readOnlyArgs(mechanism)]);
+    expect(readOnlyArgs(mechanism)).toEqual([mechanism.flag, mechanism.values[0]]);
+    expect(argv(spec, undefined, LOOSENED)).toEqual(["-p", PROMPT, "--output-format", "text"]);
+  });
+
+  test("kimi's profile names exactly three read-only tools, and lives where no repository can shadow it", () => {
+    const mechanism = vendor("kimi").readOnly;
+    if (mechanism.kind !== "agent-file") throw new Error("kimi is no longer held by a profile file");
+    const [, front = "", body = ""] = mechanism.content.split(/^---$/m);
+    // The allow list is the front matter's `tools:`; nothing else in the file
+    // may name a tool the turn gets.
+    const tools = [...front.matchAll(/^\s+-\s+(\S+)$/gm)].map((m) => m[1]);
+    expect(tools).toEqual(["Read", "Glob", "Grep"]);
+    for (const tool of tools) expect(tool).not.toMatch(/bash|shell|write|edit|fetch|web|agent|cron/i);
+    // Without it the vendor's own prompt — and every AGENTS.md, the identity
+    // channel — is gone from the turn.
+    expect(body).toContain("${base_prompt}");
+    // `~/`-relative, so the argv is the same on every install and the vendor
+    // expands it against the child's HOME; never relative to a repository, and
+    // never under a directory the vendor searches for profiles, where a
+    // repository profile of the same name would outrank it.
+    expect(mechanism.values[0]).toStartWith("~/");
+    expect(mechanism.values[0]).not.toMatch(/\.kimi-code\/agents|\.agents\/agents/);
+    expect(mechanism.values[0]).toEndWith(".md");
   });
 
   test("every trap recorded is a sentence, not a shrug", () => {
@@ -277,8 +318,43 @@ describe("the individual flags that cost someone a debugging session", () => {
  * `headlessArgv` splices `readOnlyArgs` in, so on its own it would prove only
  * that the splice happened.
  */
+/**
+ * A vendor with nothing to pass, and an argv of its own. Synthetic since S12.6
+ * left no real vendor declaring `none` (D-120): the `none` arm still has to be
+ * held to what it says, for the next vendor that declares it.
+ */
+const HOLE: VendorSpec = {
+  ...vendor("kimi"),
+  id: "example",
+  readOnly: {
+    kind: "none",
+    why:
+      "a synthetic vendor with no tool filter and no sandbox: a headless turn told to write a file " +
+      "would write it, and nothing in this repository could narrow it",
+    evidence: "writes",
+  },
+  // kimi carries no grant and no hardening, so neither needs taking away.
+  headlessArgv: ({ prompt, model }) => ["-p", prompt, ...(model ? ["-m", model] : [])],
+};
+
+/** The argv with the vendor's hardening slice taken out once, where it sits. */
+function withoutHardening(spec: VendorSpec, args: readonly string[]): string[] {
+  const slice = spec.hardening?.args ?? [];
+  if (slice.length === 0) return [...args];
+  for (let at = 0; at + slice.length <= args.length; at += 1) {
+    if (slice.every((token, i) => args[at + i] === token)) return [...args.slice(0, at), ...args.slice(at + slice.length)];
+  }
+  return [...args];
+}
+
 const GOVERNING_FLAGS: readonly string[] = [
   "--tools",
+  "--agent",
+  "--agent-file",
+  "-c",
+  "--config",
+  "--disable",
+  "--enable",
   "--allow",
   "--deny",
   "--allowedTools",
@@ -364,7 +440,10 @@ describe("what stops a turn from writing, per vendor", () => {
           ? []
           : [mechanism.flag, ...(mechanism.despite === undefined ? [] : [mechanism.despite.flag])],
       );
-      const undeclared = argv(spec, "m").filter(
+      // The hardening slice is declared whole, so it is taken out whole: a flag
+      // it happens to share — codex's `-c` — must not excuse a second `-c`
+      // anywhere else in the argv, which could carry any config key at all.
+      const undeclared = withoutHardening(spec, argv(spec, "m")).filter(
         (token) => GOVERNING_FLAGS.includes(token) && !declared.has(token),
       );
       expect({ id: spec.id, undeclared }).toEqual({ id: spec.id, undeclared: [] });
@@ -373,14 +452,17 @@ describe("what stops a turn from writing, per vendor", () => {
 
   test("a vendor with no mechanism carries no permission flag at all", () => {
     // The `none` arm's own control. Without this, "we have no mechanism" and
-    // "we pass a flag and call it nothing" are the same green test.
-    for (const spec of VENDORS) {
+    // "we pass a flag and call it nothing" are the same green test. On the
+    // synthetic vendor as well as the real ones, because since S12.6 the real
+    // loop has nobody to check.
+    for (const spec of [...VENDORS, HOLE]) {
       if (spec.readOnly.kind !== "none") continue;
       expect(argv(spec, "m").filter((t) => GOVERNING_FLAGS.includes(t))).toEqual([]);
       expect(spec.readOnly.evidence).toBe("writes");
       // Long enough to say what was looked for and what it costs: this string
       // is printed to a human as the reason a vendor is unguarded.
       expect(spec.readOnly.why.length).toBeGreaterThan(120);
+      expect(readOnlySummary(spec)).toBe("yes — no limit");
     }
   });
 
@@ -418,8 +500,9 @@ describe("what stops a turn from writing, per vendor", () => {
     // `no` would let one reading of a vendor's `--help` look identical to a
     // turn that was actually watched, which is the whole distinction this
     // story exists to make.
-    const summaries = new Map(VENDORS.map((spec) => [spec.id, readOnlySummary(spec)]));
-    for (const spec of VENDORS) {
+    const all = [...VENDORS, HOLE];
+    const summaries = new Map(all.map((spec) => [spec.id, readOnlySummary(spec)]));
+    for (const spec of all) {
       const summary = summaries.get(spec.id)!;
       if (spec.readOnly.kind === "none") expect(summary).toStartWith("yes");
       else if (spec.readOnly.evidence === "probed") expect(summary).toBe("no (measured)");
@@ -428,8 +511,9 @@ describe("what stops a turn from writing, per vendor", () => {
     // Every vendor that is unguarded says so in the word a hurried reader
     // takes in first, not in a parenthesis at the end.
     expect([...summaries.values()].filter((s) => s.startsWith("yes")).length).toBe(
-      VENDORS.filter((spec) => spec.readOnly.kind === "none").length,
+      all.filter((spec) => spec.readOnly.kind === "none").length,
     );
+    expect(summaries.get("example")).toBe("yes — no limit");
   });
 
   test("a loosening flag exists only where it is declared with a reason", () => {
@@ -580,9 +664,25 @@ describe("where each vendor says it prints what a turn used", () => {
     // `null` here becomes `unreported` downstream — a statement about om-agi's
     // survey. Guessing a pointer from another vendor's spelling would produce
     // `missing` on every turn instead, which reads as a vendor that broke.
-    for (const id of ["grok", "gemini", "copilot", "kimi"]) {
+    for (const id of ["gemini", "copilot", "kimi"]) {
       expect(vendor(id).usage).toBeNull();
     }
+  });
+
+  test("grok sums all three input fields too, and names its own total", () => {
+    // Surveyed 2026-09-26 against 1.0.40 (S12.6), 76 turns: present on every
+    // one, cancelled and exit-1 turns included, and the vendor's own total
+    // equalled the three input fields plus output on all 76.
+    const usage = vendor("grok").usage;
+    expect(usage?.shape).toBe("json");
+    if (usage?.shape !== "json") return;
+    expect([...usage.input].sort()).toEqual([
+      "/usage/cache_creation_input_tokens",
+      "/usage/cache_read_input_tokens",
+      "/usage/input_tokens",
+    ]);
+    expect(usage.output).toBe("/usage/output_tokens");
+    expect(usage.total).toBe("/usage/total_tokens");
   });
 });
 
@@ -604,6 +704,115 @@ describe("PHASE_A_BACKENDS", () => {
   });
 });
 
+/** Flags that widen what a turn may do. None of them may hide in a hardening list. */
+const LOOSENING: readonly string[] = [
+  "--always-approve",
+  "--yolo",
+  "-y",
+  "--auto",
+  "--allow",
+  "--allow-all-tools",
+  "--allowedTools",
+  "--allowed-tools",
+  "--allow-tool",
+  "--enable",
+  "--sandbox",
+  "--permission-mode",
+  "--approval-mode",
+  "--ask-for-approval",
+  "--dangerously-skip-permissions",
+  "--dangerously-bypass-approvals-and-sandbox",
+  "--full-auto",
+  "--agent",
+  "--agent-file",
+];
+
+describe("S12.6 — hardening sent at every level", () => {
+  test("every hardening list is in the argv at 1, 2 and 3, contiguous and in order", () => {
+    let hardened = 0;
+    for (const spec of VENDORS) {
+      if (spec.hardening === undefined) continue;
+      hardened += 1;
+      for (const level of [RESTRAINED, LOOSENED, atLevel(3)]) {
+        const joined = spec.headlessArgv({ prompt: "p", restraint: level }).join("\u0000");
+        expect(joined, spec.id).toContain(spec.hardening.args.join("\u0000"));
+      }
+      expect(spec.hardening.why.length).toBeGreaterThan(40);
+    }
+    expect(hardened).toBeGreaterThanOrEqual(2);
+  });
+
+  test("a hardening list only narrows: no flag in it widens what a turn may do", () => {
+    for (const spec of VENDORS) {
+      const args = spec.hardening?.args ?? [];
+      expect({ id: spec.id, loosening: args.filter((t) => LOOSENING.includes(t)) }).toEqual({
+        id: spec.id,
+        loosening: [],
+      });
+    }
+  });
+
+  test("codex's hardening is exactly these switches, and nothing rides beside them", () => {
+    // `-c` can carry any config key, sandbox_mode and approval_policy among
+    // them, so the list is pinned whole: another `-c` has to be argued for.
+    // `--disable` over `-c features.x=false` because `-c` accepts a misspelt
+    // feature silently and `--disable` refuses to start (probed 2026-09-26).
+    expect(vendor("codex").hardening?.args).toEqual([
+      "--disable",
+      "plugins",
+      "--disable",
+      "shell_snapshot",
+      "--disable",
+      "apps",
+      "--disable",
+      "remote_plugin",
+      "-c",
+      "shell_environment_policy.ignore_default_excludes=false",
+    ]);
+    // And the argv carries no `-c`, `--config`, `--enable` or `--disable` of
+    // its own outside that slice, at any level.
+    for (const level of [RESTRAINED, LOOSENED, atLevel(3)]) {
+      const rest = withoutHardening(vendor("codex"), vendor("codex").headlessArgv({ prompt: "p", restraint: level }));
+      expect(rest.filter((t) => ["-c", "--config", "--enable", "--disable"].includes(t))).toEqual([]);
+    }
+  });
+
+  test("hardening switches in the environment only switch things off", () => {
+    for (const spec of VENDORS) {
+      for (const [name, value] of Object.entries(spec.hardening?.env ?? {})) {
+        expect({ id: spec.id, name, value }).toEqual({ id: spec.id, name, value: "0" });
+      }
+    }
+  });
+
+  test("grok's environment switches take Claude's and Cursor's hooks and MCP servers out of its turns", () => {
+    // `grok inspect` on the owner's home, 2026-09-26: five Claude hooks and
+    // seven MCP servers from `~/.claude.json` loaded into every turn, level 1
+    // included, until these were set. `RULES` stays on on purpose — it is the
+    // instruction-file channel the identity entry names.
+    const env = vendor("grok").hardening?.env ?? {};
+    for (const vendorName of ["CLAUDE", "CURSOR"]) {
+      for (const surface of ["HOOKS", "MCPS", "AGENTS", "SKILLS"]) {
+        expect(env[`GROK_${vendorName}_${surface}_ENABLED`]).toBe("0");
+      }
+    }
+    expect(env["GROK_MANAGED_MCPS_ENABLED"]).toBe("0");
+    expect(env["GROK_CLAUDE_RULES_ENABLED"]).toBeUndefined();
+    expect(vendor("grok").identity.instructionFiles).toEqual(["~/.claude/CLAUDE.md"]);
+  });
+
+  test("grok's hardening removes the two meta-tools a level-1 turn used to reach a shell", () => {
+    const args = vendor("grok").hardening?.args ?? [];
+    expect(args[0]).toBe("--disallowed-tools");
+    const removed = (args[1] ?? "").split(",");
+    expect(removed).toContain("search_tool");
+    expect(removed).toContain("use_tool");
+    // Hygiene, not the fence: the level-1 fence stays the allow list, which
+    // fails closed when a name drifts.
+    expect(vendor("grok").readOnly.kind).toBe("allow-tools");
+  });
+});
+
 describe("D-047 — grants and isolation", () => {
   test("levels 2 and 3 grant explicitly; below 2 nothing is granted", () => {
     expect(grantArgs(CLAUDE_GRANT, RESTRAINED)).toEqual([]);
@@ -613,6 +822,7 @@ describe("D-047 — grants and isolation", () => {
     expect(grantArgs(undefined, atLevel(3))).toEqual([]);
     expect(vendor("claude").grant).toBe(CLAUDE_GRANT);
     expect(vendor("codex").grant).toBe(CODEX_GRANT);
+    expect(vendor("grok").grant).toBe(GROK_GRANT);
   });
 
   test("a claude turn that carries its own identity loads no user settings; every claude turn loads no MCP", () => {
@@ -631,8 +841,7 @@ describe("D-047 — grants and isolation", () => {
         ...grantArgs(spec.grant, atLevel(3)).filter((t) => t.startsWith("--")),
       ]);
       for (const level of [LOOSENED, atLevel(3)]) {
-        const undeclared = spec
-          .headlessArgv({ prompt: "p", restraint: level })
+        const undeclared = withoutHardening(spec, spec.headlessArgv({ prompt: "p", restraint: level }))
           .filter((token) => GOVERNING_FLAGS.includes(token) && !declared.has(token));
         expect({ id: spec.id, undeclared }).toEqual({ id: spec.id, undeclared: [] });
       }

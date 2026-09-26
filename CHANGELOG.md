@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+## 0.7.2 — 2026-09-26
+
+### Backends — what SP-5 and S12.6 found wrong in how each vendor CLI is run (D-116 → D-121)
+- **grok can act at levels 2 and 3.** Headless grok *cancels* any tool call that needs an approval and exits 0,
+  so with no grant a level-2 turn ended at its first command having done nothing. It is now granted
+  `--always-approve` (the owner's choice, D-119; the `--allow` rules still died silently on `rm`, on `$?` and in 3 of
+  11 multi-step runs). `--max-turns` goes from 2 — which could never finish a 4-to-6-step task — to 20.
+- **grok stops loading other tools' settings.** On the owner's machine every grok turn, level 1 included, ran Claude
+  Code's hooks (a SessionStart hook that injects another persona among them) and seven MCP servers from
+  `~/.claude.json`. The Claude and Cursor compatibility switches are now off for every turn om-agi starts, and the
+  MCP meta-tools a level-1 turn used to reach a shell are removed.
+- **kimi can run at level 1.** It was refused there because 2.0.2 seemed to have no read-only mode; it has one —
+  `--agent-file`. om-agi writes a profile with only Read, Glob and Grep before every read-only turn (D-120). The
+  built-in `plan` profile is not used: it fetches web pages, and a repository can replace it with one that writes.
+- **codex stops phoning plugins and leaking keys to its shell.** Every turn now runs with `--disable plugins`,
+  `--disable shell_snapshot`, `--disable apps`, `--disable remote_plugin` and
+  `shell_environment_policy.ignore_default_excludes=false` (D-121): no fetch from github.com before the turn, and
+  environment variables named `*KEY*`, `*SECRET*` or `*TOKEN*` stay out of the commands the model runs.
+- **A turn that did not finish is no longer an answer.** A reply field that is there and blank used to be replaced
+  by the whole JSON document — which then counted as confirmed; a notice printed before the JSON hid it; and grok's
+  `stopReason` was ignored. All three now come back `silent`, so the chain moves on.
+- **grok's token counts are read** (`/usage/*`), so its turns reach the ledger with numbers instead of `unreported`.
+
+### Roadmap
+- SP-5 answered (D-116): Claude Code, Grok and Kimi each drove the local 27B model through LiteLLM 15/15 with nothing
+  leaving the machine — so E12 builds on them (claude → grok, D-117) inside a Landlock fence (D-118), not on a loop of
+  our own. The platform and app repositories exist (D-122).
+
 ## 0.7.1 — 2026-09-26
 
 ### Turns — the chat keeps its context, and a personal line no longer holds a whole turn back (D-095)
