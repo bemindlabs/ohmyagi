@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/logo.png" alt="Oh My AGI logo — a glowing amber droplet on a navy tile" width="96">
+<img src="docs/assets/mascot.svg" alt="Om, the Oh My AGI mascot — a small golden drop of light with a face, blinking, with sparks circling it" width="120">
 
 # Oh My AGI
 
