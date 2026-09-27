@@ -28,12 +28,13 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { barePath, BUN, expectNoVendorOn } from "../support/bare-path.ts";
 import { serveOllama } from "../support/stub-ollama.ts";
 import { EGRESS_NOTICE_PREFIX } from "../../src/exec/egress.ts";
+import { fenceSupport } from "../../src/exec/fence.ts";
 import { ensureCaptureDir, captureDir } from "../../src/observer/capture-store.ts";
 import { consentDigest, consentText, saveConsent } from "../../src/observer/consent.ts";
 import { CAPTURE_VERSION } from "../../src/observer/record.ts";
@@ -45,6 +46,7 @@ const ROOT = join(import.meta.dir, "..", "..");
 const BIN = join(ROOT, "bin", "om-agi.ts");
 const SOUL = join(ROOT, "test", "fixtures", "soul-valid");
 const HUMAN = join(ROOT, "test", "fixtures", "instructions", "human-200.md");
+const FENCE_SUPPORT = fenceSupport();
 
 /** A port nothing listens on, so "ollama is down" is a real condition. */
 const NO_OLLAMA = "http://127.0.0.1:1";
@@ -81,7 +83,8 @@ if (mode === "unauthenticated") {
 
 const token = (prompt.match(/token (\\S+)/) ?? [])[1] ?? "no-token";
 const carried = system.includes("Example Keeper") ? "with-soul" : "no-soul";
-const answer = token + " from ${name} " + carried;
+const held = system.includes("synthetic held marker") ? " with-held" : "";
+const answer = token + " from ${name} " + carried + held;
 console.log(${reply});
 `;
 }
@@ -109,7 +112,7 @@ async function makeHarness(): Promise<Harness> {
 
   const stubs = join(home, "bin");
   await mkdir(stubs, { recursive: true });
-  for (const [name, shape] of [["claude", "json"], ["codex", "text"]] as const) {
+  for (const [name, shape] of [["claude", "json"], ["codex", "text"], ["grok", "json"]] as const) {
     const path = join(stubs, name);
     await writeFile(path, stubSource(name, shape));
     await chmod(path, 0o755);
@@ -158,7 +161,134 @@ function ask(value: string): string {
   return `Reply with the token ${value} and nothing else.`;
 }
 
+async function writeLocalKey(home: string): Promise<void> {
+  const directory = join(home, ".secrets");
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, ".env.om-agi-litellm"), "LITELLM_API_KEY=synthetic-turn-key\n");
+}
+
 describe("ohmyagi turn", () => {
+  test("an unknown --route value is a usage error before anything runs", async () => {
+    const harness = await makeHarness();
+    const result = await run(
+      harness.home,
+      ["turn", SOUL, "--subject", "example", "--prompt", "anything", "--route", "hybrid"],
+      { path: harness.withVendors, ollama: NO_OLLAMA },
+    );
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("--route must be one of auto, local or cloud");
+    expect(result.stdout).toBe("");
+  });
+
+  test.skipIf(!FENCE_SUPPORT.ok)("--route local puts the fenced local chain before the usual chain", async () => {
+    const harness = await makeHarness();
+    await writeLocalKey(harness.home);
+    const value = token();
+    const result = await run(
+      harness.home,
+      ["turn", SOUL, "--subject", "example", "--prompt", ask(value), "--route", "local"],
+      { path: harness.withVendors, ollama: NO_OLLAMA },
+    );
+
+    expect(result.code).toBe(0);
+    expect(result.stdout.trim()).toBe(`${value} from claude with-soul`);
+    expect(result.stderr).toContain("You asked for local, and a fenced local backend is ready.");
+    expect(result.stderr).toContain("answered by claude-local");
+    expect(egressNotices(result.stderr)).toEqual([]);
+    // D-123: the complete fence makes this a genuinely local dispatch.
+    expect(result.stderr).not.toContain("screened as if leaving:");
+  }, 20_000);
+
+  test.skipIf(!FENCE_SUPPORT.ok)("D-123: a fenced local CLI receives a recalled piece held from cloud", async () => {
+    const harness = await makeHarness();
+    await writeLocalKey(harness.home);
+    const where = await run(
+      harness.home,
+      ["egress", "needles", "--subject", "example"],
+      { path: harness.withVendors },
+    );
+    const needles = where.stdout.split("\n")[0]!;
+    await mkdir(join(needles, ".."), { recursive: true });
+    await writeFile(needles, "synthetic held marker\n");
+
+    const agent = join(harness.home, "agent");
+    await cp(SOUL, join(agent, "soul"), { recursive: true });
+    await mkdir(join(agent, "memory"), { recursive: true });
+    await writeFile(join(agent, "memory", "held.md"), "# Local fact\n\nsynthetic held marker belongs here.\n");
+    await writeFile(
+      join(agent, "autonomy.md"),
+      '+++\nschema = "om-agi/autonomy@1"\n\nread = 2\nwrite = 2\nrun = 2\nreach = 2\n+++\n',
+    );
+    const indexed = await run(
+      harness.home,
+      ["memory", "index", agent, "--subject", "example"],
+      { path: harness.withVendors },
+    );
+    expect(indexed.code, indexed.stderr).toBe(0);
+
+    const value = token();
+    const result = await run(
+      harness.home,
+      ["turn", agent, "--subject", "example", "--prompt", `token ${value} — what belongs here?`],
+      { path: harness.withVendors, ollama: NO_OLLAMA },
+    );
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe(`${value} from claude with-soul with-held`);
+    expect(result.stderr).toContain("1 piece(s) stay on this machine");
+    expect(result.stderr).toContain("1 recalled piece is held from cloud and the turn acts");
+    expect(egressNotices(result.stderr)).toEqual([]);
+  }, 30_000);
+
+  test.skipIf(!FENCE_SUPPORT.ok)("a dead claude-local falls through to grok-local, with both sends in the ledger", async () => {
+    const harness = await makeHarness();
+    await writeLocalKey(harness.home);
+    await writeFile(join(harness.home, "bin", "claude"), "#!/usr/bin/env bun\nprocess.exit(1);\n");
+    await writeFile(join(harness.home, "bin", "grok"), `#!/usr/bin/env bun
+const argv = process.argv.slice(2);
+const promptAt = argv.indexOf("-p");
+const prompt = argv[promptAt + 1] ?? "";
+const rulesAt = argv.indexOf("--rules");
+const rules = rulesAt === -1 ? "" : (argv[rulesAt + 1] ?? "");
+const token = (prompt.match(/token (\\S+)/) ?? [])[1] ?? "no-token";
+console.log(JSON.stringify({
+  text: token + " from grok " + (rules.includes("Example Keeper") ? "with-soul" : "no-soul"),
+  stopReason: "end_turn",
+  usage: { input_tokens: 11, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 7, total_tokens: 18 }
+}));
+`);
+    await chmod(join(harness.home, "bin", "claude"), 0o755);
+    await chmod(join(harness.home, "bin", "grok"), 0o755);
+
+    const value = token();
+    const result = await run(
+      harness.home,
+      [
+        "turn", SOUL, "--subject", "example", "--prompt", ask(value),
+        "--backend", "claude-local,grok-local",
+      ],
+      { path: harness.withVendors, ollama: NO_OLLAMA },
+    );
+
+    expect(result.code).toBe(0);
+    expect(result.stdout.trim()).toBe(`${value} from grok with-soul`);
+    expect(result.stderr).toContain("answered by grok-local");
+    expect(result.stderr).toContain("missed: claude-local: silent");
+    expect(egressNotices(result.stderr)).toEqual([]);
+    expect(result.stderr).not.toContain("screened as if leaving:");
+
+    const ledgerDir = join(harness.home, "state", "om-agi", "ledger", "example");
+    const files = await readdir(ledgerDir);
+    const lines = (await readFile(join(ledgerDir, files[0]!), "utf8"))
+      .trim().split("\n").map((line) => JSON.parse(line) as {
+        backend: string;
+        model: string | null;
+        usage: { status: string; input: number | null; output: number | null };
+      });
+    expect(lines.map((line) => line.backend)).toEqual(["claude-local", "grok-local"]);
+    expect(lines.every((line) => line.model === "local-coder")).toBe(true);
+    expect(lines[1]!.usage).toMatchObject({ status: "reported", input: 11, output: 7 });
+  }, 20_000);
+
   test("AC6 — with claude and codex off PATH, the turn finishes on ollama alone", async () => {
     const harness = await makeHarness();
     const ollama = serveOllama();
@@ -410,6 +540,11 @@ describe("ohmyagi turn", () => {
         confidence: string;
         identityStrength: string;
         route: string;
+        local: boolean;
+        model: string | null;
+        held: number;
+        heldMessages: number;
+        changed: unknown;
         evidence: { source: string; prompt: string; raw: string };
       };
       expect(parsed.backend).toBe("ollama");
@@ -419,6 +554,14 @@ describe("ohmyagi turn", () => {
       expect(parsed.evidence.prompt).toBe(ask(value));
       expect(parsed.evidence.raw).toContain("not on PATH");
       expect(parsed.route).toContain("answered by ollama");
+      // S12.4 — who handled the turn is reported as fields, not only as the
+      // route sentence: ollama is the local backend, the model is the one the
+      // turn named, and nothing was held back from a backend that sees everything.
+      expect(parsed.local).toBe(true);
+      expect(parsed.model).toBe("stub");
+      expect(parsed.held).toBe(0);
+      expect(parsed.heldMessages).toBe(0);
+      expect(parsed.changed).toBeNull();
       expect(result.code).toBe(0);
     } finally {
       await ollama.server.stop(true);

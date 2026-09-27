@@ -104,6 +104,19 @@ describe("level 1 proposes instead of acting", () => {
     expect(json.proposals.map((p) => p.outcome)).toEqual(["already-asked"]);
   }, 60_000);
 
+  test("--no-proposals files nothing — a measurement leaves no work in the owner's list", async () => {
+    // `ohmyagi eval` runs every task at level 1; before this flag each answer that proposed
+    // something filed it, so measuring an agent put questions in front of its owner.
+    const ollama = proposingOllama(ANSWER);
+    const { soul, run } = await setup(ollama.url);
+    const result = await run(turn(soul, "--json", "--no-proposals"));
+    expect(result.code, result.stderr).toBe(0);
+    const json = JSON.parse(result.stdout) as { proposals: unknown[] };
+    expect(json.proposals).toEqual([]);
+    const list = await run(["proposal", "list", soul, "--subject", "example"]);
+    expect(list.stdout).not.toContain("filed by the agent");
+  }, 60_000);
+
   test("an unreadable block is said, and nothing is filed for it", async () => {
     const ollama = proposingOllama("```" + PROPOSAL_FENCE + '\n{"what": "only this"}\n```');
     const { soul, run } = await setup(ollama.url);

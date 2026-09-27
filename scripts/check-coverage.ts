@@ -307,7 +307,14 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // because the one command that got this wrong, `ohmyagi stop`, was the one
   // where getting it wrong set the brake. See `test/cli/help-does-nothing.test.ts`.
   // 83 since S5.2: one `case` label and one import, for `proposal`.
-  ["bin/om-agi.ts", { lines: 118, why: "entry point — dispatch and process.exit" }],
+  // 128 since S12.2: the hidden Landlock helper is dispatched before public
+  // commands; success replaces this process, refusal returns its exit code,
+  // and a failed fence does not run the ordinary update check. The command it
+  // will execvp is judged by the spawn chokepoint's list first (8 of those lines).
+  // 133 since S12.7: the fixed hidden seccomp supervisor is dispatched before
+  // public commands and excluded from the automatic update check, just like
+  // the existing fence helper. Its process behaviour is covered by fence tests.
+  ["bin/om-agi.ts", { lines: 133, why: "entry point — dispatch and process.exit" }],
   // One `export const USAGE = \`…\`` around 240 lines of help text. A test could
   // import it and the floor would read 100% off a single declaration while the
   // text said anything at all; the size is the only honest number here.
@@ -320,7 +327,9 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // three paragraphs that say where proposals are kept and why it is not the
   // ledger (D-029), that the comparison is exact and where that misses, and
   // that om-agi does not turn an agent's own actions into proposals.
-  ["bin/usage.ts", { lines: 565, why: "help text — one declaration, 565 lines of prose" }],
+  // S12.1/S12.3 adds the route flag and explains when the local chain is put
+  // before the usual one; this is user-facing contract text, not hidden logic.
+  ["bin/usage.ts", { lines: 573, why: "help text — one declaration, 573 lines of prose" }],
   // The commands. Each is `cmdX(rest)` returning an exit code, and each reads
   // `process.env`, `homedir()` or `cwd` on its way. Calling them in-process
   // would mean swapping `HOME` inside the test runner; the tests spawn instead.
@@ -374,7 +383,14 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // anything is written, and the approval it names is marked spent immediately
   // before the prompt goes — an approval recorded afterwards is one a crash
   // hands back unused.
-  ["bin/commands/turn.ts", { lines: 489, why: "command — run by spawning the CLI" }],
+  // 494 since S12.4: `--json` also reports who handled the turn — `local` (the
+  // display rule from src/web/turninfo.ts), `model`, and the D-095 held counts
+  // (`held`, `heldMessages`) — beside the route, the change report and recall.
+  // 554 since S12.1/S12.3/S12.7: `--route` is parsed after the dial and recall facts
+  // exist, the fenced local chain is prepended only when chosen, and each local
+  // member receives its per-turn fence before egress and ledger wrappers see it;
+  // the D-123 door is now checked against the prepared request at dispatch.
+  ["bin/commands/turn.ts", { lines: 554, why: "command — run by spawning the CLI" }],
   ["bin/commands/worn.ts", { lines: 66, why: "command — run by spawning the CLI" }],
 ]);
 
@@ -469,7 +485,7 @@ export const PROOFS = new Map<string, Proof>([
       provedOn: "2026-09-24",
       by: "npm run demo -- --model <a local model>",
       result:
-        "15/15 criteria passed on 2026-09-26 on the tree released as 0.7.2 (run f28cd0ba, table kept in notes/2026-09-26_demo-v0.7.2.txt), on 0.7.1 the same day (run 0eaea0cf, table kept in notes/2026-09-26_demo-v0.7.1.txt), on 0.7.0 the same day (run 1c88d842, table kept in notes/2026-09-26_demo-v0.7.0.txt), on 0.6.1 the same day (run 3eaea63f, table kept in notes/2026-09-26_demo-v0.6.1.txt), on 0.6.0 the same day (run 1972948d, table kept in notes/2026-09-26_demo-v0.6.0.txt), on 0.5.1 on 2026-09-25 (run caa68c60, table kept in notes/2026-09-25_demo-v0.5.1.txt), on 0.5.0 the same day (run 5e5f6903, table kept in notes/2026-09-25_demo-v0.5.0.txt), on 0.4.2 the same day (run fbad84d0, table kept in notes/2026-09-25_demo-v0.4.2.txt), on 0.4.1 the same day (run 8a52848c, table kept in notes/2026-09-25_demo-v0.4.1.txt), on 0.4.0 the day before (run 065c6900, table kept in notes/2026-09-24_demo-v0.4.0.txt), on 0.3.0 the same day (run cbeda900, " +
+        "15/15 criteria passed on 2026-09-27 on the tree released as 0.8.0 (run 391c781f, table kept in notes/2026-09-27_demo-v0.8.0.txt), on 0.7.2 on 2026-09-26 (run f28cd0ba, table kept in notes/2026-09-26_demo-v0.7.2.txt), on 0.7.1 the same day (run 0eaea0cf, table kept in notes/2026-09-26_demo-v0.7.1.txt), on 0.7.0 the same day (run 1c88d842, table kept in notes/2026-09-26_demo-v0.7.0.txt), on 0.6.1 the same day (run 3eaea63f, table kept in notes/2026-09-26_demo-v0.6.1.txt), on 0.6.0 the same day (run 1972948d, table kept in notes/2026-09-26_demo-v0.6.0.txt), on 0.5.1 on 2026-09-25 (run caa68c60, table kept in notes/2026-09-25_demo-v0.5.1.txt), on 0.5.0 the same day (run 5e5f6903, table kept in notes/2026-09-25_demo-v0.5.0.txt), on 0.4.2 the same day (run fbad84d0, table kept in notes/2026-09-25_demo-v0.4.2.txt), on 0.4.1 the same day (run 8a52848c, table kept in notes/2026-09-25_demo-v0.4.1.txt), on 0.4.0 the day before (run 065c6900, table kept in notes/2026-09-24_demo-v0.4.0.txt), on 0.3.0 the same day (run cbeda900, " +
         "table kept in notes/2026-09-24_demo-v0.3.0.txt), on 0.2.0 the same day (run fd433912, " +
         "table kept in notes/2026-09-24_demo-v0.2.0.txt), and earlier that day on the tree released as 0.1.0 (run 2ddacb38, " +
         "table kept in notes/2026-09-24_demo-v0.1.0.txt). Before that, " +
@@ -1233,4 +1249,3 @@ async function main(argv: readonly string[]): Promise<number> {
 // Behind `import.meta.main` so that a test can import the judging above without
 // this file starting a second `bun test` inside the one that is running it.
 if (import.meta.main) process.exit(await main(Bun.argv));
-

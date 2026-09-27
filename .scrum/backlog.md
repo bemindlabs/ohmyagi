@@ -710,7 +710,7 @@ E5 ──────┴──> E10 Web console (ทุกปุ่มคือ�
 
 ---
 
-### E12 — Local action ⭐ **ถัดไป (D-096)**
+### E12 — Local action ✅ **เสร็จ 2026-09-27** (S12.1–S12.7 · D-116 → D-124)
 
 > **ปัญหาที่เหลือจาก D-095:** cloud ลงมือได้แต่ไม่เห็นชิ้นส่วนตัว · local เห็นทุกอย่างแต่ไม่มีมือ ⇒ งานที่ต้องใช้ข้อมูลส่วนตัว**และ**ต้องลงมือยังทำไม่ได้
 > **ประตู:** `SP-5` (D-097) เลือกกลไกจากตัวเลข · ตรงกับ I-1 + I-6 พร้อมกัน · ✅ ตอบแล้ว (D-116): claude/grok/kimi 15/15 บน qwen 27B · ไม่ทำ NativeExec
@@ -725,12 +725,15 @@ E5 ──────┴──> E10 Web console (ทุกปุ่มคือ�
 | S12.4 | เว็บบอกว่ารอบนี้ใครทำ ทำในเครื่องหรือไม่ และทำอะไรไป (Engine box + รายงาน D-043) | 1 | กลาง |
 | S12.5 | วัดผลด้วยชุดงาน S6.5 บน backend ในเครื่อง — soul+RAG+tools เทียบ cloud | 1 | สูง |
 | S12.6 | แก้ registry ตามที่ SP-5 เจอ — grok `--always-approve` + hardening + `--max-turns 20` (D-119) · kimi ระดับ 1 = profile file ของ om-agi (D-120) · codex `--disable plugins/shell_snapshot` + `ignore_default_excludes=false` (D-121) · turn ที่ vendor บอกว่าไม่จบ = silent | 1 | **สูง** (บั๊ก) |
+| S12.7 | ปิดช่องที่ fence ยังเปิด — ห้าม UDP/DNS และตรวจ address ตอน connect (seccomp ใน `__fence`: ปฏิเสธ socket UDP, supervise `connect` ให้ถึงได้แค่ loopback literal ของ LiteLLM) แล้วเปิดประตูข้อมูลส่วนตัวให้ local CLI (`notLocalCli`, branch `agents/s12.1-door-open`) (D-123) | 2 | **สูงสุด** (ประตู) |
 
-**S12.1** — AC1: อ่านไฟล์ · รันคำสั่ง · แก้ไฟล์ ได้จริงบนงานของ agent ด้วย model ในเครื่อง · AC2: ไม่มี request ออกนอกเครื่องระหว่าง turn (วัด socket) · AC3: ledger บันทึกเหมือน backend อื่น · AC4: ล่มแล้วตกไปตาม chain ไม่เงียบ · AC5: key ของ LiteLLM อยู่แค่ใน env ของ child — ไม่อยู่ใน argv, disk หรือ shell ของ model · AC6: grant ในเครื่องไม่มี WebFetch/WebSearch
-**S12.2** — AC1: ระดับ 1 = 0 การเขียน (probe จริง) · AC2: ระดับ 2 เขียนได้เฉพาะที่ grant · AC3: `ohmyagi stop` หยุดได้ (S5.4) · AC4: connect ที่ไม่ใช่ `127.0.0.1:10400` ถูกปฏิเสธที่ kernel (probe `curl` จาก Bash ของ model) · AC5: kernel ไม่มี Landlock → ไม่รัน backend ในเครื่อง และบอกเหตุผล
+**S12.1** ✅ `02814f1` (codex ผ่าน /agents-coding) — ประตูข้อมูลส่วนตัวเปิดใน S12.7 (D-124) — AC1: อ่านไฟล์ · รันคำสั่ง · แก้ไฟล์ ได้จริงบนงานของ agent ด้วย model ในเครื่อง · AC2: ไม่มี request ออกนอกเครื่องระหว่าง turn (วัด socket) · AC3: ledger บันทึกเหมือน backend อื่น · AC4: ล่มแล้วตกไปตาม chain ไม่เงียบ · AC5: key ของ LiteLLM อยู่แค่ใน env ของ child — ไม่อยู่ใน argv, disk หรือ shell ของ model · AC6: grant ในเครื่องไม่มี WebFetch/WebSearch
+**S12.2** ✅ `eea18e7` (codex ผ่าน /agents-coding) — AC1 ✅ ระดับ 1 = 0 การเขียน (probe จริง) · AC2: ระดับ 2 เขียนได้เฉพาะที่ grant · AC3: `ohmyagi stop` หยุดได้ (S5.4) · AC4 ✅ connect ที่ไม่ใช่ port ที่ grant ถูกปฏิเสธที่ kernel (Landlock กันตาม port ไม่ใช่ address — จึงชี้ LiteLLM ด้วย loopback literal) · AC5 ✅ kernel ไม่มี Landlock / ABI < 4 → ไม่รัน และบอกเหตุผล · AC2/AC3 ✅ probe จริงบน kernel 7.0 (ABI 8) · review เพิ่ม: คำสั่งใน `__fence` ถูกตรวจด้วย spawn guard (เดิมเลี่ยงได้)
 **S12.6** ✅ `7346b6a` — AC1 ✅ grok ทำงานหลายขั้นจบ ไม่ exit 0 แบบข้อความว่าง และ turn ที่ไม่จบถูกนับเป็น silent · AC2 ✅ grok ระดับ 2 แก้ไฟล์และรัน shell ได้จริง (รวม `$?`) · AC3 ✅ kimi ระดับ 1 ไม่ถูกปฏิเสธ และ 0 การเขียน (ผ่าน `CliExec` รวมหลังไฟล์ถูกแก้) · 0 การดึงเว็บวัดใน probe ส่วนผ่าน `CliExec` ยืนยันจากรายการเครื่องมือ · AC4 ✅ codex ไม่มี connect ไป plugin และ shell ของ model ไม่เห็น env ชื่อ KEY/SECRET/TOKEN (ชื่ออื่นยังเห็น — S12.2) · ค้าง: `OM_AGI_REAL_READONLY=1` บน config จริงของเจ้าของ · hook ของ Claude plugin ใน grok
-**S12.3** — AC1: turn ที่มีชิ้นถูกเก็บ (D-095 `held > 0`) และงานต้องลงมือ → ไป local-with-tools · AC2: บอกเหตุผลของเส้นทางใน stderr/เว็บ · AC3: เจ้าของตั้งให้เลือกเองได้
-**S12.5** — AC1: รันชุด 24 งานของ tonkla-agi ด้วย backend ใหม่ · AC2: บันทึก % ต่อชนิดงาน เทียบ D-075 (soul+RAG 91.7%)
+**S12.3** ✅ กฎ `59621ed` (claude-local บน vLLM) + `--route` ใน `turn` `02814f1` · `auto` ส่งชิ้นที่ถูกเก็บไป local ตั้งแต่ S12.7 (D-124) — AC1: turn ที่มีชิ้นถูกเก็บ (D-095 `held > 0`) และงานต้องลงมือ → ไป local-with-tools · AC2: บอกเหตุผลของเส้นทางใน stderr/เว็บ · AC3: เจ้าของตั้งให้เลือกเองได้
+**S12.7** ✅ `448f02e` (codex ผ่าน /agents-coding + review ปิดช่องนอก fence: vLLM ดึง `image_url`, master key ของ LiteLLM — D-124) · ประตูเปิดแล้ว — AC1: turn ใน fence ส่ง DNS/UDP ไม่ได้ (probe `dig`/`getent hosts` และ socket UDP ตรง) · AC2: connect ไป host อื่นที่ port ของ LiteLLM ถูกปฏิเสธ ส่วน `127.0.0.1:10400` ผ่าน · AC3: เมื่อผ่าน AC1–AC2 แล้ว `notLocal` ใช้ `notLocalCli` แทนการปฏิเสธ และ `auto` ส่งชิ้นที่ถูกเก็บไป local ได้ · AC4: CLI ยังทำงานได้ (claude/grok ไม่พังเพราะไม่มี UDP)
+**S12.4** ✅ `f87f8f5` (kimi ผ่าน /agents-coding) — ทุก turn บอก backend · ในเครื่อง/cloud · model · ชิ้นที่ถูกเก็บ (เฉพาะ cloud) · รายงานสิ่งที่เปลี่ยน (D-043) · กล่อง Engine ใช้กฎเดียวกัน (`isLocalBackend` = ollama หรือ id `-local` — กฎแสดงผล ไม่ใช่ประตูข้อมูลส่วนตัว `asLocal`)
+**S12.5** ✅ (2026-09-27, `notes/2026-09-27_s12.5-eval-local.md`) — grok-local: soul 79.2% · soul+RAG 75.0% ก่อนเปิดประตู → **87.5%** หลังเปิด (D-075 cloud chain 20.8% / 91.7%) — AC1: รันชุด 24 งานของ tonkla-agi ด้วย backend ใหม่ · AC2: บันทึก % ต่อชนิดงาน เทียบ D-075 (soul+RAG 91.7%)
 
 ---
 

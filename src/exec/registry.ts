@@ -184,6 +184,14 @@ export interface VendorSpec {
   readonly display: string;
   /** Binary name, looked up on PATH. Never an absolute path. */
   readonly binary: string;
+  /**
+   * Whether a child inherits this process's environment before the request and
+   * hardening overrides are applied. Ordinary cloud CLIs need the owner's
+   * login variables, so omission means true. Local CLI variants set false:
+   * their model credential and small runtime environment are assembled by
+   * om-agi, and a cloud key inherited by accident would defeat that isolation.
+   */
+  readonly inheritEnv?: boolean;
   readonly identity: IdentityChannel;
   /**
    * What keeps a turn on this vendor from writing.

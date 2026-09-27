@@ -762,7 +762,13 @@ const statementKind = (node: ts.Node): string =>
  * Reads the syntax tree, so a mention in a comment or a string is invisible to
  * it and `Bun["spawn"]`, `const b = Bun` and `globalThis["Bun"]` are not.
  */
-export function processEscapes(path: string, source: string, allowSpawn: boolean, allowServe = false): string[] {
+export function processEscapes(
+  path: string,
+  source: string,
+  allowSpawn: boolean,
+  allowServe = false,
+  allowFfi = false,
+): string[] {
   const file = parse(path, source);
   const found: string[] = [];
 
@@ -793,7 +799,8 @@ export function processEscapes(path: string, source: string, allowSpawn: boolean
       (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
       node.moduleSpecifier !== undefined &&
       ts.isStringLiteral(node.moduleSpecifier) &&
-      FORBIDDEN_MODULES.includes(node.moduleSpecifier.text)
+      FORBIDDEN_MODULES.includes(node.moduleSpecifier.text) &&
+      !(allowFfi && node.moduleSpecifier.text === "bun:ffi")
     ) {
       found.push(`${line(file, node)}: imports ${node.moduleSpecifier.text}`);
     }

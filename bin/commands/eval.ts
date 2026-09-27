@@ -95,7 +95,7 @@ export async function cmdEval(argv: readonly string[]): Promise<number> {
   for (const [i, task] of tasks.entries()) {
     for (const mode of MODES) {
       const run = await runGuarded(
-        [...engineCommand().argv, "turn", resolve(dir), "--subject", id, "--prompt", task.ask, "--json", ...(mode === "soul" ? ["--no-recall"] : []), ...flags],
+        [...engineCommand().argv, "turn", resolve(dir), "--subject", id, "--prompt", task.ask, "--json", "--no-proposals", ...(mode === "soul" ? ["--no-recall"] : []), ...flags],
         { env },
       );
       let answer = "";

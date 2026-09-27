@@ -686,3 +686,65 @@ describe("Memories CRUD (D-081)", () => {
     expect(out.message).toBe("1 file(s) would go\ncannot reach the vectors. Nothing was removed");
   });
 });
+
+describe("who handled each turn (S12.4)", () => {
+  test("/api/turn carries backend, local/cloud, model, the held counts and the change report", async () => {
+    const turnOut = {
+      text: "done",
+      route: "answered by claude · identity arrived as system · 1.2s",
+      backend: "claude",
+      local: false,
+      model: "sonnet",
+      held: 2,
+      heldMessages: 1,
+      changed: { added: ["made-by-the-turn.txt"], changed: [], removed: ["old-note.txt"] },
+      proposals: [],
+    };
+    const deps: WebDeps = { ...fakeDeps().deps, run: async () => ({ code: 0, stdout: JSON.stringify(turnOut), stderr: "" }) };
+    const res = await (await handler(deps, "tok", HOSTS)(req("/api/turn", { method: "POST", body: JSON.stringify({ prompt: "hi" }) }))).json();
+    expect(res).toMatchObject({
+      ok: true,
+      backend: "claude",
+      local: false,
+      model: "sonnet",
+      held: 2,
+      heldMessages: 1,
+      changed: { added: ["made-by-the-turn.txt"], changed: [], removed: ["old-note.txt"] },
+    });
+  });
+
+  test("local is derived from the backend id — a child that predates the fields still gets the right badge", async () => {
+    for (const [backend, local] of [["ollama", true], ["claude-local", true], ["grok-local", true], ["claude", false], ["codex", false]] as const) {
+      const deps: WebDeps = { ...fakeDeps().deps, run: async () => ({ code: 0, stdout: JSON.stringify({ text: "hi", route: `answered by ${backend}`, backend }), stderr: "" }) };
+      const res = (await (await handler(deps, "tok", HOSTS)(req("/api/turn", { method: "POST", body: JSON.stringify({ prompt: "hi" }) }))).json()) as {
+        backend: string;
+        local: boolean;
+        model: string | null;
+        held: number;
+        heldMessages: number;
+        changed: unknown;
+      };
+      expect(res.local, backend).toBe(local);
+      expect(res.backend).toBe(backend);
+      expect(res.held).toBe(0);
+      expect(res.heldMessages).toBe(0);
+      expect(res.model).toBeNull();
+      expect(res.changed).toBeNull();
+    }
+    // A child from before the field existed names no backend at all: nothing is invented.
+    const legacy: WebDeps = { ...fakeDeps().deps, run: async () => ({ code: 0, stdout: JSON.stringify({ text: "hi", route: "answered by ollama" }), stderr: "" }) };
+    const old = await (await handler(legacy, "tok", HOSTS)(req("/api/turn", { method: "POST", body: JSON.stringify({ prompt: "hi" }) }))).json();
+    expect(old).toMatchObject({ ok: true, text: "hi", backend: "", local: false, model: null, held: 0, heldMessages: 0, changed: null });
+  });
+
+  test("the badge rides on the one local rule, and the change report stays collapsed until asked", () => {
+    expect(PAGE_HTML).toContain('const isLocalId = (id) => id === "ollama" || id.endsWith("-local");');
+    expect(PAGE_HTML).toContain("function turnLine(r, pick)");
+    expect(PAGE_HTML).toContain('const d = el("details", "changed")');
+    expect(PAGE_HTML).toContain("const CHANGE_LIMITS");
+    expect(PAGE_HTML).toContain(".changed{margin-top:6px");
+    expect(PAGE_HTML).toContain("what it changed: ");
+    // Kept for the Engine box: the chain badge and the Last row both use the rule.
+    expect(PAGE_HTML).toContain('isLocalId(engine.last.backend) ? "on this machine" : "cloud"');
+  });
+});

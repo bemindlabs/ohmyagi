@@ -24,6 +24,7 @@ import { memoryPathProblem } from "../memory/write.ts";
 import { IMPORT_KINDS, MAX_SOURCE_BYTES, urlProblem } from "../memory/import.ts";
 import { MAX_TAGS, withTags } from "../memory/tags.ts";
 import type { AgentInfo, PrivacyState, SettingsState, ViewState } from "./view.ts";
+import { isLocalBackend } from "./turninfo.ts";
 import { PAGE_HTML } from "./page.ts";
 
 export const TOKEN_HEADER = "x-ohmyagi-token";
@@ -232,7 +233,24 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[]) 
         answer = undefined;
       }
       if (answer === undefined) return json({ ok: false, error: said(out.stderr) || `it did not answer (exit ${out.code})` }, 200);
-      return json({ ok: out.code === 0, text: answer["text"] ?? "", route: answer["route"] ?? "", proposals: answer["proposals"] ?? [], notes: said(out.stderr) });
+      // S12.4 — who handled the turn. `local` is derived here from the backend
+      // id by the one rule (`src/web/turninfo.ts`), so the badge stays right
+      // even for a child that predates the field; the held counts and the
+      // change report pass through only as numbers/objects, never as HTML.
+      const answeredBy = typeof answer["backend"] === "string" ? answer["backend"] : "";
+      return json({
+        ok: out.code === 0,
+        text: answer["text"] ?? "",
+        route: answer["route"] ?? "",
+        backend: answeredBy,
+        local: answeredBy === "" ? false : isLocalBackend(answeredBy),
+        model: typeof answer["model"] === "string" ? answer["model"] : null,
+        held: typeof answer["held"] === "number" ? answer["held"] : 0,
+        heldMessages: typeof answer["heldMessages"] === "number" ? answer["heldMessages"] : 0,
+        changed: answer["changed"] ?? null,
+        proposals: answer["proposals"] ?? [],
+        notes: said(out.stderr),
+      });
     }
 
     const decide = /^\/api\/proposals\/([0-9a-f-]+)\/(approve|refuse|triage)$/.exec(url.pathname);

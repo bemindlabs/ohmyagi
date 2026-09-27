@@ -18,6 +18,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { CliExec } from "../../src/exec/cli-exec.ts";
 import { allBackends, backend } from "../../src/exec/index.ts";
+import { LOCAL_BACKENDS, LocalCliExec } from "../../src/exec/local-cli.ts";
 import { OllamaExec } from "../../src/exec/ollama-exec.ts";
 import { VENDORS } from "../../src/exec/registry.ts";
 import { subjectId } from "../../src/types.ts";
@@ -53,6 +54,8 @@ describe("backend()", () => {
     expect(backend("claude")).toBeInstanceOf(CliExec);
     expect(backend("claude").id).toBe("claude");
     expect(backend("claude").kind).toBe("cli");
+    expect(backend("claude-local")).toBeInstanceOf(LocalCliExec);
+    expect(backend("grok-local").id).toBe("grok-local");
   });
 
   test("an unknown id throws rather than quietly building something", () => {
@@ -111,7 +114,7 @@ describe("allBackends()", () => {
     // I-1 again: a list that had to be special-cased to include the local
     // route is a list that will one day forget to.
     expect(ids[0]).toBe("ollama");
-    expect(ids).toEqual(["ollama", ...VENDORS.map((spec) => spec.id)]);
+    expect(ids).toEqual(["ollama", ...VENDORS.map((spec) => spec.id), ...LOCAL_BACKENDS]);
     expect(new Set(ids).size).toBe(ids.length);
   });
 

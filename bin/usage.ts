@@ -83,8 +83,8 @@ Usage:
                                         A2A stays off until the egress filter
                                         (S8.3) exists.
   ohmyagi turn <dir> --subject <id> (--prompt <text> | --prompt-file <path>)
-             [--backend a,b,c] [--model <m>] [--private] [--proposal <id>]
-             [--no-recall] [--recall-chars <n>] [--history-json <[{role,text}]>] [--json]
+             [--backend a,b,c] [--route auto|local|cloud] [--model <m>] [--private] [--proposal <id>]
+             [--no-recall] [--no-proposals] [--recall-chars <n>] [--history-json <[{role,text}]>] [--json]
                                         Run one turn wearing this soul. Tries
                                         each backend in order until one really
                                         answers. Records one ledger line per
@@ -95,6 +95,12 @@ Usage:
                                         approval is spent before the prompt
                                         goes, so a second turn needs a second
                                         approval.
+                                        --route defaults to auto. When an
+                                        acting turn needs recalled pieces kept
+                                        from cloud, auto puts the fenced local
+                                        CLI chain first. local asks for that
+                                        chain; cloud keeps the usual chain.
+                                        An explicit --backend chain wins.
                                         Recall: pieces of memory/ related to
                                         the prompt ride along beside the soul,
                                         whole or not at all, up to 4500
@@ -475,10 +481,12 @@ at a time, ${DEFAULT_RUNS} times over. It reports four levels — ${Object.keys(
 and never collapses them into pass/fail.
 
 \`turn\` prints the answer on stdout and the route it took on stderr, so a pipe
-gets the answer and a human gets to see which backend was reached. The default
-chain is ${PHASE_A_BACKENDS.join(" → ")}, which sends the soul and the prompt to a cloud
-CLI first when one is installed; \`--backend ollama\` is the local-only route.
-A backend that exits 0 having printed nothing counts as a miss, not an answer.
+gets the answer and a human gets to see which backend was reached. With
+\`--route auto\` (the default), an acting turn with recalled pieces held from cloud
+puts the fenced local CLI chain first when it is ready; otherwise the usual chain
+is ${PHASE_A_BACKENDS.join(" → ")}. \`--route local\` and \`--route cloud\` steer that
+choice, while an explicit \`--backend\` chain wins. A backend that exits 0 having
+printed nothing counts as a miss, not an answer.
 
 \`--prompt <text>\` puts the prompt on this process's command line, where shell
 history, \`ps\` and terminal scrollback can all see it — and \`ledger forget\`

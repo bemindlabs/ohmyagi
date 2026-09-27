@@ -492,6 +492,55 @@ describe("CliExec.available", () => {
 });
 
 describe("CliExec.run", () => {
+  test("a fenced turn is refused before spawning when Landlock is unavailable", async () => {
+    let built = false;
+    const result = await new CliExec(stubSpec(binary), {
+      support: () => ({ ok: false, reason: "synthetic kernel has no Landlock" }),
+      argv: () => {
+        built = true;
+        return ["must-not-run"];
+      },
+    }).run({
+      restraint: RESTRAINED,
+      subject: SUBJECT,
+      prompt: "anything",
+      fence: { writable: [], tcpPorts: [10400] },
+      env: { HOME: await tempHome() },
+    });
+
+    expect(built).toBe(false);
+    expect(result.confidence).toBe("silent");
+    expect(result.identityStrength).toBe("none");
+    expect(result.evidence.raw).toContain("refused by the kernel fence");
+    expect(result.evidence.raw).toContain("synthetic kernel has no Landlock");
+    expect(result.evidence.exitCode).toBeUndefined();
+  });
+
+  test("a supported fenced turn spawns exactly the argv the fence builder returns", async () => {
+    const seenBuilds: { argv: readonly string[]; writable: readonly string[]; ports: readonly number[] }[] = [];
+    const home = await tempHome();
+    const result = await new CliExec(stubSpec(binary), {
+      support: () => ({ ok: true, abi: 8 }),
+      argv: (argv, policy) => {
+        seenBuilds.push({ argv: [...argv], writable: [...policy.writable], ports: [...policy.tcpPorts] });
+        // This test owns only the integration seam. The real builder and the
+        // real kernel are exercised in fence.test.ts.
+        return [...argv];
+      },
+    }).run({
+      restraint: RESTRAINED,
+      subject: SUBJECT,
+      prompt: "anything",
+      fence: { writable: [home], tcpPorts: [10400] },
+      env: { HOME: home },
+    });
+
+    expect(result.confidence).toBe("confirmed");
+    expect(seenBuilds).toEqual([
+      { argv: [binary, "-p", "anything"], writable: [home], ports: [10400] },
+    ]);
+  });
+
   test("a clean exit with an answer is confirmed, and the argv is what the spec said", async () => {
     const home = await tempHome();
     const result = await new CliExec(stubSpec(binary)).run({ restraint: RESTRAINED,
@@ -650,6 +699,25 @@ describe("CliExec.run", () => {
     // because a temporary directory may sit behind a symlinked `/tmp`.
     expect(child.cwd).toBe(realpathSync(cwd));
     expect(child.cwd).not.toBe(realpathSync(process.cwd()));
+  });
+
+  test("a spec can refuse the ambient environment and receive only explicit values", async () => {
+    const previous = process.env["OM_AGI_STUB_MARKER"];
+    process.env["OM_AGI_STUB_MARKER"] = "ambient-secret";
+    try {
+      const result = await new CliExec(stubSpec(binary, { inheritEnv: false })).run({
+        restraint: RESTRAINED,
+        subject: SUBJECT,
+        prompt: "anything",
+        env: { HOME: await tempHome(), PATH: stubDir },
+      });
+
+      expect(result.confidence).toBe("confirmed");
+      expect(seen(result.text).marker).toBeNull();
+    } finally {
+      if (previous === undefined) delete process.env["OM_AGI_STUB_MARKER"];
+      else process.env["OM_AGI_STUB_MARKER"] = previous;
+    }
   });
 
   test("a spawned turn resolves its binary from the env it was handed, not this process's PATH", async () => {

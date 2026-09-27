@@ -179,6 +179,18 @@ export function refusal(argv: readonly string[]): string | undefined {
     return "the command is empty — there is nothing to check";
   }
 
+  // D-118's fence re-enters this engine (`<ohmyagi|bun run main> __fence … -- <command>`)
+  // and replaces itself with <command> by `execvp`, past this function. So the
+  // command that really runs is judged here, before the helper is started — a
+  // wrapper must not be a way around the list below.
+  const helper = argv.slice(0, 4).indexOf("__fence");
+  if (helper >= 0) {
+    const boundary = argv.indexOf("--", helper);
+    const inner = boundary < 0 ? [] : argv.slice(boundary + 1);
+    const no = refusal(inner);
+    return no === undefined ? undefined : `inside the fence: ${no}`;
+  }
+
   const name = basename(command).toLowerCase().replace(/\.exe$/, "");
 
   if (REFUSED_BINARIES.includes(name)) {

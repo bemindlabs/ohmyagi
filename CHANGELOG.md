@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+## 0.8.0 — 2026-09-27
+
+### Local action (E12) — the first three stories, built by other AI CLIs under `/agents-coding`
+- **A kernel fence for local turns (S12.2, D-118).** A turn given `fence` runs its vendor CLI inside Landlock —
+  writes only beneath the granted directories, TCP connect only to the granted ports, bind denied — through a
+  hidden `ohmyagi __fence` helper that installs the rules and `execvp`s the vendor in the same process group. No
+  Landlock, or an ABI older than 4, and the turn is refused with the reason. The command inside the fence is judged
+  by the same spawn guard as any other (it had been a way around it).
+- **The routing rule (S12.3, part 1).** `chooseRoute` sends a turn local when a recalled piece is held back from
+  cloud and the turn acts, and says why in one sentence; `--route` comes with the local backends.
+- **Local backends with tools (S12.1, D-117).** `claude-local` → `grok-local`: the real Claude Code and Grok CLIs
+  on the local model through LiteLLM, each in a vendor home of om-agi's own, the key only in the child's
+  environment, no web tools, always inside the fence. `turn --route auto|local|cloud` picks them (S12.3). Until the
+  fence also closes UDP/DNS and checks addresses (S12.7), they get the cloud's copy of recall — none of the pieces
+  a cloud may not see — and say so on stderr (D-123).
+- **The fence closes UDP/DNS and checks addresses; local backends may see personal data (S12.7, D-124).** seccomp in
+  the fence refuses UDP, IPv6, raw sockets and resolver sockets, and a supervisor lets `connect` reach only
+  `127.0.0.1` on LiteLLM's port. Two ways out found outside the fence were closed first: vLLM no longer fetches
+  image URLs, and local backends use a LiteLLM key limited to `local-coder` (`~/.secrets/.env.om-agi-litellm`,
+  `LITELLM_API_KEY`) — a file with only the master key is refused.
+- **Measured (S12.5):** on the owner's 24-task set, `grok-local` answers 87.5% with recall once the door is open
+  (75.0% before it) — the cloud chain's 91.7%, within one task, with nothing leaving the machine.
+- **`eval` files no proposals** (`turn --no-proposals`) — measuring an agent no longer puts questions in the owner's list.
+- **The web says who answered (S12.4).** Under every reply: the backend, on this machine or cloud, the model, how
+  many recalled pieces were held back, and — for a turn that acted — what it changed.
+
 ## 0.7.2 — 2026-09-26
 
 ### Backends — what SP-5 and S12.6 found wrong in how each vendor CLI is run (D-116 → D-121)

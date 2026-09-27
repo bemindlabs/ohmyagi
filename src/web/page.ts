@@ -10,6 +10,7 @@
 import { FONT_CSS, FONT_STACK } from "./fonts.ts";
 import { MARKDOWN_CSS, MARKDOWN_JS } from "./markdown.ts";
 import { MASCOT_DATA_URI } from "./mascot.ts";
+import { REPORT_LIMITS } from "../decide/report.ts";
 
 export const PAGE_HTML = `<!doctype html>
 <html lang="en">
@@ -130,6 +131,12 @@ footer{color:var(--muted);font-size:.8rem;margin-top:22px}
 /* D-086: what a /command said — the page's own voice, not the agent's. */
 .sys{align-self:center;background:var(--calmbg);border:1px dashed var(--line);font-size:.88rem;max-width:min(94%,62rem);white-space:normal}
 .sys .row{margin-top:8px}
+/* S12.4: the level-2 change report under an answer — collapsed until asked for. */
+.changed{margin-top:6px;border-top:1px dashed var(--line);padding-top:6px;font-size:.8rem;color:var(--muted)}
+.changed summary{cursor:pointer}
+.changed summary:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.changed ul{list-style:none;margin:6px 0 0;padding:0}
+.changed li{font-family:ui-monospace,monospace;font-size:.76rem;overflow-wrap:anywhere;padding:2px 0}
 .composer{position:relative}
 .cmdmenu{position:absolute;left:8px;right:8px;bottom:calc(100% + 6px);background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);max-height:min(46vh,380px);overflow:auto;z-index:20;padding:4px}
 .cmdmenu button{display:flex;gap:10px;width:100%;text-align:left;border:0;background:none;border-radius:8px;padding:7px 10px;min-height:0;align-items:baseline}
@@ -270,6 +277,7 @@ footer{color:var(--muted);font-size:.8rem;margin-top:22px}
   .pickchip{min-height:36px}
   .steps button{min-height:36px;font-size:.82rem}
   .bulk button{min-height:36px}
+  .changed summary{min-height:36px;display:flex;align-items:center}
   :root{--foot:calc(32px + env(safe-area-inset-bottom))}
   .foot{font-size:.76rem}.footver{min-height:32px}
   .composer #sending{font-size:.76rem}
@@ -537,6 +545,9 @@ ${MARKDOWN_CSS}
 <footer class="foot" id="foot"><span><button class="footver" id="footCheck" title="Check for a newer release"><b>Oh My AGI</b> <span id="footVer">…</span></button> <span id="footNewer"></span></span><span class="right" id="footWho"></span></footer>
 <script>
 ${MARKDOWN_JS}
+// S12.4 — the level-2 change report's own list of what it cannot see
+// (REPORT_LIMITS in src/decide/report.ts), inlined so the page needs nothing else.
+const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
 (() => {
   const hashParams = new URLSearchParams(location.hash.slice(1));
   document.getElementById("role").addEventListener("click", (e) => e.currentTarget.classList.toggle("open"));
@@ -662,7 +673,7 @@ ${MARKDOWN_JS}
     $("footNewer").replaceChildren(...(newer ? [el("span", "newer", "· v" + s.version.latest + " is out — ohmyagi update")] : []));
     $("footWho").textContent = s.agent.name + " · " + s.agent.subject + " · on this computer";
     $("name").textContent = s.agent.name; $("role").textContent = s.agent.role; $("role").title = s.agent.role; subject = s.agent.subject; agentName = s.agent.name;
-    if (!restored) { restored = true; for (const m of chatLog) bubble(m.cls, m.text, m.small, true); }
+    if (!restored) { restored = true; for (const m of chatLog) bubble(m.cls, m.text, m.small, true, m.info); }
     $("prompt").placeholder = "Ask " + s.agent.name + " a question, or say what you'd like done…";
     document.title = s.agent.name + " · Oh My AGI";
     const lv = $("level"); lv.textContent = s.autonomy.title; lv.className = "pill " + s.autonomy.tone;
@@ -698,6 +709,10 @@ ${MARKDOWN_JS}
   }
   let agentName = "";
   let engine = null;
+  // S12.4 — the one local rule (src/web/turninfo.ts), written out because this
+  // script cannot import it: a backend runs on this machine when its id is
+  // ollama or ends in -local. Kept identical to isLocalBackend by tests of both.
+  const isLocalId = (id) => id === "ollama" || id.endsWith("-local");
   function renderEngine(e) {
     if (e) engine = e;
     if (!engine) return;
@@ -706,31 +721,72 @@ ${MARKDOWN_JS}
     const box = $("engChain"); box.replaceChildren();
     chain.forEach((b, i) => {
       if (i) box.append(el("i", "", "→"));
-      const local = b === "ollama";
-      box.append(el("span", "b" + (local ? " local" : ""), local ? "ollama · " + (pick.model || engine.localModel || "no model") : b));
+      const local = isLocalId(b);
+      box.append(el("span", "b" + (local ? " local" : ""), local ? b + " · " + (pick.model || engine.localModel || "no model") : b));
     });
     $("engLocal").textContent = pick.model || engine.localModel || "not set";
     $("engJudge").textContent = engine.judge ? engine.judge + " (local)" : "off";
-    $("engLast").textContent = engine.last ? engine.last.backend + (engine.last.model ? " · " + engine.last.model : "") + " · " + engine.last.when : "—";
+    $("engLast").textContent = engine.last ? engine.last.backend + " · " + (isLocalId(engine.last.backend) ? "on this machine" : "cloud") + (engine.last.model ? " · " + engine.last.model : "") + " · " + engine.last.when : "—";
     $("engineLine").textContent = "answers: " + chain.join(" → ") + (engine.judge ? " · judge " + engine.judge : "") + (pick.backend || pick.model ? " · this browser's choice" : "");
   }
   // Gap 2 (D-079): the conversation survives a reload — in this browser only.
   const CHAT_KEY = "ohmyagi-chat";
   let chatLog = [];
   try { chatLog = JSON.parse(localStorage.getItem(CHAT_KEY) || "[]"); } catch { chatLog = []; }
-  function remember(cls, text, small) {
-    chatLog.push({ cls, text, small: small || "" }); chatLog = chatLog.slice(-60);
+  function remember(cls, text, small, info) {
+    chatLog.push({ cls, text, small: small || "", info: info || null }); chatLog = chatLog.slice(-60);
     try { localStorage.setItem(CHAT_KEY, JSON.stringify(chatLog)); } catch {}
   }
   $("chatClear").onclick = () => { chatLog = []; try { localStorage.removeItem(CHAT_KEY); } catch {} $("chat").replaceChildren(); };
-  function bubble(cls, text, small, restoring) {
-    if (!restoring) remember(cls, text, small);
+  // S12.4 — the level-2 report of what a turn changed (D-043), as a <details>
+  // the answer keeps collapsed. Every value arrives as data from /api/turn and
+  // leaves through textContent; a shape that is not the report's renders nothing.
+  function changeBlock(report) {
+    const d = el("details", "changed");
+    const summary = (text) => { const s = el("summary", "", text); d.append(s); return d; };
+    if (report === "not-measured") return summary("what it changed: not measured — too many files to check");
+    if (report === null || typeof report !== "object") return null;
+    const strings = (v) => (Array.isArray(v) ? v.filter((p) => typeof p === "string") : []);
+    const added = strings(report.added), modified = strings(report.changed), removed = strings(report.removed);
+    if (added.length === 0 && modified.length === 0 && removed.length === 0 && !Array.isArray(report.added)) return null;
+    const total = added.length + modified.length + removed.length;
+    summary(total === 0 ? "what it changed: nothing" : "what it changed: " + added.length + " added · " + modified.length + " changed · " + removed.length + " removed");
+    if (total > 0) {
+      const ul = el("ul");
+      for (const [mark, paths] of [["+", added], ["~", modified], ["-", removed]]) {
+        for (const path of paths.slice(0, 20)) { const li = el("li", "", mark + " " + path); ul.append(li); }
+        if (paths.length > 20) ul.append(el("li", "", mark + " … and " + (paths.length - 20) + " more"));
+      }
+      d.append(ul);
+    }
+    d.append(el("div", "", "not seen by this report: " + CHANGE_LIMITS.join(" · ")));
+    return d;
+  }
+  function bubble(cls, text, small, restoring, info) {
+    if (!restoring) remember(cls, text, small, info);
     const b = el("div", "msg " + cls);
     if (cls === "it" && agentName) b.append(el("div", "small", agentName + " · AI"));
     if (cls === "it" || cls === "sys") { b.style.whiteSpace = "normal"; b.append(md(text)); } else b.append(document.createTextNode(text));
     if (small) b.append(el("div", "small", small));
+    if (info && info.changed) { const block = changeBlock(info.changed); if (block) b.append(block); }
     $("chat").append(b); $("chat").scrollTop = 1e9;
     return b;
+  }
+  // S12.4 — the compact line under an answer: who answered, on this machine or
+  // in the cloud, with the model, then what the turn carried that a cloud
+  // backend was not allowed to see (D-095). The badge rides on the same rule
+  // as the Engine box (isLocalId above); when the answering backend is local
+  // nothing was held back from it, so the held counts are cloud-backend facts.
+  function turnLine(r, pick) {
+    const route = r.route || "";
+    if (r.backend === undefined || r.backend === null || r.backend === "") return route;
+    if (!/^answered by /.test(route)) return route === "" ? "answered by " + r.backend + " · " + (isLocalId(r.backend) ? "on this machine" : "cloud") : route;
+    const local = isLocalId(r.backend);
+    const model = r.model || (local && engine && engine.localModel) || pick.model || "";
+    let line = route.replace(/^answered by [^ ·]+/, "answered by " + r.backend + " · " + (local ? "on this machine" : "cloud") + (model ? " · " + model : ""));
+    if (!local && r.held > 0) line += " · " + r.held + " held back";
+    if (!local && r.heldMessages > 0) line += " · " + r.heldMessages + " earlier message(s) held back";
+    return line;
   }
   async function send(text, proposal) {
     text = (text || "").trim(); if (!text) return;
@@ -751,10 +807,7 @@ ${MARKDOWN_JS}
       if (r.error) bubble("it", r.error);
       else {
         const filed = (r.proposals || []).filter((p) => p.outcome === "filed").length;
-        // The route names the backend; the model this browser asked for is said beside it (D-085).
-        const route = r.route ? "answered by " + r.route.replace(/^answered by /, "") : "";
-        const asked = pick.model && route && !route.includes(pick.model) ? route.replace(/^(answered by [^ ·]+)/, "$1 (" + pick.model + ")") : route;
-        bubble("it", r.text || "(no answer)", asked + (filed ? " · " + filed + " suggestion(s) waiting for you" : ""));
+        bubble("it", r.text || "(no answer)", turnLine(r, pick) + (filed ? " · " + filed + " suggestion(s) waiting for you" : ""), false, { changed: r.changed });
       }
     } catch (e) { bubble("it", e && e.message === "expired" ? "This page's link has changed — open the link ohmyagi web printed (or the service's key), then send again." : "Could not reach the agent — is ohmyagi web still running?"); }
     $("send").disabled = false; $("sending").replaceChildren(document.createTextNode("Ctrl+Enter to send · / for commands")); document.body.classList.remove("thinking"); refresh();

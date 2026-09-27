@@ -87,8 +87,8 @@ export type EgressTarget =
  * ollama reports `id === "ollama"` and is not an `OllamaExec`, so asking this
  * of the wrapper would announce a vendor egress for a turn that never left.
  */
-export function egressTarget(backend: ExecBackend): EgressTarget | undefined {
-  if (notLocal(backend) === undefined) return undefined;
+export function egressTarget(backend: ExecBackend, request?: TurnRequest): EgressTarget | undefined {
+  if (notLocal(backend, request) === undefined) return undefined;
   if (backend instanceof OllamaExec) {
     return { kind: "host", id: backend.id, host: backend.host };
   }
@@ -228,7 +228,7 @@ export class AnnouncedExec implements ExecBackend {
   }
 
   async run(request: TurnRequest): Promise<TurnResult> {
-    const target = egressTarget(this.options.origin);
+    const target = egressTarget(this.options.origin, request);
     if (target === undefined) return this.inner.run(request);
     let findings = this.options.screen?.(request) ?? [];
     if (findings.length === 0 && this.options.judge !== undefined) findings = await this.options.judge(request);

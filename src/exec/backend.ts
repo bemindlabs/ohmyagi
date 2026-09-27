@@ -14,6 +14,7 @@
  */
 
 import type { Confidence, Evidence, SubjectId } from "../types.ts";
+import type { FencePolicy } from "./fence.ts";
 import type { Restraint } from "./restraint.ts";
 
 /** How a backend is reached. Callers should not branch on this; reporting may. */
@@ -98,6 +99,13 @@ export interface TurnRequest {
    * working directory, so this is part of the same question as `env`.
    */
   readonly cwd?: string;
+  /**
+   * Kernel boundary for a vendor CLI that runs tools against a model on this
+   * machine (D-118). Omitted for cloud turns and backends that do not spawn.
+   * A present policy is fail-closed: if the kernel cannot enforce it, the turn
+   * is refused rather than run on the vendor's flags alone.
+   */
+  readonly fence?: FencePolicy;
 }
 
 /**

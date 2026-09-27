@@ -83,6 +83,11 @@ const DEAD = "http://127.0.0.1:1";
  */
 const SPAWN_CHOKEPOINT = join("src", "spawn.ts");
 /**
+ * The Landlock helper is the one native-code seam: it invokes the three
+ * Landlock syscalls and `execvp`, which Bun does not expose otherwise.
+ */
+const FFI_CHOKEPOINT = join("src", "exec", "fence.ts");
+/**
  * The two files that may listen: `ohmyagi web`'s server (D-060) and the A2A
  * listener (D-063), both on loopback by default. Named here so a second listener is a red test, and kept out of every
  * no-network closure (observer, erase), which still refuse `Bun.serve` outright.
@@ -107,7 +112,13 @@ describe("A. static — one place in the engine can start a process", () => {
     const escapes: string[] = [];
     for (const path of files) {
       const rel = relative(ROOT, path);
-      for (const hit of processEscapes(path, await readFile(path, "utf8"), rel === SPAWN_CHOKEPOINT, SERVE_CHOKEPOINTS.includes(rel))) {
+      for (const hit of processEscapes(
+        path,
+        await readFile(path, "utf8"),
+        rel === SPAWN_CHOKEPOINT,
+        SERVE_CHOKEPOINTS.includes(rel),
+        rel === FFI_CHOKEPOINT,
+      )) {
         escapes.push(`${rel}:${hit}`);
       }
     }
@@ -126,6 +137,14 @@ describe("A. static — one place in the engine can start a process", () => {
     expect(processEscapes("s.ts", "Bun.serve({});", true)).not.toEqual([]);
     expect(processEscapes("s.ts", "Bun.serve({});", false, true)).toEqual([]);
     expect(processEscapes("s.ts", "Bun.spawn([]);", false, true)).not.toEqual([]);
+  });
+
+  test("src/exec/fence.ts is the only FFI exemption, and it is really using it", async () => {
+    const path = join(ROOT, FFI_CHOKEPOINT);
+    const source = await readFile(path, "utf8");
+    expect(processEscapes(path, source, false)).not.toEqual([]);
+    expect(processEscapes(path, source, false, false, true)).toEqual([]);
+    expect(processEscapes("x.ts", 'import { dlopen } from "bun:ffi";', false)).not.toEqual([]);
   });
 
   test("the checker catches what a regular expression missed, and ignores comments", () => {
@@ -216,6 +235,24 @@ describe("B. policy — the argv allowlist", () => {
       "config",
     ]);
     for (const verb of NETWORK_VERBS) expect(GIT_VERBS).not.toContain(verb);
+  });
+
+  test("the fence helper is not a way around the list (D-118)", () => {
+    // `__fence` replaces itself with the command after `--` by execvp, past
+    // spawnGuarded — so the chokepoint judges that command before the helper starts.
+    const wrapped = (inner: string[]) => ["/usr/local/bin/ohmyagi", "__fence", "--rw", "/tmp", "--", ...inner];
+    const viaBun = (inner: string[]) => ["/usr/bin/bun", "run", "/repo/bin/om-agi.ts", "__fence", "--", ...inner];
+    for (const inner of [["git", "push"], ["gh", "repo", "delete"], ["ssh", "host"], []]) {
+      expect(refusal(wrapped(inner)), inner.join(" ")).toBeDefined();
+      expect(refusal(viaBun(inner)), inner.join(" ")).toBeDefined();
+    }
+    expect(refusal(wrapped(["git", "push"]))).toContain("inside the fence");
+    // The shape `bin/om-agi.ts` asks about before it hands over to the helper.
+    expect(refusal(["__fence", "--", "git", "push"])).toContain("inside the fence");
+    expect(refusal(["__fence", "--rw", "/tmp", "--", "claude", "-p", "hi"])).toBeUndefined();
+    // The control: a vendor CLI inside the fence is allowed, as it is outside it.
+    expect(refusal(wrapped(["claude", "-p", "hi"]))).toBeUndefined();
+    expect(refusal(viaBun(["grok", "-p", "hi"]))).toBeUndefined();
   });
 
   test("every shape of `push` this could arrive as is refused", () => {

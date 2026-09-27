@@ -20,6 +20,8 @@
  */
 
 import { VERSION } from "../src/version.ts";
+import { runFenceHelper, runFenceSupervisor } from "../src/exec/fence.ts";
+import { refusal } from "../src/spawn.ts";
 import { expandAs } from "./as.ts";
 import { cmdA2A } from "./commands/a2a.ts";
 import { cmdChat } from "./commands/chat.ts";
@@ -50,6 +52,28 @@ import { asksForHelp, helpFor } from "./shared.ts";
 import { USAGE } from "./usage.ts";
 
 async function main(rawArgv: readonly string[]): Promise<number> {
+  // A fixed internal child of `__fence`, with no command argv of its own. It
+  // owns the seccomp listener so the filtered vendor never does.
+  if (rawArgv[0] === "__fence-supervisor") {
+    return runFenceSupervisor(rawArgv.slice(1));
+  }
+
+  // Internal re-exec target for D-118. It is deliberately outside the public
+  // command switch: no help row or command surface is promised, and successful
+  // execution replaces this process with the vendor rather than returning.
+  // The helper's execvp is a second way to start a process, so the spawn
+  // chokepoint's list is asked here too: `ohmyagi __fence -- git push` typed by
+  // hand is refused as surely as a spawn would be. (Asked here, not in
+  // fence.ts, so the ledger's closure never reaches src/spawn.ts.)
+  if (rawArgv[0] === "__fence") {
+    const no = refusal(rawArgv);
+    if (no !== undefined) {
+      console.error(`ohmyagi fence: refused to run: ${no}`);
+      return 126;
+    }
+    return runFenceHelper(rawArgv.slice(1));
+  }
+
   // `--as` is resolved before dispatch and nowhere else: it expands into the
   // `<dir> --subject <id>` every command already takes, so no command below
   // learns a second way to be told whose identity it is working on (D-003).
@@ -188,5 +212,10 @@ async function main(rawArgv: readonly string[]): Promise<number> {
 const code = await main(process.argv.slice(2));
 // D-065: at most once a day, at a terminal, one line if a newer release exists.
 // After the command, so it can never delay or change what the command did.
-await autoCheck(process.argv.slice(2));
+// The hidden fence helper is not a public command and, on a setup failure,
+// must do nothing except refuse the turn — especially not make an update
+// request outside the boundary it failed to install.
+if (process.argv[2] !== "__fence" && process.argv[2] !== "__fence-supervisor") {
+  await autoCheck(process.argv.slice(2));
+}
 process.exitCode = code;

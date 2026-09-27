@@ -181,4 +181,45 @@ describe("S8.3 — personal data does not leave through a turn", () => {
     expect(argv).not.toContain(SECRET);
     expect(result.stderr).toContain("1 piece(s) stay on this machine");
   }, 60_000);
+
+  test("S12.4: --json says who answered, on whose machine, with the model and both held counts", async () => {
+    const { home, run } = await setup();
+    const where = await run(["egress", "needles", "--subject", "example"]);
+    const needles = where.stdout.split("\n")[0]!;
+    await mkdir(join(needles, ".."), { recursive: true });
+    await Bun.write(needles, `${SECRET}\n`);
+    const agent = join(home, "agent");
+    await cp(SOUL, join(agent, "soul"), { recursive: true });
+    await mkdir(join(agent, "memory"), { recursive: true });
+    await Bun.write(join(agent, "memory", "vault.md"), "# Vault\n\nThe vault restarts with systemctl restart vault.\n");
+    await Bun.write(join(agent, "memory", "owner.md"), `# Owner\n\nThe vault belongs to ${SECRET}.\n`);
+    expect((await run(["memory", "index", agent, "--subject", "example"])).code).toBe(0);
+    const history = JSON.stringify([
+      { role: "you", text: `I am ${SECRET}` },
+      { role: "agent", text: "Noted." },
+    ]);
+    const result = await run([
+      "turn", agent, "--subject", "example", "--backend", "claude,ollama", "--model", "stub",
+      "--prompt", "token t8 — how do I restart the vault?", "--history-json", history, "--json",
+    ]);
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stdout).toContain("from claude");
+    const parsed = JSON.parse(result.stdout) as {
+      backend: string;
+      local: boolean;
+      model: string | null;
+      held: number;
+      heldMessages: number;
+      changed: unknown;
+    };
+    // claude is a cloud backend: the badge says so, and the counts name what
+    // stayed on this machine — one recalled piece and one earlier message.
+    expect(parsed.backend).toBe("claude");
+    expect(parsed.local).toBe(false);
+    expect(parsed.model).toBe("stub");
+    expect(parsed.held).toBe(1);
+    expect(parsed.heldMessages).toBe(1);
+    // Level 1 takes no snapshot, so there is no change report.
+    expect(parsed.changed).toBeNull();
+  }, 60_000);
 });

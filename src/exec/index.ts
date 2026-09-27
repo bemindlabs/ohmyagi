@@ -10,6 +10,7 @@
 import type { ExecBackend } from "./backend.ts";
 import { CliExec } from "./cli-exec.ts";
 import { OllamaExec } from "./ollama-exec.ts";
+import { LOCAL_BACKENDS, isLocalCliId, localCliBackend } from "./local-cli.ts";
 import { VENDORS, vendor } from "./registry.ts";
 
 export * from "./backend.ts";
@@ -23,6 +24,20 @@ export {
 } from "./restraint.ts";
 export { CliExec, extractReply } from "./cli-exec.ts";
 export { OllamaExec } from "./ollama-exec.ts";
+export {
+  LOCAL_BACKENDS,
+  LITELLM_BASE_URL,
+  LITELLM_KEY_FILE_ENV,
+  LITELLM_PORT,
+  LOCAL_MODEL,
+  LocalCliExec,
+  isLocalCliId,
+  liteLLMKeyFile,
+  localCliBackend,
+  parseLiteLLMKey,
+  type LocalCliContext,
+  type LocalCliId,
+} from "./local-cli.ts";
 export { FallbackExec, fallbackTrail } from "./fallback.ts";
 export {
   AnnouncedExec,
@@ -47,15 +62,20 @@ export {
   type PersonalTurnRequest,
 } from "./local.ts";
 
-/** Build a backend by id. `ollama` is local; everything else is a vendor CLI. */
+/** Build a backend by id, including the two fenced local vendor variants. */
 export function backend(id: string, options: { readonly model?: string } = {}): ExecBackend {
   if (id === "ollama") {
     return new OllamaExec(options.model === undefined ? {} : { defaultModel: options.model });
   }
+  if (isLocalCliId(id)) return localCliBackend(id);
   return new CliExec(vendor(id));
 }
 
-/** Every backend om-agi can build, local one included. */
+/** Every backend om-agi can build, daemon and local CLI variants included. */
 export function allBackends(): ExecBackend[] {
-  return [new OllamaExec(), ...VENDORS.map((spec) => new CliExec(spec))];
+  return [
+    new OllamaExec(),
+    ...VENDORS.map((spec) => new CliExec(spec)),
+    ...LOCAL_BACKENDS.map((id) => localCliBackend(id)),
+  ];
 }

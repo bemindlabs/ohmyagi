@@ -22,6 +22,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute } from "node:path";
 import { expandPath, type ReadOnlySpec, type UsageSpec, type VendorSpec } from "./registry.ts";
 import { restraintRefusal } from "./restraint.ts";
+import { fencedArgv, fenceSupport, type FencePolicy, type FenceSupport } from "./fence.ts";
 import { procStat } from "../decide/runs.ts";
 import { spawnGuarded } from "../spawn.ts";
 import { tokenCount, UNREPORTED_USAGE, type Usage } from "../types.ts";
@@ -266,7 +267,13 @@ function endTurn(child: Bun.Subprocess<"ignore", "pipe", "pipe">): void {
 export class CliExec implements ExecBackend {
   readonly kind = "cli" as const;
 
-  constructor(private readonly spec: VendorSpec) {}
+  constructor(
+    private readonly spec: VendorSpec,
+    private readonly fence: {
+      readonly support: () => FenceSupport;
+      readonly argv: (argv: readonly string[], policy: FencePolicy) => string[];
+    } = { support: fenceSupport, argv: fencedArgv },
+  ) {}
 
   get id(): string {
     return this.spec.id;
@@ -327,6 +334,14 @@ export class CliExec implements ExecBackend {
     const refused = restraintRefusal(this.spec, request.restraint);
     if (refused !== undefined) return nothingRan(`refused by the autonomy dial: ${refused}`);
 
+    // D-118. Ask before writing a profile or starting anything. A local turn
+    // with tools must never fall back to the vendor's allow/deny flags merely
+    // because this kernel is missing the boundary that was promised.
+    if (request.fence !== undefined) {
+      const available = this.fence.support();
+      if (!available.ok) return nothingRan(`refused by the kernel fence: ${available.reason}`);
+    }
+
     // D-120. A restrained turn on a vendor held by a profile file gets that
     // file freshly written, or does not run: the vendor would otherwise read
     // whatever a looser turn left at that path.
@@ -334,7 +349,7 @@ export class CliExec implements ExecBackend {
     // overrides, then the vendor's hardening switches (S12.6), which no caller
     // may undo — and the subject last, which nobody may rename.
     const childEnv: Record<string, string | undefined> = {
-      ...process.env,
+      ...(this.spec.inheritEnv === false ? {} : process.env),
       ...request.env,
       ...this.spec.hardening?.env,
       OM_AGI_SUBJECT: request.subject,
@@ -366,6 +381,15 @@ export class CliExec implements ExecBackend {
     const carriedAsFlag = request.system !== undefined && appendFlag !== undefined;
     if (carriedAsFlag) argv.push(appendFlag, request.system!);
 
+    let spawnArgv = argv;
+    if (request.fence !== undefined) {
+      try {
+        spawnArgv = this.fence.argv(argv, request.fence);
+      } catch (cause) {
+        return nothingRan(`refused by the kernel fence: ${String(cause)}`);
+      }
+    }
+
     const timeoutMs = request.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
     let stdout = "";
@@ -379,7 +403,7 @@ export class CliExec implements ExecBackend {
       // a regular expression looking for `Bun.spawn(["…"` — could not see this
       // call at all. `spawnGuarded` inspects the argv that is really passed,
       // and always pipes both streams, which is what this call site wanted.
-      const child = spawnGuarded(argv, {
+      const child = spawnGuarded(spawnArgv, {
         // A CLI resolves its instruction file from the working directory, so a
         // caller that names one means it.
         cwd: request.cwd ?? process.cwd(),

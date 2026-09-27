@@ -8,8 +8,10 @@
  * engine and the docs now state, is:
  *
  * > a `Personal<T>` reaches a backend through exactly one function,
- * > {@link runPersonal}, which only accepts a backend {@link asLocal} minted —
- * > and `asLocal` mints only an ollama talking to a loopback **literal**.
+ * > {@link runPersonal}, which only accepts a backend {@link asLocal} minted.
+ * > That is an ollama talking to a loopback **literal**, or one of S12.1's
+ * > local CLI variants on a turn whose endpoint, fence and kernel support were
+ * > checked together.
  *
  * ## Why a type alone could never have done it
  *
@@ -27,18 +29,18 @@
  *
  * ## What `asLocal` accepts, and why each refusal
  *
- * - **`OllamaExec` only, by `instanceof`** — not by `id === "ollama"`. An id is
- *   a string any wrapper can copy, and one already does: `RecordingExec`
- *   forwards the wrapped backend's `id` verbatim, which is correct for a
- *   fallback trail and would be a forged passport here.
+ * - **A concrete implementation, by `instanceof`** — never by an id a wrapper
+ *   can copy. `OllamaExec` is checked directly. A `LocalCliExec` also needs
+ *   the request it is about to run, because its fence is a per-turn fact.
  * - **A loopback literal host** — `127.0.0.0/8` or `[::1]`. `localhost` is
  *   refused: it is a *name*, and a name is resolved by whatever `/etc/hosts`,
  *   NSS and the resolver say at the moment of the call.
- * - **Everything else refused outright** — `CliExec` spawns a vendor CLI whose
- *   whole purpose is to reach a cloud; `FallbackExec` is a chain that may end
- *   anywhere; `RecordingExec` writes to the state root, which is not the
- *   personal directory, and a prompt flagged personal landing in the ledger
- *   would be the leak with a record of itself.
+ * - **A local CLI passes three checks at that moment** — its base URL is a
+ *   loopback literal, the request fence allows only that URL's TCP port, and
+ *   this kernel reports the Landlock and seccomp support needed to enforce the
+ *   address/transport fence. D-123 opened this door in S12.7.
+ * - **Everything else refused outright** — an ordinary `CliExec` reaches a
+ *   cloud; a `FallbackExec` may end anywhere; a wrapper can copy an id.
  *
  * ## What this does not prove — stated here, in {@link LOCAL_LIMITS}, and
  * printed by `observe status`
@@ -62,6 +64,8 @@ import { notLoopbackLiteral } from "../loopback.ts";
 import type { Personal } from "../types.ts";
 import { flagPersonal, unwrapPersonal } from "../types.ts";
 import type { ExecBackend, TurnRequest, TurnResult } from "./backend.ts";
+import { fenceSupport } from "./fence.ts";
+import { LocalCliExec } from "./local-cli.ts";
 import { OllamaExec } from "./ollama-exec.ts";
 
 /** Re-exported: callers that already import it from here keep working. */
@@ -71,8 +75,8 @@ export { notLoopbackLiteral };
 declare const VERIFIED_LOCAL: unique symbol;
 
 /**
- * A backend that was checked, once, and found to be talking to a loopback
- * literal on this machine. Mint through {@link asLocal} and nowhere else.
+ * A backend checked through {@link asLocal}. Local CLI turns are checked again
+ * by {@link runPersonal}, because their locality includes the request's fence.
  */
 export type LocalBackend = ExecBackend & { readonly [VERIFIED_LOCAL]: "loopback-literal" };
 
@@ -83,16 +87,44 @@ export interface PersonalTurnRequest extends Omit<TurnRequest, "prompt"> {
 }
 
 
+/** D-123: S12.7's address and transport fence opened held pieces to local CLIs. */
+export const LOCAL_CLI_SEES_PERSONAL: boolean = true;
+
 /** Why this backend is not usable for personal data, or `undefined` when it is. */
-export function notLocal(backend: ExecBackend): string | undefined {
-  if (!(backend instanceof OllamaExec)) {
-    return (
-      `${backend.id} is not an OllamaExec. Checked by instanceof rather than by id, because a ` +
-      `wrapper can copy an id — RecordingExec forwards the one it wraps — and a copied id is ` +
-      `not evidence of anything about where a turn goes.`
-    );
+export function notLocal(backend: ExecBackend, request?: TurnRequest): string | undefined {
+  if (backend instanceof OllamaExec) return notLoopbackLiteral(backend.host);
+  if (backend instanceof LocalCliExec) return notLocalCli(backend, request);
+
+  return (
+    `${backend.id} is not an OllamaExec or LocalCliExec. Checked by instanceof rather than by ` +
+    `id, because a wrapper can copy an id — RecordingExec forwards the one it wraps — and a ` +
+    `copied id is not evidence of anything about where a turn goes.`
+  );
+}
+
+/**
+ * The three checks a local CLI must pass at request time: the base URL is a
+ * loopback literal, this turn's fence allows only that URL's port, and the
+ * kernel can enforce the complete Landlock + seccomp fence.
+ */
+export function notLocalCli(backend: LocalCliExec, request?: TurnRequest): string | undefined {
+  {
+    const address = notLoopbackLiteral(backend.baseUrl);
+    if (address !== undefined) return `${backend.id} is not local: ${address}`;
+    if (
+      request?.fence === undefined ||
+      request.fence.tcpPorts.length !== 1 ||
+      request.fence.tcpPorts[0] !== backend.port
+    ) {
+      return (
+        `${backend.id} is local only for a turn whose fence allows TCP port ${backend.port} ` +
+        `and no other port.`
+      );
+    }
+    const support = fenceSupport();
+    if (!support.ok) return `${backend.id} is not local on this kernel: ${support.reason}`;
+    return undefined;
   }
-  return notLoopbackLiteral(backend.host);
 }
 
 /**
@@ -102,8 +134,8 @@ export function notLocal(backend: ExecBackend): string | undefined {
  * the value of this function is that it is the only place the check happens,
  * not that it builds something new.
  */
-export function asLocal(backend: ExecBackend): LocalBackend | undefined {
-  return notLocal(backend) === undefined ? (backend as LocalBackend) : undefined;
+export function asLocal(backend: ExecBackend, request?: TurnRequest): LocalBackend | undefined {
+  return notLocal(backend, request) === undefined ? (backend as LocalBackend) : undefined;
 }
 
 /**
@@ -117,7 +149,10 @@ export async function runPersonal(
   local: LocalBackend,
   request: PersonalTurnRequest,
 ): Promise<Personal<TurnResult>> {
-  const result = await local.run({ ...request, prompt: unwrapPersonal(request.prompt) });
+  const plain = { ...request, prompt: unwrapPersonal(request.prompt) };
+  const refusal = notLocal(local, plain);
+  if (refusal !== undefined) throw new Error(`personal turn refused: ${refusal}`);
+  const result = await local.run(plain);
   return flagPersonal(result);
 }
 
@@ -140,4 +175,9 @@ export const LOCAL_LIMITS: readonly string[] = [
     "JavaScript type system follows it into a log line, a template or a JSON.stringify.",
   "a process running as this user can read the files directly. A vendor CLI om-agi spawns for " +
     "an ordinary turn has its own tools and the same uid; mode 0600 is not a boundary against it.",
+  "LiteLLM is trusted, not checked. A local CLI (claude-local, grok-local) is admitted because " +
+    "its fence lets it reach only 127.0.0.1 on LiteLLM's port — but LiteLLM is a proxy, and where " +
+    "it sends `local-coder` (and that model's fallbacks) is its own configuration. Checked by hand " +
+    "on 2026-09-27: vLLM and ollama on this machine only. A cloud route or fallback added there " +
+    "later would carry held pieces out, and nothing here would notice.",
 ];

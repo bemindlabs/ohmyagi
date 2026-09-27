@@ -35,6 +35,8 @@ import {
   turnChain,
 } from "../../src/exec/egress.ts";
 import { CliExec } from "../../src/exec/cli-exec.ts";
+import { fenceSupport } from "../../src/exec/fence.ts";
+import { LocalCliExec } from "../../src/exec/local-cli.ts";
 import { asLocal } from "../../src/exec/local.ts";
 import { OllamaExec } from "../../src/exec/ollama-exec.ts";
 import { vendor } from "../../src/exec/registry.ts";
@@ -445,5 +447,16 @@ describe("what the notice does not do", () => {
       expect(note.toLowerCase()).not.toContain("will be deleted");
       expect(note.toLowerCase()).not.toContain("om-agi removes");
     }
+  });
+});
+
+describe("D-123's fenced local CLI stays inside the egress door", () => {
+  test.skipIf(!fenceSupport().ok)("a prepared local request has no egress target or notice", () => {
+    const backend = new LocalCliExec("claude-local", {
+      home: "/fixture/home",
+      env: { XDG_STATE_HOME: "/fixture/state" },
+      cwd: () => "/fixture/agent",
+    });
+    expect(egressTarget(backend, backend.prepare(REQUEST))).toBeUndefined();
   });
 });

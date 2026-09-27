@@ -2,6 +2,9 @@
 
 import {
   AnnouncedExec,
+  LOCAL_BACKENDS,
+  LOCAL_MODEL,
+  LocalCliExec,
   PHASE_A_BACKENDS,
   backend as buildBackend,
   fallbackTrail,
@@ -38,7 +41,10 @@ import {
   type StoredProposal,
 } from "../../src/decide/index.ts";
 import { conversationBlock, forCloud, parseHistory, type Exchange } from "../../src/exec/conversation.ts";
-import { asLocal } from "../../src/exec/local.ts";
+import { asLocal, LOCAL_CLI_SEES_PERSONAL } from "../../src/exec/local.ts";
+import { fenceSupport } from "../../src/exec/fence.ts";
+import { chooseRoute, parseRoutePreference, type Route } from "../../src/exec/route.ts";
+import { isLocalCliId } from "../../src/exec/local-cli.ts";
 import {
   splitForCloud,
   DEFAULT_RECALL_CHARS,
@@ -51,6 +57,7 @@ import {
   type Attachment,
 } from "../../src/memory/index.ts";
 import { isKnownBackend, loadSoul, renderSoul, resolveSoulDir, sha256 } from "../../src/soul/index.ts";
+import { isLocalBackend } from "../../src/web/turninfo.ts";
 import { subjectId, type SubjectId } from "../../src/types.ts";
 import { DIAL_REFUSED, decideDial, dialEnv, dialLine, heldNote } from "../dial.ts";
 import { triageIfEnabled } from "../triage.ts";
@@ -105,7 +112,7 @@ async function readPromptFrom(path: string): Promise<string> {
 
 const TURN_USAGE =
   "usage: ohmyagi turn <dir> --subject <id> (--prompt <text> | --prompt-file <path>) " +
-  "[--backend a,b,c] [--model <m>] [--private] [--proposal <id>] [--no-recall] " +
+  "[--backend a,b,c] [--route auto|local|cloud] [--model <m>] [--private] [--proposal <id>] [--no-recall] [--no-proposals] " +
   "[--recall-chars <n>] [--history-json <[{role,text}]>] [--json]";
 
 /**
@@ -177,7 +184,7 @@ async function approvalFor(
  * list to tell `--private` from a flag that swallows the next word. See
  * {@link import("./soul.ts").SOUL_CHECK_BOOLEANS} for why there is one copy.
  */
-export const TURN_BOOLEANS: readonly string[] = ["json", "private", "no-recall"];
+export const TURN_BOOLEANS: readonly string[] = ["json", "private", "no-recall", "no-proposals"];
 
 /**
  * `ohmyagi turn` — spend one turn wearing a soul, on whichever backend answers.
@@ -202,6 +209,11 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
   const subject = options.get("subject");
   const promptText = options.get("prompt");
   const promptFile = options.get("prompt-file");
+  const routePreference = parseRoutePreference(options.get("route"));
+
+  if (routePreference === undefined) {
+    return usageError("--route must be one of auto, local or cloud");
+  }
 
   if (promptText !== undefined && promptText !== "" && promptFile !== undefined && promptFile !== "") {
     return usageError("--prompt and --prompt-file name two different prompts; pass one of them");
@@ -252,9 +264,10 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
     .map((part) => part.trim())
     .filter((part) => part !== "");
   for (const name of named) {
-    if (!isKnownBackend(name)) return usageError(`unknown backend ${JSON.stringify(name)}`);
+    if (!isKnownBackend(name) && !isLocalCliId(name)) {
+      return usageError(`unknown backend ${JSON.stringify(name)}`);
+    }
   }
-  const backendIds = named.length > 0 ? named : [...PHASE_A_BACKENDS];
 
   // I-3: the soul has to belong to the subject named on the command line, and
   // `loadSoul` is where that is checked — not here, and not by convention.
@@ -340,6 +353,32 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
   const cloudHistory = forCloud(history, clean);
   if (split !== undefined && split.held > 0) console.error(dimErr(`ohmyagi: recall: ${split.held} piece(s) stay on this machine — a cloud backend gets the rest (personal words or contact details)`));
   if (cloudHistory.held > 0) console.error(dimErr(`ohmyagi: conversation: ${cloudHistory.held} earlier message(s) stay on this machine`));
+
+  const localReady = await Promise.all(
+    LOCAL_BACKENDS.map((backendId) => buildBackend(backendId).available()),
+  );
+  const localReadyNow = fenceSupport().ok && localReady.some((available) => available.ok);
+  // This explicit constant is the D-123 door: `auto` may route held pieces to
+  // a local CLI only while the complete address/transport fence is enabled.
+  const localAvailable = LOCAL_CLI_SEES_PERSONAL && localReadyNow;
+  const route: Route = named.length > 0
+    ? {
+        prefer: named.some(isLocalCliId) ? "local" : "cloud",
+        reason: "You named the backend chain, so automatic routing did not change it.",
+      }
+    : chooseRoute({
+        held: split?.held ?? 0,
+        acting: verdict.effective.act >= 2,
+        preference: routePreference,
+        localAvailable,
+      });
+  const backendIds = named.length > 0
+    ? named
+    : route.prefer === "local"
+      ? [...LOCAL_BACKENDS, ...PHASE_A_BACKENDS]
+      : [...PHASE_A_BACKENDS];
+  console.error(dimErr(`ohmyagi: route: ${route.reason}`));
+
   // D-045 — level 1 is "propose": the vendor is read-only already, and this
   // tells the model where to put what it would have done.
   const compose = (att: Attachment | undefined, talk: string) => {
@@ -373,12 +412,15 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
   // id it wraps, and a copied id is no evidence of where a turn goes.
   const judge = judgeConfig(process.env);
   const blocked: Promise<void>[] = [];
+  const workdir = process.cwd();
   const chain = turnChain(
     backendIds.map((backendId) => {
       const raw = buildBackend(backendId, model === undefined || model === "" ? {} : { model });
-      // A backend not on this machine is handed the cloud's copy of the system prompt (D-095).
-      const cloud = asLocal(raw) === undefined;
-      const announced = new AnnouncedExec(new RecordingExec(raw, recording), {
+      const localCli = raw instanceof LocalCliExec ? raw : undefined;
+      const announced = new AnnouncedExec(new RecordingExec(raw, {
+        ...recording,
+        model: localCli === undefined ? recording.model : LOCAL_MODEL,
+      }), {
         origin: raw,
         write: (line) => console.error(dimErr(line)),
         // S8.3 (D-048): prompt and system — the soul and whatever recall
@@ -402,7 +444,18 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
           );
         },
       });
-      return cloud ? withSystem(announced, cloudSystem) : announced;
+      if (localCli === undefined) {
+        return asLocal(raw) === undefined ? withSystem(announced, cloudSystem) : announced;
+      }
+      // Locality is a fact about this prepared request, not the backend id: its
+      // fence must name exactly the LiteLLM port. Make that check at dispatch,
+      // then hand an inadmissible request the cloud copy as D-095 requires.
+      return withRequest(announced, (request) => {
+        const prepared = localCli.prepare(request);
+        return asLocal(raw, prepared) === undefined
+          ? { ...prepared, system: cloudSystem }
+          : prepared;
+      });
     }),
   );
 
@@ -453,7 +506,6 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
 
   // S5.2 AC4 (D-043) — a turn allowed to act reports what it changed before
   // it ends. The snapshot is only taken when the vendor may write at all.
-  const workdir = process.cwd();
   const before = verdict.effective.act >= 2 ? await snapshotTree(workdir) : undefined;
 
   const sentAt = new Date();
@@ -487,7 +539,9 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
   }
 
   const answered = result.confidence === "confirmed" || result.confidence === "partial";
-  const filed = verdict.effective.act === 1 && answered ? await fileAgentAsks(id, turnId, result.text, loaded.soul.person.inherits_from) : [];
+  // `--no-proposals`: a measurement (`ohmyagi eval`) must not leave work in the owner's list —
+  // what the agent would have asked is still printed, just not filed.
+  const filed = verdict.effective.act === 1 && answered && !options.has("no-proposals") ? await fileAgentAsks(id, turnId, result.text, loaded.soul.person.inherits_from) : [];
 
   if (options.has("json")) {
     console.log(
@@ -495,6 +549,24 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
         {
           ...result,
           route: routeLine(result),
+          // S12.4 — who handled this turn, so a caller (the web page) can say it
+          // without parsing the route sentence. `local` is the display rule (an
+          // id: ollama or *-local), not `asLocal`'s runtime check — see
+          // src/web/turninfo.ts for why the two are deliberately different.
+          local: isLocalBackend(result.backend),
+          // The model this turn asked for (`--model`); null means the backend's
+          // own default, which a vendor CLI does not report. For ollama it is
+          // the model that really ran — the flag or OM_AGI_OLLAMA_MODEL.
+          model: result.backend.endsWith("-local")
+            ? LOCAL_MODEL
+            : model === undefined || model === ""
+              ? null
+              : model,
+          // D-095 — how much of what this turn carried stayed on this machine
+          // because a cloud backend may not see it. Meaningful when `local` is
+          // false: a local backend is handed everything, nothing is held.
+          held: split?.held ?? 0,
+          heldMessages: cloudHistory.held,
           changed: change === undefined ? null : change === null ? "not-measured" : change,
           proposals: filed,
           recall:
@@ -651,6 +723,20 @@ function withSystem<T extends { run: (request: TurnRequestLike) => Promise<TurnR
   return new Proxy(exec, {
     get(target, key, receiver) {
       if (key === "run") return (request: TurnRequestLike) => target.run({ ...request, system });
+      const value = Reflect.get(target, key, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+/** Apply a backend-specific request boundary before wrappers inspect or record it. */
+function withRequest<T extends { run: (request: TurnRequestLike) => Promise<TurnResult> }>(
+  exec: T,
+  prepare: (request: TurnRequestLike) => TurnRequestLike,
+): T {
+  return new Proxy(exec, {
+    get(target, key, receiver) {
+      if (key === "run") return (request: TurnRequestLike) => target.run(prepare(request));
       const value = Reflect.get(target, key, receiver);
       return typeof value === "function" ? value.bind(target) : value;
     },

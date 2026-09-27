@@ -2385,3 +2385,24 @@ release แรกบน public ติดป้าย **`v0.3.0-alpha` · pre-rel
 - **https://github.com/bemindlabs/ohmyagi-app** — E14 Companion app (D-101): React Native iOS/Android · ฟรีกับ agent ที่ self-host · plan managed ผ่าน IAP
 - **ทำไม private:** มีโค้ดเงิน escrow การตรวจใบเสร็จ และค่า config ของ store · เปิด public ทีหลังได้เสมอ แต่ปิดทีหลังไม่ได้จริง · engine ยังเป็น Apache-2.0 ที่ `bemindlabs/ohmyagi` ตาม D-058/D-115
 - **ลำดับงานไม่เปลี่ยน (D-115):** repo ว่างรอ E16a (หลัง E12 → E13) และ E14 อยู่ท้ายคิว · ตอนนี้เป็นที่เก็บ issue/design ล่วงหน้าได้
+
+## D-123 — local CLI (claude-local, grok-local) ยังไม่ได้เห็นข้อมูลส่วนตัว จนกว่า fence จะปิด UDP/DNS และ address (S12.7)
+
+**สถานะ:** เจ้าของเคาะ (2026-09-27, ตอน merge S12.1 — เลือก "merge แต่ปิดประตูข้อมูลส่วนตัวไว้ก่อน" จาก 3 ทาง: ปิดประตูไว้ก่อน · เปิดเลยแล้วรับความเสี่ยง · ยังไม่ merge รอ S12.7)
+
+- **ที่พบตอน review:** fence ของ D-118 (Landlock) คุม TCP **ตาม port ไม่ใช่ address** และ**ไม่เห็น UDP เลย** · turn ที่ได้ชิ้นที่ cloud ห้ามเห็น (D-095 `held`) จึงยังส่งออกได้ทาง DNS (UDP หรือถามผ่าน systemd-resolved) และทาง host อื่นที่ฟัง port 10400 — เช่นถูก prompt injection จากหน้าเว็บที่ import เข้า memory (D-084)
+- **ที่ทำ:** S12.1 merge ครบ (backend ในเครื่องที่มีมือ · fence ทุก turn · `--route`) แต่ `notLocal` ปฏิเสธ `LocalCliExec` ด้วยเหตุผล `LOCAL_CLI_DOOR` · local CLI ได้สำเนาแบบ cloud (ไม่มีชิ้นที่ถูกเก็บ) · ผ่านการคัดกรอง egress เหมือน cloud พร้อมบรรทัด `screened as if leaving:` ที่บอกตามจริงว่ารันในเครื่อง · `--route auto` ยังไม่ส่งไป local เพราะชิ้นที่ถูกเก็บ (`--route local` ใช้ได้ ได้สำเนาแบบ cloud)
+- **เก็บไว้ให้ S12.7:** เงื่อนไข 3 ข้อของ codex (URL loopback literal · fence มีแค่ port ของ LiteLLM · kernel รองรับ) อยู่ใน `notLocalCli` พร้อม test · เวอร์ชันที่เปิดประตูอยู่ที่ branch `agents/s12.1-door-open`
+- **S12.7:** seccomp ใน `__fence` — ปฏิเสธ socket UDP และ supervise `connect` (seccomp user-notify) ให้ถึงได้แค่ loopback literal ของ LiteLLM · ผ่านแล้วค่อยเปิดประตู
+
+## D-124 — เปิดประตูข้อมูลส่วนตัวให้ local CLI หลังปิดช่องที่เหลือทั้งในและนอก fence (S12.7)
+
+**สถานะ:** เจ้าของเคาะ (2026-09-27 — เลือก "ทำทั้งสองตอนนี้ แล้วเปิดประตู" จาก 3 ทาง: ปิดทั้งสองช่องแล้วเปิดประตู · merge fence แต่ประตูยังปิด · รอสำรวจก่อน) · ปิด D-123
+
+- **ในเครื่อง — seccomp ใน `__fence` (codex, S12.7):** หลัง Landlock ก่อน `execvp` · ปฏิเสธ AF_INET6, socket UDP/raw และ family อื่น, `sendmsg`/`sendmmsg`, `sendto` ที่ระบุปลายทาง, `io_uring_setup`, `connect` ของ AF_UNIX ทั้งหมด (Landlock ABI 8 ไม่มีกฎสำหรับ unix socket ที่มี path) · ทุก `connect` ผ่าน supervisor แยก process (`__fence-supervisor`, `SECCOMP_RET_USER_NOTIF`) ที่ยอมแค่ `127.0.0.1:<port ที่ grant>` พอดี แล้ว connect เองจากสำเนา sockaddr และฉีด fd ด้วย `ADDFD SETFD|SEND` — ไม่ใช้ `CONTINUE` จึงไม่มี TOCTOU · ปิด fd ที่สืบทอดมาทั้งหมดก่อน exec · ตรวจ arch (x86_64, aarch64) · ตั้งไม่ได้ = ไม่รัน · probe จริง: UDP, IPv6, DNS ตรง 127.0.0.53, `getent`, `dig`, varlink/D-Bus ถูกปฏิเสธ · listener ที่ `127.0.0.2` port เดียวกันถูกปฏิเสธ (กันตาม address แล้ว) · turn จริงของ claude-local / grok-local ยังใช้ได้
+- **นอก fence — พบตอน review (บุษบา):**
+  - **vLLM ดึง URL ใน `image_url`** — probe: ข้อความที่มี `image_url` ชี้ `http://…?leak=…` ทำให้ vLLM (172.18.0.10) GET URL นั้นจริง → turn ที่ต่อ LiteLLM ได้จึงส่งข้อมูลออกผ่าน query string ได้ · ปิดด้วย vLLM `--allowed-media-domains` ชี้โดเมนที่ไม่มีจริง (`media.invalid`) — `data:` URI ยังใช้ได้
+  - **master key ของ LiteLLM** — ถ้า child ถือ master key จะสั่ง LiteLLM (ไม่มี fence) เพิ่ม route/callback ส่งข้อมูลออกได้ · ออก **virtual key `om-agi-local` ที่ใช้ได้แค่ `local-coder`** (probe: model อื่น 403, `key/generate` 401, `model/new` 403, `config/update` 401) เก็บที่ `~/.secrets/.env.om-agi-litellm` (`LITELLM_API_KEY`) · om-agi อ่านไฟล์นี้เป็นค่าเริ่มต้น และ**ปฏิเสธ**ไฟล์ที่มีแค่ `LITELLM_MASTER_KEY`
+  - **LiteLLM ถูกเชื่อ ไม่ได้ถูกตรวจ** — `local-coder` และ fallback ของมันชี้ vLLM/ollama ในเครื่องเท่านั้น (ตรวจมือ 2026-09-27) · ถ้าเพิ่ม route cloud ทีหลังจะรั่วโดยไม่มีใครรู้ → เขียนไว้ใน `LOCAL_LIMITS` · ตรวจอัตโนมัติ (`doctor` อ่าน `/model/info` ด้วย virtual key) เป็นงานต่อ
+- **ผล:** `notLocal` ใช้ `notLocalCli` (URL loopback literal · fence มีแค่ port ของ LiteLLM · kernel รองรับ Landlock + seccomp ครบ) · local CLI ได้สำเนาเต็ม · `--route auto` ส่ง turn ที่มีชิ้นถูกเก็บและต้องลงมือไป local · บรรทัด `screened as if leaving` ถูกเอาออก
+- **รีวิวอิสระ:** subagent ที่ส่งไปโจมตี fence หยุดกลางทาง (safety classifier) — fence จึงได้รีวิวจากบุษบาอ่านโค้ด + probe เชิงป้องกันเท่านั้น ไม่ใช่ red-team เต็มรูป · ควรให้คนตรวจซ้ำก่อนใช้กับข้อมูลที่อ่อนไหวมาก

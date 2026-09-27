@@ -10,7 +10,7 @@
  * **The rule.** Ambient identity and configuration — `homedir()`, `process.env`,
  * `process.cwd()` — are read at the seam where om-agi starts a process or takes
  * a command line, and passed inward as values. Nothing under `src/` reads them
- * for itself, except three files that *are* that seam and are named below with
+ * for itself, except four files that *are* that seam and are named below with
  * the reason.
  *
  * **Why it is worth a gate and not a habit.** A `src/` file that quietly called
@@ -57,10 +57,10 @@ const AMBIENT_MEMBERS: readonly string[] = ["env", "cwd"];
 const HOME_MODULES: readonly string[] = ["node:os", "os"];
 
 /**
- * The three files that are the seam, and what each of them reads.
+ * The four files that are the seam, and what each of them reads.
  *
  * A line each, with the reason, rather than a pattern: an exemption should cost
- * someone a justification. All three are under `src/exec/` and that is not a
+ * someone a justification. All four are under `src/exec/` and that is not a
  * coincidence — the seam is where a child process is configured, because a child
  * that inherits no PATH cannot run at all.
  */
@@ -75,6 +75,9 @@ const SEAM = new Map<string, string>([
   // Hands `process.env` to the vendor CLI it spawns. Without it the child has no
   // PATH and no vendor credentials, so there is no turn to record.
   [join("src", "exec", "cli-exec.ts"), "the environment the child process needs"],
+  // Owns the scrubbed environment and isolated home of the two vendor CLIs
+  // that talk only to LiteLLM on this machine. Tests supply both as values.
+  [join("src", "exec", "local-cli.ts"), "the isolated local vendor child environment"],
 ]);
 
 /** Every ambient read of identity or configuration in one file. */
@@ -89,7 +92,7 @@ function ambientReads(path: string, source: string): string[] {
 }
 
 describe("nothing under src/ reads the machine it is running on", () => {
-  test("only the three files at the exec seam read a home, an env or a cwd", async () => {
+  test("only the four files at the exec seam read a home, an env or a cwd", async () => {
     const files = await sourceFiles(SRC);
     // Guards the scope. Both halves matter: a count that silently went to zero,
     // and a scan that stopped reaching a particular file.
@@ -121,7 +124,7 @@ describe("nothing under src/ reads the machine it is running on", () => {
       const path = join(ROOT, rel);
       expect(ambientReads(path, await readFile(path, "utf8")), `${rel}: ${reason}`).not.toEqual([]);
     }
-    expect(SEAM.size).toBe(3);
+    expect(SEAM.size).toBe(4);
   });
 
   test("the two files that promise this in prose are telling the truth", async () => {

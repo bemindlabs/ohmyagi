@@ -10,8 +10,9 @@
  * and what these tests check, is the half that can be:
  *
  * > a `Personal<T>` reaches a backend through exactly one function,
- * > `runPersonal`, which accepts only a backend `asLocal` minted — and
- * > `asLocal` mints only an `OllamaExec` whose host is a loopback **literal**.
+ * > `runPersonal`, which accepts only a backend `asLocal` minted. That is an
+ * > `OllamaExec` whose host is a loopback **literal**, or a local CLI whose
+ * > loopback endpoint, exact port-only turn fence and kernel support all pass.
  *
  * ## Why a type alone could not have done it
  *
@@ -23,7 +24,9 @@
  * `SubjectId` already uses. Three tests below are that argument, executed:
  * `OLLAMA_HOST` pointing at another host is refused, `localhost` is refused
  * because it is a name, and a wrapper that copies the id `"ollama"` is refused
- * because an id is a string anything can copy.
+ * because an id is a string anything can copy. The local CLI cases then show
+ * that a trusted implementation name alone is insufficient: locality also
+ * depends on the request and the kernel at the moment of the turn.
  *
  * ## What is not proven — asserted here so that deleting it breaks a test
  *
@@ -39,10 +42,14 @@ import { describe, expect, test } from "bun:test";
 import { join, relative, resolve } from "node:path";
 import { CliExec } from "../../src/exec/cli-exec.ts";
 import { FallbackExec } from "../../src/exec/fallback.ts";
+import { fenceSupport } from "../../src/exec/fence.ts";
+import { LocalCliExec } from "../../src/exec/local-cli.ts";
 import {
   asLocal,
+  LOCAL_CLI_SEES_PERSONAL,
   LOCAL_LIMITS,
   notLocal,
+  notLocalCli,
   notLoopbackLiteral,
   runPersonal,
   type LocalBackend,
@@ -61,6 +68,7 @@ import { RESTRAINED } from "../support/restraint.ts";
 
 const ROOT = resolve(import.meta.dir, "..", "..");
 const SUBJECT = subjectId("example");
+const FENCE_SUPPORT = fenceSupport();
 
 /** A port nothing listens on, so a turn fails fast and locally. */
 const DEAD_LOOPBACK = "http://127.0.0.1:1";
@@ -171,6 +179,50 @@ describe("asLocal — the only constructor", () => {
     const cli = new CliExec(vendor("claude"));
     expect(asLocal(cli)).toBeUndefined();
     expect(notLocal(cli)).toContain("instanceof");
+  });
+
+  test("a local CLI needs this turn's exact port-only fence", () => {
+    const backend = new LocalCliExec("claude-local", {
+      home: "/fixture/home",
+      env: { XDG_STATE_HOME: "/fixture/state" },
+      cwd: () => "/fixture/agent",
+    });
+    const prepared = backend.prepare({ subject: SUBJECT, prompt: "anything", restraint: RESTRAINED });
+
+    // D-123 keeps locality tied to this request's exact fence.
+    expect(notLocalCli(backend)).toContain("fence allows TCP port 10400");
+    expect(notLocalCli(backend, { ...prepared, fence: { ...prepared.fence!, tcpPorts: [10400, 443] } }))
+      .toContain("no other port");
+    if (FENCE_SUPPORT.ok) expect(notLocalCli(backend, prepared)).toBeUndefined();
+    else expect(notLocalCli(backend, prepared)).toContain("kernel");
+  });
+
+  test("a local CLI passes the personal-data door when all three checks pass (D-123)", () => {
+    const backend = new LocalCliExec("claude-local", {
+      home: "/fixture/home",
+      env: { XDG_STATE_HOME: "/fixture/state" },
+      cwd: () => "/fixture/agent",
+    });
+    const prepared = backend.prepare({ subject: SUBJECT, prompt: "anything", restraint: RESTRAINED });
+    if (FENCE_SUPPORT.ok) {
+      expect(notLocal(backend, prepared)).toBeUndefined();
+      expect(asLocal(backend, prepared)).toBeDefined();
+      expect(LOCAL_CLI_SEES_PERSONAL).toBe(true);
+    } else {
+      expect(asLocal(backend, prepared)).toBeUndefined();
+    }
+  });
+
+  test("a local CLI name cannot make a remote base URL local", () => {
+    const backend = new LocalCliExec("grok-local", {
+      home: "/fixture/home",
+      env: { XDG_STATE_HOME: "/fixture/state" },
+      cwd: () => "/fixture/agent",
+      baseUrl: "https://models.example.com:10400",
+    });
+    const prepared = backend.prepare({ subject: SUBJECT, prompt: "anything", restraint: RESTRAINED });
+    expect(asLocal(backend, prepared)).toBeUndefined();
+    expect(notLocalCli(backend, prepared)).toContain("loopback literal");
   });
 
   test("a chain is refused, because a chain may end anywhere", () => {
@@ -413,7 +465,10 @@ describe("the size of what AC4 proves", () => {
     expect(limits).toContain("-cloud");
     expect(limits).toContain("the flag stops at the door");
     expect(limits).toContain("same uid");
-    expect(LOCAL_LIMITS.length).toBe(4);
+    // D-124: the local CLIs are admitted on a fence that reaches only LiteLLM, and
+    // where LiteLLM sends `local-coder` is its configuration, not something checked here.
+    expect(limits).toContain("LiteLLM is trusted, not checked");
+    expect(LOCAL_LIMITS.length).toBe(5);
   });
 
   test("the flag really does stop at the door, which is why that line is there", () => {
