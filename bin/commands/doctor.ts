@@ -14,6 +14,8 @@ import {
   type DoctorEnv,
 } from "../../src/doctor.ts";
 import { VENDORS } from "../../src/exec/index.ts";
+import { LITELLM_BASE_URL, liteLLMKeyFile, readLiteLLMKey } from "../../src/exec/local-cli.ts";
+import { networkInterfaces } from "node:os";
 import { isKnownBackend } from "../../src/soul/index.ts";
 import { subjectId } from "../../src/types.ts";
 import { ENGINE_CHECKOUT, parseArgs, usageError } from "../shared.ts";
@@ -77,6 +79,16 @@ export async function cmdDoctor(argv: readonly string[]): Promise<number> {
     (asked === undefined || asked === "" ? fallback : asked).replace(/\/$/, "");
   const configured = process.env["OLLAMA_HOST"];
 
+  // D-124: only where local action is set up — a key file that is not there means there is nothing to ask.
+  const keyFile = liteLLMKeyFile(home, process.env);
+  const loaded = await readLiteLLMKey(keyFile);
+  const liteLLM = loaded.ok
+    ? { url: LITELLM_BASE_URL, key: loaded.key }
+    : loaded.absent
+      ? undefined
+      : { url: LITELLM_BASE_URL, problem: loaded.reason };
+  const ownAddresses = Object.values(networkInterfaces()).flatMap((list) => (list ?? []).map((address) => address.address.toLowerCase()));
+
   const env: DoctorEnv = {
     home,
     cwd: process.cwd(),
@@ -95,6 +107,8 @@ export async function cmdDoctor(argv: readonly string[]): Promise<number> {
     models: commas(options.get("model")),
     backends,
     probeVersions: !options.has("no-version"),
+    ownAddresses,
+    ...(liteLLM === undefined ? {} : { liteLLM }),
     ...(agent === undefined ? {} : { agent }),
     ...(subject === undefined ? {} : { subject }),
   };

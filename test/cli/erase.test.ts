@@ -14,7 +14,8 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { sha256 } from "../../src/soul/block.ts";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { BUN } from "../support/bare-path.ts";
@@ -187,6 +188,24 @@ describe("ohmyagi erase", () => {
     // What was never this subject's to delete is still there, and git is intact.
     expect(await Bun.file(join(agent, "memory", "README.md")).exists()).toBe(true);
     expect(await Bun.file(join(agent, ".git", "HEAD")).exists()).toBe(true);
+  }, 60_000);
+
+  test("a block in a file a vendor also reads (kimi's home AGENTS.md) is stripped too, the owner's text kept", async () => {
+    const { home, agent } = await makeAgent();
+    // om-agi never writes this file (S12.6, K4h: kimi 2.0.2 reads it); a block that got there by hand or by an
+    // old version is still this subject's identity reaching a model.
+    const kimiHome = join(home, ".kimi-code");
+    await mkdir(kimiHome, { recursive: true });
+    const body = "# Someone\n";
+    const marker = `<!-- om-agi:soul:begin subject=${SUBJECT} sha256=${sha256(body)} lead=0 tail=1 -->`;
+    const file = join(kimiHome, "AGENTS.md");
+    await writeFile(file, `the owner's own line for kimi\n\n${marker}\n${body}\n<!-- om-agi:soul:end -->\n`);
+
+    const erased = await run(home, ["erase", SUBJECT, "--agent", agent, "--by", "a reviewer", "--yes", "--json"]);
+    expect(erased.code, erased.stderr).toBe(0);
+    const after = await Bun.file(file).text();
+    expect(after).not.toContain(SUBJECT);
+    expect(after).toContain("the owner's own line for kimi");
   }, 60_000);
 
   test("--out writes the machine form, and om-agi keeps no copy of its own", async () => {

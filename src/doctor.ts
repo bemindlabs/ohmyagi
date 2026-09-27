@@ -67,6 +67,7 @@ import { subjectOfCollection } from "./memory/collection.ts";
 import { resolveTargets } from "./soul/targets.ts";
 import { formatWorn, wearsOnly, wornReport } from "./soul/worn.ts";
 import { REMOTE_VISIBILITY_LIMIT, spawnGuarded } from "./spawn.ts";
+import { LOCAL_MODEL } from "./exec/local-cli.ts";
 import type { SubjectId } from "./types.ts";
 
 /** Where ollama listens when nothing says otherwise. Same default as `OllamaExec`. */
@@ -166,7 +167,7 @@ export interface DoctorEnv {
   readonly engineRoot: string | undefined;
   readonly which: (binary: string) => string | null;
   readonly run: (argv: readonly string[], timeoutMs: number) => Promise<ProbeRun>;
-  readonly getJson: (url: string, timeoutMs: number) => Promise<JsonProbe>;
+  readonly getJson: (url: string, timeoutMs: number, headers?: Readonly<Record<string, string>>) => Promise<JsonProbe>;
   readonly ollamaHost: string;
   readonly qdrantHost: string;
   /** Models this machine is required to have. Empty means "any, but at least one". */
@@ -185,6 +186,14 @@ export interface DoctorEnv {
    * drift check, and the report says so where the versions would have been.
    */
   readonly probeVersions: boolean;
+  /**
+   * Local action (D-124): where to ask LiteLLM which routes stand behind `local-coder`, with the virtual key
+   * from the key file — or why that key could not be used. Absent when no key file is set up, and then the
+   * section is not shown. The key is only ever sent to `url`; nothing prints it.
+   */
+  readonly liteLLM?: { readonly url: string; readonly key: string } | { readonly url: string; readonly problem: string };
+  /** This machine's own interface addresses: a route to one of them stays on this machine. */
+  readonly ownAddresses?: readonly string[];
   /** An agent repository to check, when one was named. */
   readonly agent?: string;
   /** Required with `agent`, and what AC5 is asked about when given. */
@@ -218,7 +227,8 @@ export const DOCTOR_LIMITS: readonly string[] = [
     "into the home it is given. Measured 2026-09-21 — one sweep created three directories under " +
     "a fresh home, none of them om-agi's. `--no-version` skips every one of those probes, and " +
     "costs the drift check with them.",
-  "exit 1 is narrow: the local route only (I-1). A vendor CLI that is missing, out of date or " +
+  "exit 1 is narrow: the local route only (I-1) — ollama, and, where local action is set up, a " +
+    "LiteLLM route for `local-coder` that leaves this machine. A vendor CLI that is missing, out of date or " +
     "unable to be held read-only is a warning, because a machine with fewer hands still works. " +
     "`ohmyagi backends` prints what each vendor's read-only flag does and does not cover.",
   "which identity is worn is reported here, not decided here. `ohmyagi worn` is the command " +
@@ -227,6 +237,9 @@ export const DOCTOR_LIMITS: readonly string[] = [
     "its modules live inside the executable. Run from a binary, that check reports `not " +
     "checked` and says why. Until 2026-09-21 it reported a clean scan of zero files instead, " +
     "which is the shape every check here is written to avoid: a pass earned by looking at nothing.",
+  "local action is checked as far as its key can see: the routes LiteLLM lists for `local-coder`. " +
+    "Its fallbacks live in LiteLLM's router settings, which a key limited to `local-coder` cannot read, " +
+    "and LiteLLM is trusted to send a request where its routes say. Read its config by hand for those.",
   REMOTE_VISIBILITY_LIMIT,
 ];
 
@@ -1130,6 +1143,122 @@ async function checkEngine(env: DoctorEnv): Promise<DoctorSection> {
 }
 
 // ---------------------------------------------------------------------------
+// Local action — where LiteLLM sends `local-coder` (D-124)
+// ---------------------------------------------------------------------------
+
+/** One deployment LiteLLM lists: the model group, its provider and where it sends requests. */
+export interface LiteLLMRoute {
+  readonly group: string;
+  readonly provider: string;
+  readonly apiBase: string | undefined;
+}
+
+/** `/model/info` → the routes in it; `undefined` when the body is not that shape. */
+export function parseModelInfo(body: unknown): readonly LiteLLMRoute[] | undefined {
+  const data = (body as { data?: unknown } | null)?.data;
+  if (!Array.isArray(data)) return undefined;
+  const routes: LiteLLMRoute[] = [];
+  for (const entry of data) {
+    const group = (entry as { model_name?: unknown }).model_name;
+    const params = (entry as { litellm_params?: { model?: unknown; api_base?: unknown } }).litellm_params ?? {};
+    if (typeof group !== "string") continue;
+    const model = typeof params.model === "string" ? params.model : "";
+    routes.push({
+      group,
+      provider: model.includes("/") ? model.slice(0, model.indexOf("/")) : model,
+      apiBase: typeof params.api_base === "string" && params.api_base !== "" ? params.api_base : undefined,
+    });
+  }
+  return routes;
+}
+
+export type RoutePlace = "here" | "network" | "unknown" | "outside";
+
+/** Providers whose default address, with no `api_base`, is this machine. */
+const LOCAL_BY_DEFAULT: readonly string[] = ["ollama", "ollama_chat"];
+
+const V4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+
+function privateV4(octets: readonly number[]): boolean {
+  const [a = -1, b = -1] = octets;
+  return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254);
+}
+
+/**
+ * Where one route sends a request, as far as its address says: `here` (loopback, or an address of this
+ * machine's own), `network` (a private address that is not this machine's), `unknown` (a name that only
+ * a local resolver could place), or `outside`.
+ */
+export function routePlace(route: LiteLLMRoute, own: readonly string[]): { readonly place: RoutePlace; readonly host: string } {
+  if (route.apiBase === undefined) {
+    return LOCAL_BY_DEFAULT.includes(route.provider)
+      ? { place: "here", host: `${route.provider} default (localhost)` }
+      : { place: "outside", host: `${route.provider || "an unnamed provider"}'s own servers (no api_base)` };
+  }
+  let host: string;
+  try {
+    host = new URL(route.apiBase).hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  } catch {
+    return { place: "unknown", host: route.apiBase };
+  }
+  if (host === "localhost" || host === "host.docker.internal" || host === "::1" || own.includes(host)) return { place: "here", host };
+  const v4 = V4.exec(host);
+  if (v4 !== null) {
+    const octets = v4.slice(1).map(Number);
+    if (octets[0] === 127) return { place: "here", host };
+    return { place: privateV4(octets) ? "network" : "outside", host };
+  }
+  if (host.includes(":")) return { place: /^f[cd]|^fe[89ab]/.test(host) ? "network" : "outside", host };
+  if (!host.includes(".") || /\.(local|internal|lan|home\.arpa)$/.test(host)) return { place: "unknown", host };
+  return { place: "outside", host };
+}
+
+const PLACE_SEVERITY: Record<RoutePlace, Severity> = { here: "ok", network: "warn", unknown: "warn", outside: "missing" };
+const PLACE_WORDS: Record<RoutePlace, string> = {
+  here: "stays on this machine",
+  network: "goes to another machine on your network, not this one",
+  unknown: "goes to a name only a local resolver can place — look at where it points",
+  outside: "LEAVES this machine — held pieces of memory would go with a local-action turn",
+};
+
+/** D-124: the local CLIs are let in on a fence that reaches LiteLLM alone; this asks LiteLLM where that goes. */
+export async function checkLocalAction(env: DoctorEnv): Promise<DoctorSection | undefined> {
+  const config = env.liteLLM;
+  if (config === undefined) return undefined;
+  const title = `local action — where LiteLLM sends ${LOCAL_MODEL} (D-124)`;
+  const notes = [
+    "fallbacks are not listed to a key limited to local-coder, and are not checked (see below)",
+  ];
+  if ("problem" in config) {
+    return { title, findings: [{ id: "local-action:key", severity: "warn", label: "key", detail: config.problem }], notes };
+  }
+  const probe = await env.getJson(`${config.url}/model/info`, HTTP_TIMEOUT_MS, { authorization: `Bearer ${config.key}` });
+  if (!probe.ok) {
+    return {
+      title,
+      findings: [{ id: "local-action:litellm", severity: "warn", label: "LiteLLM", detail: `${config.url} did not answer (${probe.reason}) — local action cannot run, so nothing can leave through it` }],
+      notes,
+    };
+  }
+  const routes = parseModelInfo(probe.body);
+  if (routes === undefined) {
+    return { title, findings: [{ id: "local-action:litellm", severity: "warn", label: "LiteLLM", detail: "answered /model/info in a shape this version does not read" }], notes };
+  }
+  const own = env.ownAddresses ?? [];
+  const mine = routes.filter((route) => route.group === LOCAL_MODEL);
+  if (mine.length === 0) {
+    return { title, findings: [{ id: "local-action:none", severity: "warn", label: LOCAL_MODEL, detail: `the key sees no ${LOCAL_MODEL} route — local-action turns will fail` }], notes };
+  }
+  const findings: Finding[] = mine.map((route, index) => {
+    const { place, host } = routePlace(route, own);
+    return { id: `local-action:route:${index}`, severity: PLACE_SEVERITY[place], label: route.provider || "route", detail: `${host} — ${PLACE_WORDS[place]}` };
+  });
+  const others = routes.filter((route) => route.group !== LOCAL_MODEL).map((route) => route.group);
+  if (others.length > 0) notes.push(`the key can also use ${[...new Set(others)].join(", ")} — a key for local action should see local-coder alone`);
+  return { title, findings, notes };
+}
+
+// ---------------------------------------------------------------------------
 // The report
 // ---------------------------------------------------------------------------
 
@@ -1141,8 +1270,10 @@ export async function runDoctor(env: DoctorEnv): Promise<DoctorReport> {
   const qdrant = await checkQdrant(env);
   const worn = await checkWorn(env);
   const engine = await checkEngine(env);
+  const local = await checkLocalAction(env);
 
   const sections: DoctorSection[] = [clis, ollama.section, gpu, qdrant, worn];
+  if (local !== undefined) sections.push(local);
   if (env.agent !== undefined && env.subject !== undefined) {
     sections.push(await checkAgent(env.agent, env.subject));
   }
@@ -1243,9 +1374,9 @@ export async function runProbe(argv: readonly string[], timeoutMs: number): Prom
 }
 
 /** One loopback GET, parsed, with the reason kept when there is no body. */
-export async function fetchJson(url: string, timeoutMs: number): Promise<JsonProbe> {
+export async function fetchJson(url: string, timeoutMs: number, headers?: Readonly<Record<string, string>>): Promise<JsonProbe> {
   try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+    const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), ...(headers === undefined ? {} : { headers: { ...headers } }), redirect: "error" });
     if (!response.ok) return { ok: false, reason: `HTTP ${response.status}` };
     return { ok: true, body: await response.json() };
   } catch (cause) {

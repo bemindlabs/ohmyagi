@@ -75,9 +75,11 @@ E0 รากฐาน ──┬─> E1 ตัวตนที่พกพาไ�
                         E7 ความเป็นเจ้าของข้อมูล ───┴────────────┘
 
 E9 chat ─┐                                   E4 ──> E11 Knowledge memory ──┐
-E5 ──────┴──> E10 Web console (ทุกปุ่มคือคำสั่ง) ──────────────────────────┴──> E12 Local action ◀ ถัดไป (D-096)
+E5 ──────┴──> E10 Web console (ทุกปุ่มคือคำสั่ง) ──────────────────────────┴──> E12 Local action ✅ (v0.8.0)
                                                                                      │
-                                                          E13 Deploy (VPS·GCP·AWS) ◀─┘ ──> E16a Platform ──> E15 Agent hiring ──> E16b ──> E14 App (RN · IAP)   (D-115)
+                                                    ┌── E16 Platform (Bun·Hono·PG) ◀─┤ ◀ ถัดไป ขนานกัน (D-125)
+                                                    ├── E14 App (Expo·EAS·IAP) ◀─────┘   ซื้อ/managed รอ E16b + E13
+                                                    └── E13 Deploy (VPS·GCP·AWS) ──> E15 Agent hiring (หลัง E16a)
 ```
 
 **เส้นวิกฤต:** `E0 → E1 → E2 → E5` = จุดที่ agent ยืนเองได้และลงมือเองได้ (นิยามของ D-015)
@@ -760,7 +762,7 @@ E5 ──────┴──> E10 Web console (ทุกปุ่มคือ�
 
 ---
 
-### E14 — Companion app: React Native · freemium · in-app purchase (D-099, D-101, D-113) · หลัง E16b (D-115)
+### E14 — Companion app: React Native · freemium · in-app purchase (D-099, D-101, D-113) · ขนานกับ E16 (D-125) · Expo + EAS (D-127)
 
 > **ฟรี:** แอปเชื่อมกับ agent ที่ self-host เอง · **จ่าย (IAP subscription):** เรา host agent ให้บน VM ของลูกค้าแต่ละคน (managed)
 > **เงื่อนไขบังคับของ managed (D-101):** VM แยกต่อคน · กุญแจ disk ของลูกค้า · ย้ายออกได้ด้วย `git clone` · ลบได้จริงและวัดได้ · PDPA/GDPR พร้อมก่อนขาย
@@ -769,8 +771,8 @@ E5 ──────┴──> E10 Web console (ทุกปุ่มคือ�
 | # | Story | วัน | ค่า/แรง |
 |---|---|---|---|
 | S14.1 | แอป Expo/React Native — แชท · ตอบข้อเสนอ · อ่าน memory · Engine/เวอร์ชัน (ใช้ `/api/*` เดิมของ `ohmyagi web`) | 3 | สูง |
-| S14.2 | จับคู่แอปกับ agent — QR จาก `ohmyagi web` (URL + key) · เก็บ key ใน secure storage · ผ่าน tailnet หรือ https | 1 | **สูงสุด** (ประตู) |
-| S14.3 | push notification — ข้อเสนอใหม่/เหตุผิดปกติ (APNs/FCM ผ่าน relay ที่ไม่เห็นเนื้อหา) | 2 | สูง |
+| S14.2 | จับคู่แอปกับ agent — QR จาก `ohmyagi web` (URL + key) · เก็บ key ใน secure storage · ผ่าน tailnet หรือ https · **ฝั่ง engine ✅ 2026-09-27** (`web --qr` + Settings → Pair a phone · เทียบ key แบบ constant-time · AC3 ปุ่ม "Unpair every phone" เปลี่ยน key ขณะรัน) · ฝั่งแอปอยู่ใน `ohmyagi-app` | 1 | **สูงสุด** (ประตู) |
+| S14.3 | push notification — ข้อเสนอใหม่/เหตุผิดปกติ (APNs/FCM ผ่าน relay ที่ไม่เห็นเนื้อหา) · **เปิดเองต่อมือถือ, protocol ใน D-130** · **ฝั่ง engine ✅ 2026-09-27** (`/api/push/*`, เฝ้าทุก 30 วิ, unpair = เลิกแจ้ง, erase) · relay = S16.6 · แอป = ต่อจาก PR #2 | 2 | สูง |
 | S14.4 | in-app purchase — subscription (StoreKit / Play Billing) + ตรวจใบเสร็จฝั่ง server · สิทธิ์รวมกับ Stripe บนเว็บ (D-113) | 2 | สูง |
 | S14.8 | ซื้อบนเว็บด้วย Stripe Checkout/Billing · webhook → สิทธิ์เดียวกับ IAP (D-112, D-113) | 1 | สูง |
 | S14.5 | managed provisioning — จ่ายแล้ว `ohmyagi deploy` สร้าง VM ของลูกค้าตามเงื่อนไข D-101 · ยกเลิกแล้ว destroy | 2 | **สูงสุด** |
@@ -812,13 +814,13 @@ E5 ──────┴──> E10 Web console (ทุกปุ่มคือ�
 
 ---
 
-### E16 — Platform backend (D-115) · repo แยก · E16a ก่อน E15 · E16b ก่อน E14
+### E16 — Platform backend (D-115) · repo แยก · ขนานกับ E14 (D-125) · Bun + Hono + Postgres (D-126)
 
 > บริการที่ **เรา** host · **ไม่อยู่ใน engine** (engine ที่คน self-host ไม่มีโค้ดเงินหรือบัญชี) · ไม่เห็น prompt/memory ของ agent ใด (BYOK D-109 · ไม่มี proxy D-106)
 
 | # | Story | วัน | ค่า/แรง |
 |---|---|---|---|
-| S16.1 | (a) บัญชีผู้ใช้ — ผู้จ้าง · เจ้าของ agent · ลูกค้า managed · auth + 2FA | 2 | สูง |
+| S16.1 | (a) บัญชีผู้ใช้ — ผู้จ้าง · เจ้าของ agent · ลูกค้า managed · auth + 2FA · **passkey + อีเมลกู้บัญชี ไม่มีรหัสผ่าน (D-129)** | 2 | สูง |
 | S16.2 | (a) Stripe Connect — onboarding เจ้าของ agent เป็น connected account · escrow · application fee · refund บางส่วน (D-112) | 3 | **สูงสุด** |
 | S16.3 | (a) GitHub App — เก็บ private key ใน secret manager · ออก installation token ต่องาน · webhook PR/merge (D-114) | 2 | **สูงสุด** |
 | S16.4 | (a) ที่อยู่ของตลาด (E15) — API ของงาน/ข้อเสนอ/ต่อรอง · ตรวจลายเซ็นรายงาน usage (D-106, D-108) | 2 | สูง |
@@ -965,7 +967,7 @@ E5 ──────┴──> E10 Web console (ทุกปุ่มคือ�
 1. **`E12` Local action** — ✅ `SP-5` (D-116) · ต่อด้วย S12.6 → S12.2 → S12.1 → S12.3 → S12.4 → S12.5 (D-117, D-118)
 1b. **`E13` Deploy** — VPS Hostinger · GCP · AWS บนเครื่องที่เจ้าของคุม (D-099, D-100)
 1c. **`E14` Companion app** — React Native · ฟรี self-host / จ่าย managed ผ่าน IAP (D-101) · ลำดับ E12→E13→E14 (D-102)
-1d. **`E15` Agent hiring** — ตลาดงาน · เจ้าของอนุมัติทุกงาน · escrow จ่ายเมื่อ merge · เพดาน + รายงานลงลายมือชื่อ (D-103..D-106) · **ลำดับรวม E12 → E13 → E16a → E15 → E16b → E14 (D-115) · ~60–82 วัน-คน (E12 โตเป็น 8–10 วันจาก fence, D-118)**
+1d. **`E15` Agent hiring** — ตลาดงาน · เจ้าของอนุมัติทุกงาน · escrow จ่ายเมื่อ merge · เพดาน + รายงานลงลายมือชื่อ (D-103..D-106) · ~~ลำดับรวม E12 → E13 → E16a → E15 → E16b → E14 (D-115)~~ → **E16 ‖ E14 ตั้งแต่ 2026-09-27 (D-125)** · ~60–82 วัน-คน (D-118)
 2. **proactive / สัญญาณ** — แจ้งเจ้าของผ่าน Telegram เมื่อมีข้อเสนอหรือเหตุผิดปกติ ตอบ yes/no จากแชท · trigger จาก pattern รอ `S3.3` AC6 (ทางที่ 2 ของ D-096)
 3. `S10.9` UI ไทย · `S10.10` เว็บสร้าง agent/trigger/consent (ทางที่ 3 ของ D-096)
 4. `S9.3` แชทแพลตฟอร์มที่ 2 — LINE ต้องมี webhook สาธารณะ + บัญชี OA ของเจ้าของ (ทางที่ 4 ของ D-096)

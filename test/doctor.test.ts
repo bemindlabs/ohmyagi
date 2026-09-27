@@ -22,13 +22,16 @@ import { join } from "node:path";
 import {
   asMib,
   blockers,
+  checkLocalAction,
   DOCTOR_LIMITS,
   doctorExit,
   parseNvidiaSmi,
   parseOllamaTags,
   parseQdrantCollections,
+  parseModelInfo,
   parseVersion,
   renderDoctor,
+  routePlace,
   runDoctor,
   type DoctorEnv,
   type DoctorReport,
@@ -1022,3 +1025,104 @@ describe("the rendered report", () => {
     expect(JSON.parse(JSON.stringify(report)).sections.length).toBe(report.sections.length);
   });
 });
+
+describe("D-124 — where LiteLLM sends local-coder", () => {
+  const KEY = "virtual-key-for-test";
+  const info = (...routes: [string, string, string?][]): JsonProbe => ({
+    ok: true,
+    body: { data: routes.map(([group, model, apiBase]) => ({ model_name: group, litellm_params: apiBase === undefined ? { model } : { model, api_base: apiBase } })) },
+  });
+  async function withRoutes(probe: JsonProbe, own: readonly string[] = ["172.17.0.1"]) {
+    const asked: { url: string; headers: Readonly<Record<string, string>> | undefined }[] = [];
+    const env: DoctorEnv = {
+      ...(await machine()),
+      liteLLM: { url: "http://127.0.0.1:10400", key: KEY },
+      ownAddresses: own,
+      getJson: async (url, _timeout, headers) => {
+        asked.push({ url, headers });
+        return url.endsWith("/model/info") ? probe : { ok: false, reason: "connection refused" };
+      },
+    };
+    return { env, asked };
+  }
+
+  test("not set up: no section at all", async () => {
+    expect(await checkLocalAction(await machine())).toBeUndefined();
+    const report = await runDoctor(await machine());
+    expect(report.sections.some((section) => section.title.startsWith("local action"))).toBe(false);
+  });
+
+  test("a route to this machine is ok; the key goes to LiteLLM alone, in a header", async () => {
+    const { env, asked } = await withRoutes(info(["local-coder", "hosted_vllm/qwen", "http://172.17.0.1:10410/v1"]));
+    const section = (await checkLocalAction(env))!;
+    expect(section.findings.map((f) => [f.severity, f.detail])).toEqual([["ok", "172.17.0.1 — stays on this machine"]]);
+    const toLiteLLM = asked.filter((a) => a.headers !== undefined);
+    expect(toLiteLLM).toEqual([{ url: "http://127.0.0.1:10400/model/info", headers: { authorization: `Bearer ${KEY}` } }]);
+    const report = await runDoctor(env);
+    expect(blockers(report).filter((f) => f.id.startsWith("local-action"))).toEqual([]);
+    expect(renderDoctor(report).join("\n")).not.toContain(KEY);
+    expect(JSON.stringify(report)).not.toContain(KEY);
+  });
+
+  test("a route that leaves this machine fails the report", async () => {
+    const { env } = await withRoutes(info(["local-coder", "openai/gpt", "https://api.example.com/v1"]));
+    const report = await runDoctor(env);
+    const leak = blockers(report).find((f) => f.id.startsWith("local-action:route"));
+    expect(leak?.detail).toBe("api.example.com — LEAVES this machine — held pieces of memory would go with a local-action turn");
+    expect(doctorExit(report)).toBe(1);
+  });
+
+  test("where each kind of address is placed", () => {
+    const own = ["172.17.0.1", "fe80::1"];
+    const at = (apiBase: string | undefined, provider = "hosted_vllm") => routePlace({ group: "local-coder", provider, apiBase }, own).place;
+    expect(at("http://127.0.0.1:10410")).toBe("here");
+    expect(at("http://127.9.9.9:1")).toBe("here");
+    expect(at("http://localhost:11434")).toBe("here");
+    expect(at("http://host.docker.internal:10410")).toBe("here");
+    expect(at("http://[::1]:10410")).toBe("here");
+    expect(at("http://172.17.0.1:10410/v1")).toBe("here");
+    expect(at("http://192.168.1.5:8000")).toBe("network");
+    expect(at("http://10.0.0.2:8000")).toBe("network");
+    expect(at("http://100.100.1.1:8000")).toBe("network"); // a tailnet address that is not ours
+    expect(at("http://[fd00::5]:8000")).toBe("network");
+    expect(at("http://vllm:8000")).toBe("unknown");
+    expect(at("http://gpu.internal:8000")).toBe("unknown");
+    expect(at("not a url")).toBe("unknown");
+    expect(at("https://api.example.com/v1")).toBe("outside");
+    expect(at("http://8.8.8.8/")).toBe("outside");
+    expect(at("http://[2001:db8::1]/")).toBe("outside");
+    expect(at(undefined, "ollama")).toBe("here");
+    expect(routePlace({ group: "local-coder", provider: "openai", apiBase: undefined }, own)).toEqual({ place: "outside", host: "openai's own servers (no api_base)" });
+    expect(routePlace({ group: "local-coder", provider: "", apiBase: undefined }, own).host).toBe("an unnamed provider's own servers (no api_base)");
+  });
+
+  test("what cannot be judged is a warning, never a pass", async () => {
+    const warnOf = async (probe: JsonProbe) => (await checkLocalAction((await withRoutes(probe)).env))!.findings.map((f) => [f.severity, f.id]);
+    expect(await warnOf({ ok: false, reason: "connection refused" })).toEqual([["warn", "local-action:litellm"]]);
+    expect(await warnOf({ ok: true, body: { nothing: true } })).toEqual([["warn", "local-action:litellm"]]);
+    expect(await warnOf(info(["local-chat", "hosted_vllm/x", "http://127.0.0.1:1"]))).toEqual([["warn", "local-action:none"]]);
+    expect(await warnOf(info(["local-coder", "hosted_vllm/x", "http://192.168.1.5:1"]))).toEqual([["warn", "local-action:route:0"]]);
+    const problem: DoctorEnv = { ...(await machine()), liteLLM: { url: "http://127.0.0.1:10400", problem: "holds only LITELLM_MASTER_KEY" } };
+    expect((await checkLocalAction(problem))!.findings).toEqual([{ id: "local-action:key", severity: "warn", label: "key", detail: "holds only LITELLM_MASTER_KEY" }]);
+  });
+
+  test("a key that can use more than local-coder is pointed out", async () => {
+    const { env } = await withRoutes(info(["local-coder", "hosted_vllm/q", "http://127.0.0.1:1"], ["gpt", "openai/gpt"], ["gpt", "openai/gpt"]));
+    const section = (await checkLocalAction(env))!;
+    expect(section.notes).toContain("the key can also use gpt — a key for local action should see local-coder alone");
+  });
+
+  test("parseModelInfo reads LiteLLM's shape and skips what is not a route", () => {
+    expect(parseModelInfo(null)).toBeUndefined();
+    expect(parseModelInfo({ data: "x" })).toBeUndefined();
+    expect(parseModelInfo({ data: [{ litellm_params: {} }, { model_name: "a" }, { model_name: "b", litellm_params: { model: "ollama/x", api_base: "" } }] })).toEqual([
+      { group: "a", provider: "", apiBase: undefined },
+      { group: "b", provider: "ollama", apiBase: undefined },
+    ]);
+  });
+
+  test("the limit says what is not checked", () => {
+    expect(DOCTOR_LIMITS.join("\n")).toContain("Its fallbacks live in LiteLLM's router settings");
+  });
+});
+

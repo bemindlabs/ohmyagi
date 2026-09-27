@@ -227,9 +227,11 @@ export async function cmdErase(argv: readonly string[]): Promise<number> {
     VENDORS.map((spec) => spec.id),
     { home, cwd: process.cwd(), env: process.env, which: whichOnPath },
   );
-  const instructionFiles = instructionTargets
-    .filter((target) => target.kind === "file")
-    .map((target) => target.path);
+  // The files a vendor also reads (kimi's home AGENTS.md) too: om-agi never writes them, but a block that
+  // got there is still this subject's identity reaching a model.
+  const instructionFiles = [
+    ...new Set(instructionTargets.flatMap((target) => (target.kind === "file" ? [target.path, ...target.alsoReads.map((extra) => extra.path)] : []))),
+  ];
 
   const env: EraseEnv = { home, env: process.env, now: () => new Date() };
   const plan = await planErase(env, {

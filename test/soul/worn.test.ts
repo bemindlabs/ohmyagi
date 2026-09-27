@@ -14,7 +14,7 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sha256 } from "../../src/soul/block.ts";
@@ -172,6 +172,60 @@ describe("what is worn", () => {
     // It does not drag the verdict down: there is no block to be missing.
     expect(report.verdict).toBe("one");
     expect(wearsOnly(report, ALPHA)).toBe(true);
+  });
+});
+
+describe("files a vendor also reads, which om-agi does not write (kimi's home AGENTS.md)", () => {
+  test("a block there counts: the identity reaches the model all the same", async () => {
+    const dir = await sandbox();
+    const project = await withBlock(dir, "AGENTS.md", BETA, "# Beta Keeper\n");
+    await mkdir(join(dir, "kimi-home"));
+    const home = await withBlock(join(dir, "kimi-home"), "AGENTS.md", ALPHA, "# Alpha Keeper\n");
+
+    const report = await wornReport([{ ...fileTarget("kimi", project), alsoReads: [{ path: home, by: "kimi" }] }]);
+
+    expect(report.verdict).toBe("mixed");
+    expect(report.subjects).toEqual([ALPHA, BETA]);
+    const extra = report.places.find((p) => p.path === home)!;
+    expect(extra.state).toBe("worn");
+    expect(extra.detail).toBe(`also read by kimi, not written by om-agi: holds the block of subject ${ALPHA}`);
+    expect(residue(report, ALPHA).map((p) => p.path)).toEqual([home]);
+  });
+
+  test("on a target shared with another vendor, the row names the vendor that reads the file", async () => {
+    const dir = await sandbox();
+    const project = await withBlock(dir, "AGENTS.md", ALPHA, "# Alpha Keeper\n");
+    await mkdir(join(dir, "kimi-home"));
+    const home = await withBlock(join(dir, "kimi-home"), "AGENTS.md", ALPHA, "# Alpha Keeper\n");
+
+    const report = await wornReport([{ ...fileTarget("copilot", project), alsoReadBy: ["kimi"], alsoReads: [{ path: home, by: "kimi" }] }]);
+
+    expect(report.places.map((p) => [p.backend, p.path])).toEqual([["copilot", project], ["kimi", home]]);
+    expect(report.verdict).toBe("one");
+  });
+
+  test("missing, or holding no block, is the ordinary state and adds no row", async () => {
+    const dir = await sandbox();
+    const project = await withBlock(dir, "AGENTS.md", ALPHA, "# Alpha Keeper\n");
+    const plain = join(dir, "plain.md");
+    await writeFile(plain, "the owner's own notes for kimi\n");
+
+    const report = await wornReport([{ ...fileTarget("kimi", project), alsoReads: [{ path: plain, by: "kimi" }, { path: join(dir, "nowhere.md"), by: "kimi" }] }]);
+
+    expect(report.places.map((p) => p.path)).toEqual([project]);
+    expect(report.verdict).toBe("one");
+  });
+
+  test("one it cannot read is said, because it could hold anything", async () => {
+    const dir = await sandbox();
+    const project = await withBlock(dir, "AGENTS.md", ALPHA, "# Alpha Keeper\n");
+    const odd = join(dir, "odd.md");
+    await writeFile(odd, "<!-- om-agi:soul:begin subject=alpha-keeper -->\nno end marker\n");
+
+    const report = await wornReport([{ ...fileTarget("kimi", project), alsoReads: [{ path: odd, by: "kimi" }] }]);
+    const place = report.places.find((p) => p.path === odd)!;
+    expect(place.state).toBe("unreadable");
+    expect(place.detail.startsWith("also read by kimi, not written by om-agi: ")).toBe(true);
   });
 });
 

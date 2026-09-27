@@ -2,7 +2,7 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { PAGE_HTML } from "../../src/web/page.ts";
-import { allowedHosts, handler, startWeb, tailnetNames, TOKEN_HEADER, type WebDeps } from "../../src/web/server.ts";
+import { allowedHosts, handler, pairingLink, sameToken, startWeb, tailnetNames, TOKEN_HEADER, type KeyControl, type WebDeps } from "../../src/web/server.ts";
 import { ago, excerpt, levelSentence, remoteForPage, triageChips, type AgentInfo, type SettingsState, type ViewState } from "../../src/web/view.ts";
 import type { Triage } from "../../src/decide/triage.ts";
 
@@ -748,3 +748,179 @@ describe("who handled each turn (S12.4)", () => {
     expect(PAGE_HTML).toContain('isLocalId(engine.last.backend) ? "on this machine" : "cloud"');
   });
 });
+
+describe("pairing a phone (S14.2)", () => {
+  test("the key is compared whole, in constant time", () => {
+    expect(sameToken("tok", "tok")).toBe(true);
+    expect(sameToken(null, "tok")).toBe(false);
+    expect(sameToken("", "tok")).toBe(false);
+    expect(sameToken("to", "tok")).toBe(false);
+    expect(sameToken("tok ", "tok")).toBe(false);
+    expect(sameToken("tOk", "tok")).toBe(false);
+  });
+
+  test("the link is built only for an address this page answers to", () => {
+    const hosts = allowedHosts("127.0.0.1", 30701, ["box.tail1.ts.net"]);
+    expect(pairingLink("https://box.tail1.ts.net:30701", "k", hosts)).toBe("https://box.tail1.ts.net:30701/#t=k");
+    expect(pairingLink("http://127.0.0.1:30701", "k", hosts)).toBe("http://127.0.0.1:30701/#t=k");
+    expect(pairingLink("https://evil.example:30701", "k", hosts)).toBeUndefined();
+    expect(pairingLink("https://box.tail1.ts.net", "k", hosts)).toBeUndefined(); // 443 is not where it listens
+    expect(pairingLink("https://box.tail1.ts.net:30701/path", "k", hosts)).toBeUndefined();
+    expect(pairingLink("https://u:p@box.tail1.ts.net:30701", "k", hosts)).toBeUndefined();
+    expect(pairingLink("ftp://box.tail1.ts.net:30701", "k", hosts)).toBeUndefined();
+    expect(pairingLink("not a url", "k", hosts)).toBeUndefined();
+    expect(pairingLink("", "k", hosts)).toBeUndefined();
+    expect(pairingLink("https://box.tail1.ts.net:443", "k", allowedHosts("box.tail1.ts.net", 443))).toBeUndefined(); // not the origin form
+    expect(pairingLink("https://box.tail1.ts.net", "k", allowedHosts("box.tail1.ts.net", 443))).toBe("https://box.tail1.ts.net/#t=k");
+  });
+
+  test("/api/pair answers with the link and its code — behind the key, and runs nothing", async () => {
+    const { deps, runs } = fakeDeps();
+    const h = handler(deps, "tok", HOSTS);
+    expect((await h(req("/api/pair?origin=" + encodeURIComponent("http://127.0.0.1:30701"), { token: null }))).status).toBe(401);
+    const res = await h(req("/api/pair?origin=" + encodeURIComponent("http://127.0.0.1:30701")));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { link: string; code: { size: number; d: string } };
+    expect(body.link).toBe("http://127.0.0.1:30701/#t=tok");
+    expect(body.code.size).toBeGreaterThan(21);
+    expect(body.code.d).toMatch(/^[Mhvz0-9 -]+$/);
+    expect((await h(req("/api/pair?origin=" + encodeURIComponent("https://evil.example:30701")))).status).toBe(400);
+    expect((await h(req("/api/pair"))).status).toBe(400);
+    expect(runs).toEqual([]);
+  });
+
+  test("a link too long for a code says to paste it", async () => {
+    const { deps } = fakeDeps();
+    const long = "k".repeat(300);
+    const res = await handler(deps, long, HOSTS)(req("/api/pair?origin=" + encodeURIComponent("http://127.0.0.1:30701"), { token: long }));
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain("pair by pasting it");
+  });
+
+  test("/api/pair/rotate: behind the old key; only where the page can change its key; a failure changes nothing", async () => {
+    const { deps, runs } = fakeDeps();
+    const post = (body: unknown, token?: string | null) => req("/api/pair/rotate", { method: "POST", body: JSON.stringify(body), ...(token === undefined ? {} : { token }) });
+    expect((await handler(deps, "tok", HOSTS)(post({}))).status).toBe(404);
+    const ok: KeyControl = { rotate: async () => ({ ok: true, key: "b".repeat(64) }) };
+    expect((await handler(deps, "tok", HOSTS, ok)(post({}, null))).status).toBe(401);
+    const res = await handler(deps, "tok", HOSTS, ok)(post({ origin: "http://127.0.0.1:30701" }));
+    expect(await res.json()).toEqual({ ok: true, token: "b".repeat(64), unsubscribed: 0, link: "http://127.0.0.1:30701/#t=" + "b".repeat(64) });
+    const noOrigin = await handler(deps, "tok", HOSTS, ok)(post({ origin: "https://evil.example:30701" }));
+    expect(await noOrigin.json()).toEqual({ ok: true, token: "b".repeat(64), unsubscribed: 0 });
+    const broken: KeyControl = { rotate: async () => ({ ok: false, reason: "disk full" }) };
+    const failed = await handler(deps, "tok", HOSTS, broken)(post({}));
+    expect(failed.status).toBe(500);
+    expect(((await failed.json()) as { error: string }).error).toBe("the key was not changed: disk full");
+    expect(runs).toEqual([]);
+  });
+
+  test("a running page changes its key: the old one stops, the new one is kept first, the link follows", async () => {
+    const saved: string[] = [];
+    let told = 0;
+    const server = startWeb(fakeDeps().deps, { port: 0, saveKey: async (key) => { saved.push(key); return { ok: true }; }, onRotate: () => { told++; } });
+    try {
+      const port = new URL(server.url).port;
+      const old = server.token;
+      const rotate = await fetch(`http://127.0.0.1:${port}/api/pair/rotate`, { method: "POST", headers: { [TOKEN_HEADER]: old, "content-type": "application/json" }, body: "{}" });
+      const { token } = (await rotate.json()) as { token: string };
+      expect(token).toMatch(/^[0-9a-f]{64}$/);
+      expect(saved).toEqual([token]);
+      expect(told).toBe(1);
+      expect(server.token).toBe(token);
+      expect(server.url).toEndWith(`/#t=${token}`);
+      expect((await fetch(`http://127.0.0.1:${port}/api/state`, { headers: { [TOKEN_HEADER]: old } })).status).toBe(401);
+      expect((await fetch(`http://127.0.0.1:${port}/api/state`, { headers: { [TOKEN_HEADER]: token } })).status).toBe(200);
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("when the new key cannot be kept, the old one stays in use", async () => {
+    const server = startWeb(fakeDeps().deps, { port: 0, saveKey: async () => ({ ok: false, reason: "read-only" }) });
+    try {
+      const port = new URL(server.url).port;
+      const old = server.token;
+      const res = await fetch(`http://127.0.0.1:${port}/api/pair/rotate`, { method: "POST", headers: { [TOKEN_HEADER]: old, "content-type": "application/json" }, body: "not json" });
+      expect(res.status).toBe(500);
+      expect(server.token).toBe(old);
+      expect((await fetch(`http://127.0.0.1:${port}/api/state`, { headers: { [TOKEN_HEADER]: old } })).status).toBe(200);
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("the page offers the code in Settings and warns what it is", () => {
+    expect(PAGE_HTML).toContain('id="rotateKey"');
+    expect(PAGE_HTML).toContain('api("/api/pair/rotate", { origin: location.origin })');
+    expect(PAGE_HTML).toContain('id="h-pair"');
+    expect(PAGE_HTML).toContain("/api/pair?origin=");
+    expect(PAGE_HTML).toContain('document.createElementNS(NS, "path")');
+    expect(PAGE_HTML).toContain("Anyone who scans it can use this page as you");
+    expect(PAGE_HTML).toContain("every paired phone, every other open tab and every saved link stop working");
+  });
+});
+
+describe("push (S14.3, D-130)", () => {
+  const HANDLE = "h".repeat(43);
+  function withPush() {
+    const calls: string[] = [];
+    let subs = 0;
+    const push: NonNullable<WebDeps["push"]> = {
+      subscribe: async (relay, handle) => {
+        calls.push(`subscribe ${relay} ${handle}`);
+        if (relay.startsWith("http://evil")) return { ok: false, reason: "the relay must be https" };
+        subs++;
+        return { ok: true, count: subs };
+      },
+      unsubscribe: async (handle) => { calls.push(`unsubscribe ${handle}`); return handle === HANDLE; },
+      count: async () => subs,
+      clear: async () => { const n = subs; subs = 0; calls.push("clear"); return n; },
+    };
+    return { push, calls };
+  }
+  const post = (path: string, body: unknown, token?: string | null) => req(path, { method: "POST", body: JSON.stringify(body), ...(token === undefined ? {} : { token }) });
+
+  test("a page without push says so, and every route is behind the key", async () => {
+    const { deps } = fakeDeps();
+    expect((await handler(deps, "tok", HOSTS)(req("/api/push"))).status).toBe(404);
+    const { push } = withPush();
+    const h = handler({ ...deps, push }, "tok", HOSTS);
+    expect((await h(req("/api/push", { token: null }))).status).toBe(401);
+    expect((await h(post("/api/push/subscribe", { relay: "https://relay.example", handle: HANDLE }, null))).status).toBe(401);
+  });
+
+  test("subscribe, count, unsubscribe — the page passes relay and handle through and runs nothing", async () => {
+    const { deps, runs } = fakeDeps();
+    const { push, calls } = withPush();
+    const h = handler({ ...deps, push }, "tok", HOSTS);
+    expect(await (await h(post("/api/push/subscribe", { relay: "https://relay.example", handle: HANDLE }))).json()).toEqual({ ok: true, count: 1 });
+    expect(await (await h(req("/api/push"))).json()).toEqual({ count: 1 });
+    const refused = await h(post("/api/push/subscribe", { relay: "http://evil.example", handle: HANDLE }));
+    expect(refused.status).toBe(400);
+    expect(((await refused.json()) as { error: string }).error).toBe("the relay must be https");
+    expect((await h(post("/api/push/subscribe", { handle: HANDLE }))).status).toBe(400);
+    expect((await h(post("/api/push/subscribe", { relay: "https://relay.example" }))).status).toBe(400);
+    expect(await (await h(post("/api/push/unsubscribe", { handle: HANDLE }))).json()).toEqual({ ok: true, removed: true });
+    expect(await (await h(post("/api/push/unsubscribe", { handle: "x".repeat(43) }))).json()).toEqual({ ok: true, removed: false });
+    expect((await h(req("/api/push/subscribe"))).status).toBe(404);
+    expect(calls).toEqual([`subscribe https://relay.example ${HANDLE}`, `subscribe http://evil.example ${HANDLE}`, `unsubscribe ${HANDLE}`, `unsubscribe ${"x".repeat(43)}`]);
+    expect(runs).toEqual([]);
+  });
+
+  test("changing the key drops every subscription (a phone unpaired is a phone not told)", async () => {
+    const { deps } = fakeDeps();
+    const { push, calls } = withPush();
+    await push.subscribe("https://relay.example", HANDLE);
+    await push.subscribe("https://relay.example", "k".repeat(43));
+    const keys: KeyControl = { rotate: async () => ({ ok: true, key: "c".repeat(64) }) };
+    const res = await handler({ ...deps, push }, "tok", HOSTS, keys)(post("/api/pair/rotate", {}));
+    expect(((await res.json()) as { unsubscribed: number }).unsubscribed).toBe(2);
+    expect(calls.at(-1)).toBe("clear");
+  });
+
+  test("the page shows how many phones are told, and says what the relay learns", () => {
+    expect(PAGE_HTML).toContain('api("/api/push")');
+    expect(PAGE_HTML).toContain("which learns when, never what");
+  });
+});
+

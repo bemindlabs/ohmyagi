@@ -17,7 +17,9 @@ import { startWeb, tailnetNames } from "../../src/web/server.ts";
 import { ago, excerpt, levelSentence, remoteForPage, triageChips, type AgentInfo, type PrivacyState, type SettingsState, type ViewState } from "../../src/web/view.ts";
 import { basisDirFor, readBasis, recordState } from "../../src/consent/basis.ts";
 import { listMemories, memoryGraph, readMemoryFile, whoMentions } from "../../src/web/memories.ts";
-import { loadOrCreateKey } from "../../src/web/key.ts";
+import { loadOrCreateKey, replaceKey } from "../../src/web/key.ts";
+import { encodeQr, qrTerminal } from "../../src/web/qr.ts";
+import { addSubscription, clearSubscriptions, forgetAll, notifyAll, pushDirFor, readSubscriptions, removeSubscription, WaitingWatch, type Fetcher } from "../../src/web/push.ts";
 import { profileOf } from "../../src/soul/profile.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -35,7 +37,7 @@ import { decideDial, dialEnv } from "../dial.ts";
 import { bold, dim, ledgerEnv, parseArgs, report, usageError } from "../shared.ts";
 import { extname, join, resolve } from "node:path";
 
-const USAGE = "usage: ohmyagi web <dir> --subject <id> [--port <n>] [--host <addr>] [--name <host,…>] [--https] [--key-file <path>] [--backend a,b] [--model <m>]";
+const USAGE = "usage: ohmyagi web <dir> --subject <id> [--port <n>] [--host <addr>] [--name <host,…>] [--https] [--key-file <path>] [--qr] [--backend a,b] [--model <m>]";
 
 /** The default port: om-agi's block in the dev band, beside the A2A default (30700). */
 export const WEB_PORT = 30701;
@@ -256,7 +258,7 @@ async function gatherSettings(dir: string, id: SubjectId, options: ReadonlyMap<s
 }
 
 export async function cmdWeb(argv: readonly string[]): Promise<number> {
-  const { positional, options } = parseArgs(argv, ["https"]);
+  const { positional, options } = parseArgs(argv, ["https", "qr"]);
   const dir = positional[0];
   const raw = options.get("subject");
   if (dir === undefined || positional.length > 1 || raw === undefined || raw === "") return usageError(USAGE);
@@ -301,6 +303,9 @@ export async function cmdWeb(argv: readonly string[]): Promise<number> {
   }
 
   const absolute = resolve(dir);
+  // S14.3 (D-130): phones that asked to be told. Off until one subscribes; only this process sends.
+  const pushDir = pushDirFor(dialEnv(), id);
+  const relayFetch: Fetcher = (url, init) => fetch(url, init);
   const server = startWeb(
     {
       dir: absolute,
@@ -359,16 +364,43 @@ export async function cmdWeb(argv: readonly string[]): Promise<number> {
           await rm(dir, { recursive: true, force: true });
         }
       },
+      push: {
+        subscribe: (relay, handle) => addSubscription(pushDir, relay, handle, new Date()),
+        unsubscribe: async (handle) => {
+          const gone = await removeSubscription(pushDir, handle);
+          if (gone !== undefined) await forgetAll([gone], relayFetch);
+          return gone !== undefined;
+        },
+        count: async () => (await readSubscriptions(pushDir)).length,
+        clear: async () => {
+          const gone = await clearSubscriptions(pushDir);
+          await forgetAll(gone, relayFetch);
+          return gone.length;
+        },
+      },
       run: async (args) => {
         const out = await runGuarded([...engineCommand().argv, ...args]);
         return { code: out.code, stdout: new TextDecoder().decode(out.stdout), stderr: out.stderr };
       },
     },
-    { port, hostname, names, scheme: https ? "https" : "http", ...(token === undefined ? {} : { token }) },
+    {
+      port,
+      hostname,
+      names,
+      scheme: https ? "https" : "http",
+      ...(token === undefined ? {} : { token }),
+      ...(keyFile === undefined || keyFile === "" ? {} : { saveKey: (key: string) => replaceKey(keyFile, key) }),
+      onRotate: () => console.error(dim(`ohmyagi: the page's key was changed from the page — every paired phone and every old link stop working${keyFile ? `; the new one is in ${keyFile}` : ""}.`)),
+    },
   );
   console.log(bold(`${loaded.soul.role.name} — open this in your browser:`));
   console.log(`  ${server.url}`);
   if (names.length > 0) console.log(dim(`  also answers as ${[hostname, ...names.slice(1)].join(", ")} — the same key after #t=`));
+  // S14.2: the app pairs by scanning the link rather than typing a 64-character key.
+  if (options.has("qr")) {
+    const modules = encodeQr(server.url, "M");
+    console.log(modules === null ? dim("  (the link is too long for a code — paste it into the app instead)") : `${qrTerminal(modules)}\n${dim("  Scan with the Oh My AGI app. The code is the link, key included — show it only to your own phone.")}`);
+  }
   console.log(
     dim(
       (hostname === "127.0.0.1" || hostname === "localhost"
@@ -381,9 +413,25 @@ export async function cmdWeb(argv: readonly string[]): Promise<number> {
   );
   // A stop lets what is running finish (an import that has written its file and is rebuilding the index, a
   // turn waiting on a model) so the page hears how it went; a second signal stops at once (D-088).
+  // Every 30 s: a proposal waiting that was not before → one content-free notice to each subscribed phone.
+  const watch = new WaitingWatch();
+  const look = async () => {
+    const pdir = await proposalsDir(dialEnv(), id);
+    const inventory = pdir.ok ? await readProposals(pdir.path) : { proposals: [] };
+    const waitingIds = inventory.proposals.filter(({ proposal }) => proposal.decision === null).map(({ proposal }) => proposal.id);
+    if (!watch.due(waitingIds, Date.now())) return;
+    const subscriptions = await readSubscriptions(pushDir);
+    if (subscriptions.length === 0) return;
+    const { sent, failed } = await notifyAll(subscriptions, relayFetch);
+    watch.sent(Date.now());
+    console.error(dim(`ohmyagi: told ${sent} phone(s) something is waiting${failed > 0 ? `; ${failed} relay call(s) failed` : ""}.`));
+  };
+  await look().catch(() => undefined);
+  const watching = setInterval(() => void look().catch(() => undefined), 30_000);
   await new Promise<void>((done) => {
     let stopping = false;
     const stop = () => {
+      clearInterval(watching);
       if (stopping) {
         console.error("ohmyagi: stopping now — anything still running is cut off.");
         void server.stop(true).then(done);

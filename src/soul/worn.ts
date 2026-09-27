@@ -174,9 +174,10 @@ async function placeFor(target: Target): Promise<WornPlace> {
  * in a session that already happened.
  */
 export const WORN_LIMITS: readonly string[] = [
-  "this reads the instruction files of the backends it was given, and nothing else. A backend " +
-    "nobody named, a project-scoped file, or an identity injected by a session-start hook is " +
-    "outside what it can see.",
+  "this reads the instruction files of the backends it was given, and nothing else — the file " +
+    "om-agi writes for each, and the other files the registry records that backend reading. A " +
+    "backend nobody named, a file the registry does not list, or an identity injected by a " +
+    "session-start hook is outside what it can see.",
   "a backend whose only channel is the system field of a request wears nothing between turns; " +
     "there is no file to read and this report does not invent one.",
   "`edited` means a human changed the text inside om-agi's markers. The subject named there is " +
@@ -194,7 +195,18 @@ export const WORN_LIMITS: readonly string[] = [
  */
 export async function wornReport(targets: readonly Target[]): Promise<WornReport> {
   const places: WornPlace[] = [];
-  for (const target of targets) places.push(await placeFor(target));
+  for (const target of targets) {
+    places.push(await placeFor(target));
+    // A file the vendor also reads, which om-agi does not write (kimi's home AGENTS.md): only what is in
+    // one is news — a block, or a file that cannot be read. Missing or empty is the ordinary state.
+    if (target.kind !== "file") continue;
+    for (const extra of target.alsoReads) {
+      const place = await placeFor({ ...target, backend: extra.by, path: extra.path, alsoReads: [] });
+      if (place.subject !== undefined || place.state === "unreadable") {
+        places.push({ ...place, detail: `also read by ${extra.by}, not written by om-agi: ${place.detail}` });
+      }
+    }
+  }
 
   // `edited` counts. A block a human rewrote still names a subject, and leaving
   // it out of the tally would report a clean switch over a file that still has

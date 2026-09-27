@@ -8,7 +8,7 @@
  * refused if anyone but the owner could read it.
  */
 
-import { readFile, stat, writeFile } from "node:fs/promises";
+import { readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 
 const KEY = /^[0-9a-f]{32,64}$/;
 
@@ -22,12 +22,34 @@ export async function loadOrCreateKey(path: string): Promise<{ readonly ok: true
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
-  const key = crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
+  const key = newKey();
   try {
     // wx: never over a file that appeared in between.
     await writeFile(path, `${key}\n`, { mode: 0o600, flag: "wx" });
     return { ok: true, key, created: true };
   } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** A page key: 64 lower-case hex from two random UUIDs. */
+export function newKey(): string {
+  return crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
+}
+
+/**
+ * S14.2 AC3: a new key in place of the old one, so every paired phone and every old link stop working. Written
+ * beside the file (600, never over one that appeared) and renamed over it, so the file is never half a key.
+ */
+export async function replaceKey(path: string, key: string): Promise<{ readonly ok: true } | { readonly ok: false; readonly reason: string }> {
+  if (!KEY.test(key)) return { ok: false, reason: "not a page key (32–64 lower-case hex)" };
+  const temp = `${path}.new-${crypto.randomUUID().slice(0, 8)}`;
+  try {
+    await writeFile(temp, `${key}\n`, { mode: 0o600, flag: "wx" });
+    await rename(temp, path);
+    return { ok: true };
+  } catch (error) {
+    await unlink(temp).catch(() => undefined);
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
 }

@@ -175,9 +175,10 @@ export const LOCAL_LIMITS: readonly string[] = [
     "JavaScript type system follows it into a log line, a template or a JSON.stringify.",
   "a process running as this user can read the files directly. A vendor CLI om-agi spawns for " +
     "an ordinary turn has its own tools and the same uid; mode 0600 is not a boundary against it.",
-  "LiteLLM is trusted, not checked. A local CLI (claude-local, grok-local) is admitted because " +
-    "its fence lets it reach only 127.0.0.1 on LiteLLM's port — but LiteLLM is a proxy, and where " +
-    "it sends `local-coder` (and that model's fallbacks) is its own configuration. Checked by hand " +
-    "on 2026-09-27: vLLM and ollama on this machine only. A cloud route or fallback added there " +
-    "later would carry held pieces out, and nothing here would notice.",
+  "LiteLLM is trusted beyond what `ohmyagi doctor` can see. A local CLI (claude-local, grok-local) " +
+    "is admitted because its fence lets it reach only 127.0.0.1 on LiteLLM's port — but LiteLLM is a " +
+    "proxy. `doctor` asks it, with the virtual key, where each `local-coder` route goes and fails when " +
+    "one leaves this machine; that model's fallbacks sit in router settings the key cannot read " +
+    "(checked by hand on 2026-09-27: vLLM and ollama on this machine only), and a route changed after " +
+    "the last `doctor` run is not noticed until the next one. A turn does not ask.",
 ];

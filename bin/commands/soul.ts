@@ -230,7 +230,7 @@ function printPlan(plan: ApplyPlan): boolean {
         console.log(dim(`         reached through a symlink at ${item.target.symlinkedFrom}`));
       }
       for (const other of item.target.alsoReads) {
-        console.log(dim(`         also read, not written: ${other}`));
+        console.log(dim(`         also read by ${other.by}, not written: ${other.path}`));
       }
     }
     if (item.replacedSubject !== undefined) {

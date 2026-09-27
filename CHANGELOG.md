@@ -2,6 +2,53 @@
 
 ## Unreleased
 
+## 0.8.1 — 2026-09-27
+
+The engine side of the companion app (E14, D-125): pairing, unpairing and push. Plus two checks that close gaps
+S12.6 and D-124 left open.
+
+### Push, engine side (S14.3 — D-130)
+- **A phone that asks is told "something is waiting", and nothing else.** The app hands the page a relay handle
+  (`POST /api/push/subscribe`, behind the page's key); while `ohmyagi web` runs it looks every 30 s, and when a
+  proposal is waiting that was not before it sends each subscribed relay the handle alone — no kind of event, no
+  agent name, no text — at most once per five minutes (one that arrives inside the gap goes out when it ends).
+  Starting the page tells nobody about what was already waiting. Off until a phone subscribes: until then the
+  engine never contacts a relay. Relays are https (http only to a loopback literal); ten phones at most.
+- Subscriptions are kept 0600 in the state root, one directory per subject, and `erase` takes it whole.
+- **"Unpair every phone" also stops the notices:** every subscription is dropped and each relay is asked to
+  forget its handle. Settings says how many phones are told, and what the relay learns (when, never what).
+
+### Local action: `doctor` asks LiteLLM where `local-coder` goes (D-124 follow-up)
+- **A route that leaves this machine now fails `ohmyagi doctor`.** Where local action is set up (a LiteLLM key
+  file), `doctor` reads `/model/info` with the virtual key and places every `local-coder` route: loopback or an
+  address of this machine's own is ok; another machine on the network, or a name only a local resolver can place,
+  is a warning; anything else — or a provider with no `api_base`, which means its vendor's servers — is a
+  failure, because held pieces of memory would go with a local-action turn. The key goes to LiteLLM alone, in a
+  header, and appears in no output. What it cannot see is said: `local-coder`'s fallbacks sit in router settings a
+  key limited to it cannot read, and a route changed after the last run is not noticed until the next.
+- A LiteLLM key file holding only the master key is refused in one place now, for turns and `doctor` alike.
+
+### kimi's home instruction file is looked in (S12.6 follow-up)
+- **`worn` and `erase` now read `${KIMI_CODE_HOME:-~/.kimi-code}/AGENTS.md`.** kimi 2.0.2 reads it before any
+  project file — measured in S12.6 (a line written there reached the system prompt and was obeyed), but the registry
+  listed only `./AGENTS.md`, so an identity block left there reached every kimi turn unseen. om-agi still writes
+  kimi's identity per project and never writes the home file; a block found in it now counts in `worn` (a second
+  subject there is a `mixed` switch) and is stripped by `erase`. The file shared with copilot keeps each vendor's
+  extra files through the merge, credited to the vendor that reads them. `~/.agents/AGENTS.md`, which kimi's source
+  also reads, is unmeasured and not listed.
+
+### Pairing a phone (S14.2, engine side — D-125)
+- **A pairing code for the companion app.** `ohmyagi web --qr` prints the page's link as a QR code in the
+  terminal (black on white by ANSI colour, so it reads on a dark or a light terminal), and Settings → *Pair a
+  phone* shows the same code for the address the page was opened at. The encoder is in the engine (no
+  dependency): byte mode, versions 1–10, all four levels; pinned codes were read back by an independent decoder.
+  The code holds the key — the page says so, and says how to unpair every phone (change the key).
+- **The page's key is compared in constant time.** A phone now holds it too, over a network.
+- **Unpair every phone from the page (S14.2 AC3).** Settings → *Unpair every phone* changes the page's key while
+  it runs: the new key is written to `--key-file` first (600, beside it and renamed over, never half a key), and
+  only then used; every paired phone, every other tab and every saved link stop working, and the tab that asked
+  carries on with the new key. If the key cannot be kept, the old one stays. The terminal is told, without the key.
+
 ## 0.8.0 — 2026-09-27
 
 ### Local action (E12) — the first three stories, built by other AI CLIs under `/agents-coding`

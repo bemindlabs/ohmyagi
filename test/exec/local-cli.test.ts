@@ -11,6 +11,7 @@ import {
   isLocalCliId,
   liteLLMKeyFile,
   parseLiteLLMKey,
+  readLiteLLMKey,
 } from "../../src/exec/local-cli.ts";
 import type { VendorSpec } from "../../src/exec/registry.ts";
 import { subjectId } from "../../src/types.ts";
@@ -104,6 +105,27 @@ describe("LiteLLM key source", () => {
     // The master key is read only to refuse it (D-124).
     expect(parseLiteLLMKey("LITELLM_MASTER_KEY=admin")).toBeUndefined();
     expect(parseLiteLLMKey("LITELLM_MASTER_KEY=admin", "LITELLM_MASTER_KEY")).toBe("admin");
+  });
+
+  test("readLiteLLMKey: the virtual key, or why not — a missing file is told apart for doctor", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "om-litellm-key-"));
+    try {
+      const at = (name: string) => join(dir, name);
+      await writeFile(at("ok"), "LITELLM_API_KEY=virtual\n");
+      await writeFile(at("master"), "LITELLM_MASTER_KEY=admin\n");
+      await writeFile(at("empty"), "OTHER=1\n");
+      expect(await readLiteLLMKey(at("ok"))).toEqual({ ok: true, key: "virtual" });
+      const master = await readLiteLLMKey(at("master"));
+      expect(master.ok === false && !master.absent && master.reason.includes("holds only LITELLM_MASTER_KEY")).toBe(true);
+      const empty = await readLiteLLMKey(at("empty"));
+      expect(empty).toEqual({ ok: false, absent: false, reason: "the LiteLLM key file has no non-empty LITELLM_API_KEY" });
+      const missing = await readLiteLLMKey(at("nope"));
+      expect(missing.ok === false && missing.absent).toBe(true);
+      const unreadable = await readLiteLLMKey(dir); // a directory: read fails, but it is there
+      expect(unreadable.ok === false && !unreadable.absent).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   test("defaults under the owner's home and accepts only explicit path spelling", () => {

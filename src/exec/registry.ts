@@ -977,7 +977,12 @@ const KIMI: VendorSpec = {
   binary: "kimi",
   identity: {
     strength: "user",
-    instructionFiles: ["./AGENTS.md"],
+    // `./AGENTS.md` is where `soul apply` writes (SP-2 measured 9/9 from it). kimi 2.0.2 also reads a home
+    // file first, `${KIMI_CODE_HOME:-~/.kimi-code}/AGENTS.md` — measured in S12.6 (K4h: a line written there
+    // reached the system prompt and was obeyed, under `plan` and under om-agi's read-only profile). It is
+    // listed so `worn` and `erase` look in it; om-agi never writes it. The source also reads
+    // `~/.agents/AGENTS.md`, which has not been measured and is not listed.
+    instructionFiles: ["./AGENTS.md", "${KIMI_CODE_HOME:-~/.kimi-code}/AGENTS.md"],
   },
   readOnly: KIMI_READONLY,
   // No grant: print mode sets the vendor's own permission to `auto` (observed

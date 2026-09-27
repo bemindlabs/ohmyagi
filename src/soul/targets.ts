@@ -27,6 +27,12 @@ import type { IdentityStrength } from "../exec/backend.ts";
 import { expandPath, vendor, VENDORS, type PathContext, type VendorSpec } from "../exec/registry.ts";
 
 /** A file on disk that a vendor reads for user-level instructions. */
+/** A file a vendor reads besides the one om-agi writes for it. */
+export interface AlsoRead {
+  readonly path: string;
+  readonly by: string;
+}
+
 export interface FileTarget {
   readonly kind: "file";
   readonly backend: string;
@@ -38,8 +44,11 @@ export interface FileTarget {
   readonly strength: IdentityStrength;
   /** Other backends that read this same file. Informational. */
   readonly alsoReadBy: readonly string[];
-  /** Further files this vendor reads that om-agi does not write. */
-  readonly alsoReads: readonly string[];
+  /**
+   * Other files the vendor reads, which om-agi does not write (kimi's home AGENTS.md), each with the backend
+   * that reads it — kept through a merge, so a shared target still carries every reader's extra files.
+   */
+  readonly alsoReads: readonly AlsoRead[];
   /** False when the vendor's binary is not on PATH. */
   readonly reachable: boolean;
   /** Set when `path` differs from where the vendor says to look. */
@@ -126,7 +135,7 @@ async function fileTargetFor(spec: VendorSpec, context: TargetContext): Promise<
     declaredAs: declaredAs!,
     strength: spec.identity.strength,
     alsoReadBy: readers.filter((id) => id !== spec.id),
-    alsoReads: rest.map((file) => expandPath(file, context)),
+    alsoReads: rest.map((file) => ({ path: expandPath(file, context), by: spec.id })),
     reachable: await context.which(spec.binary),
     ...(path === wanted ? {} : { symlinkedFrom: wanted }),
   };
@@ -166,6 +175,8 @@ export async function resolveTargets(
       targets[existing] = {
         ...first,
         alsoReadBy: [...new Set([...first.alsoReadBy, target.backend])],
+        // Merged, not dropped: copilot and kimi share ./AGENTS.md, and only kimi also reads a home file.
+        alsoReads: [...first.alsoReads, ...target.alsoReads.filter((extra) => !first.alsoReads.some((known) => known.path === extra.path))],
       };
       continue;
     }

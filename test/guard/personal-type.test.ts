@@ -465,9 +465,10 @@ describe("the size of what AC4 proves", () => {
     expect(limits).toContain("-cloud");
     expect(limits).toContain("the flag stops at the door");
     expect(limits).toContain("same uid");
-    // D-124: the local CLIs are admitted on a fence that reaches only LiteLLM, and
-    // where LiteLLM sends `local-coder` is its configuration, not something checked here.
-    expect(limits).toContain("LiteLLM is trusted, not checked");
+    // D-124: the local CLIs are admitted on a fence that reaches only LiteLLM; where LiteLLM
+    // sends `local-coder` is checked by `doctor` as far as the virtual key can see, not per turn.
+    expect(limits).toContain("LiteLLM is trusted beyond what `ohmyagi doctor` can see");
+    expect(limits).toContain("A turn does not ask.");
     expect(LOCAL_LIMITS.length).toBe(5);
   });
 

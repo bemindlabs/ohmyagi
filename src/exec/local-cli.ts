@@ -82,6 +82,35 @@ export function parseLiteLLMKey(source: string, name = "LITELLM_API_KEY"): strin
 }
 
 /** The configured source file; the credential itself is never returned here. */
+/**
+ * The virtual key from the key file, or why there is none to use. A file holding only the master key is
+ * refused: a master key controls the whole proxy, which is not fenced (D-124). `absent` tells a caller that
+ * only asks (`doctor`) that local action is simply not set up here.
+ */
+export async function readLiteLLMKey(
+  keyPath: string,
+): Promise<{ readonly ok: true; readonly key: string } | { readonly ok: false; readonly absent: boolean; readonly reason: string }> {
+  let source: string;
+  try {
+    source = await readFile(keyPath, "utf8");
+  } catch (error) {
+    const absent = (error as NodeJS.ErrnoException).code === "ENOENT";
+    return { ok: false, absent, reason: `the LiteLLM key file could not be read; configure ${LITELLM_KEY_FILE_ENV}` };
+  }
+  const key = parseLiteLLMKey(source);
+  if (key !== undefined) return { ok: true, key };
+  if (parseLiteLLMKey(source, "LITELLM_MASTER_KEY") !== undefined) {
+    return {
+      ok: false,
+      absent: false,
+      reason:
+        "the LiteLLM key file holds only LITELLM_MASTER_KEY — refused: a master key controls the whole " +
+        "proxy, which is not fenced. Put a virtual key limited to local-coder in LITELLM_API_KEY (D-124).",
+    };
+  }
+  return { ok: false, absent: false, reason: "the LiteLLM key file has no non-empty LITELLM_API_KEY" };
+}
+
 export function liteLLMKeyFile(home: string, env: Readonly<Record<string, string | undefined>>): string {
   const configured = env[LITELLM_KEY_FILE_ENV];
   // A key of om-agi's own, not the proxy's master key (D-124): a master key can add routes and
@@ -434,24 +463,9 @@ export class LocalCliExec implements ExecBackend {
       return refuse(`${LITELLM_KEY_FILE_ENV} must name an absolute path or a path beginning ~/`);
     }
 
-    let key: string | undefined;
-    let masterOnly = false;
-    try {
-      const source = await readFile(keyPath, "utf8");
-      key = parseLiteLLMKey(source);
-      masterOnly = key === undefined && parseLiteLLMKey(source, "LITELLM_MASTER_KEY") !== undefined;
-    } catch {
-      return refuse(`the LiteLLM key file could not be read; configure ${LITELLM_KEY_FILE_ENV}`);
-    }
-    if (masterOnly) {
-      return refuse(
-        "the LiteLLM key file holds only LITELLM_MASTER_KEY — refused: a master key controls the whole " +
-          "proxy, which is not fenced. Put a virtual key limited to local-coder in LITELLM_API_KEY (D-124).",
-      );
-    }
-    if (key === undefined) {
-      return refuse(`the LiteLLM key file has no non-empty LITELLM_API_KEY`);
-    }
+    const loaded = await readLiteLLMKey(keyPath);
+    if (!loaded.ok) return refuse(loaded.reason);
+    const key = loaded.key;
 
     try {
       await mkdir(this.paths.home, { recursive: true, mode: STATE_DIR_MODE });

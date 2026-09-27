@@ -60,6 +60,25 @@ describe("expandPath", () => {
   test("a vendor whose file lives under an env var is not 'per project only'", () => {
     expect(isProjectScopedOnly(vendor("codex"))).toBe(false);
     expect(isProjectScopedOnly(vendor("copilot"))).toBe(true);
+    // kimi writes per project, but reads a home file too (S12.6, K4h) — so it has a home channel.
+    expect(isProjectScopedOnly(vendor("kimi"))).toBe(false);
+  });
+
+  test("kimi shares ./AGENTS.md with copilot, and its home file survives the merge, credited to kimi", async () => {
+    const targets = await resolveTargets(["copilot", "kimi"], { home: HOME, cwd: HOME, env: {}, which: async () => true });
+    expect(targets).toHaveLength(1);
+    const shared = targets[0]!;
+    if (shared.kind !== "file") throw new Error("expected a file target");
+    expect(shared.backend).toBe("copilot");
+    expect(shared.alsoReadBy).toContain("kimi");
+    expect(shared.alsoReads).toEqual([{ path: join(HOME, ".kimi-code/AGENTS.md"), by: "kimi" }]);
+  });
+
+  test("kimi: written in the project, and its home AGENTS.md read as well — never written", () => {
+    const [written, also] = vendor("kimi").identity.instructionFiles;
+    expect(written).toBe("./AGENTS.md");
+    expect(expandPath(also!, { home: HOME, env: {} })).toBe(join(HOME, ".kimi-code/AGENTS.md"));
+    expect(expandPath(also!, { home: HOME, env: { KIMI_CODE_HOME: "/opt/kimi" } })).toBe("/opt/kimi/AGENTS.md");
   });
 });
 

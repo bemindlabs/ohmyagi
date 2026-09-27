@@ -26,6 +26,9 @@ import { MAX_TAGS, withTags } from "../memory/tags.ts";
 import type { AgentInfo, PrivacyState, SettingsState, ViewState } from "./view.ts";
 import { isLocalBackend } from "./turninfo.ts";
 import { PAGE_HTML } from "./page.ts";
+import { encodeQr, qrPath } from "./qr.ts";
+import { newKey } from "./key.ts";
+import { timingSafeEqual } from "node:crypto";
 
 export const TOKEN_HEADER = "x-ohmyagi-token";
 
@@ -56,6 +59,17 @@ export interface WebDeps {
   readonly editProfile: (profile: Profile, write: boolean) => Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string }>;
   /** Run this engine with arguments; the result of the child. */
   readonly run: (args: readonly string[]) => Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string }>;
+  /**
+   * S14.3 (D-130): the phones that asked to be told something is waiting. Absent on a page that does not offer
+   * it; the routes then answer 404.
+   */
+  readonly push?: {
+    readonly subscribe: (relay: string, handle: string) => Promise<{ readonly ok: true; readonly count: number } | { readonly ok: false; readonly reason: string }>;
+    readonly unsubscribe: (handle: string) => Promise<boolean>;
+    readonly count: () => Promise<number>;
+    /** Every subscription dropped, each relay asked to forget; how many there were. */
+    readonly clear: () => Promise<number>;
+  };
   /** The agent directory and subject every action is about. */
   readonly dir: string;
   readonly subject: string;
@@ -63,6 +77,7 @@ export interface WebDeps {
 }
 
 export interface WebServer {
+  /** The link as it is now — a key changed from the page (S14.2) changes it. */
   readonly url: string;
   readonly token: string;
   /**
@@ -125,7 +140,33 @@ const distilling = new Map<string, { since: string; finished?: { ok: boolean; me
 /** A place in memory to read from: memory/ or a folder or file under it, nothing that climbs out. */
 const MEMORY_PLACE = /^memory(?:\/[A-Za-z0-9._-]+)*$/;
 
-export function handler(deps: WebDeps, token: string, hosts: readonly string[]) {
+/** The page's key, compared in constant time: a phone now holds it too, over a network (S14.2). */
+export function sameToken(given: string | null, token: string): boolean {
+  if (given === null) return false;
+  const a = new TextEncoder().encode(given), b = new TextEncoder().encode(token);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/**
+ * The link a phone pairs with, for the address the page was opened at (S14.2): the
+ * browser knows the address people reach it by (behind `tailscale serve` the page
+ * does not), so it says; only a scheme and a host this page answers to are taken.
+ */
+export function pairingLink(origin: string, token: string, hosts: readonly string[]): string | undefined {
+  let url: URL;
+  try { url = new URL(origin); } catch { return undefined; }
+  if ((url.protocol !== "https:" && url.protocol !== "http:") || url.origin !== origin) return undefined;
+  const port = url.port !== "" ? url.port : url.protocol === "https:" ? "443" : "80";
+  if (!hosts.includes(`${url.hostname}:${port}`)) return undefined;
+  return `${origin}/#t=${token}`;
+}
+
+/** Changing the page's key from the page (S14.2 AC3) — given only by `startWeb`, which holds the key. */
+export interface KeyControl {
+  readonly rotate: () => Promise<{ readonly ok: true; readonly key: string } | { readonly ok: false; readonly reason: string }>;
+}
+
+export function handler(deps: WebDeps, token: string, hosts: readonly string[], keys?: KeyControl) {
   const place = [deps.dir, "--subject", deps.subject];
   return async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
@@ -148,8 +189,40 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[]) 
       if (bytes !== undefined) return new Response(bytes, { headers: { "content-type": "font/woff2", "cache-control": "public, max-age=31536000, immutable" } });
     }
     if (!url.pathname.startsWith("/api/")) return new Response("not found", { status: 404 });
-    if (req.headers.get(TOKEN_HEADER) !== token) return json({ error: "this page's link has expired — open the address `ohmyagi web` printed" }, 401);
+    if (!sameToken(req.headers.get(TOKEN_HEADER), token)) return json({ error: "this page's link has expired — open the address `ohmyagi web` printed" }, 401);
 
+    if (req.method === "POST" && url.pathname === "/api/pair/rotate") {
+      if (keys === undefined) return json({ error: "this page cannot change its key" }, 404);
+      const body = (await req.json().catch(() => ({}))) as { origin?: unknown };
+      const changed = await keys.rotate();
+      if (!changed.ok) return json({ error: `the key was not changed: ${changed.reason}` }, 500);
+      // A phone unpaired is a phone no longer told anything (D-130).
+      const unsubscribed = deps.push === undefined ? 0 : await deps.push.clear();
+      const link = typeof body.origin === "string" ? pairingLink(body.origin, changed.key, hosts) : undefined;
+      return json({ ok: true, token: changed.key, unsubscribed, ...(link === undefined ? {} : { link }) });
+    }
+    if (url.pathname === "/api/push" || url.pathname === "/api/push/subscribe" || url.pathname === "/api/push/unsubscribe") {
+      if (deps.push === undefined) return json({ error: "this page does not send notifications" }, 404);
+      if (req.method === "GET" && url.pathname === "/api/push") return json({ count: await deps.push.count() });
+      if (req.method === "POST") {
+        const body = (await req.json().catch(() => ({}))) as { relay?: unknown; handle?: unknown };
+        if (typeof body.handle !== "string") return json({ error: "a handle is required" }, 400);
+        if (url.pathname === "/api/push/unsubscribe") return json({ ok: true, removed: await deps.push.unsubscribe(body.handle) });
+        if (url.pathname === "/api/push/subscribe") {
+          if (typeof body.relay !== "string") return json({ error: "a relay is required" }, 400);
+          const added = await deps.push.subscribe(body.relay, body.handle);
+          return added.ok ? json({ ok: true, count: added.count }) : json({ error: added.reason }, 400);
+        }
+      }
+      return json({ error: "not found" }, 404);
+    }
+    if (req.method === "GET" && url.pathname === "/api/pair") {
+      const link = pairingLink(url.searchParams.get("origin") ?? "", token, hosts);
+      if (link === undefined) return json({ error: "that is not an address this page answers to" }, 400);
+      const modules = encodeQr(link, "M");
+      if (modules === null) return json({ error: "the link is too long for a code — pair by pasting it" }, 400);
+      return json({ link, code: qrPath(modules) });
+    }
     if (req.method === "GET" && url.pathname === "/api/state") return json(await deps.state());
     if (req.method === "GET" && url.pathname === "/api/settings") return json(await deps.settings());
     if (req.method === "GET" && url.pathname === "/api/models") return json(await deps.models());
@@ -429,18 +502,45 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[]) 
 /** Start listening. Loopback unless a host is named on purpose. */
 export function startWeb(
   deps: WebDeps,
-  options: { readonly port: number; readonly hostname?: string; readonly token?: string; readonly names?: readonly string[]; readonly scheme?: "http" | "https" },
+  options: {
+    readonly port: number;
+    readonly hostname?: string;
+    readonly token?: string;
+    readonly names?: readonly string[];
+    readonly scheme?: "http" | "https";
+    /** Where a new key is kept when the page changes it (`--key-file`); without it the new key lives only here. */
+    readonly saveKey?: (key: string) => Promise<{ readonly ok: true } | { readonly ok: false; readonly reason: string }>;
+    /** Told when the key changes — never the key itself. */
+    readonly onRotate?: () => void;
+  },
 ): WebServer {
   const hostname = options.hostname ?? "127.0.0.1";
-  const token = options.token ?? crypto.randomUUID().replace(/-/g, "");
+  let token = options.token ?? crypto.randomUUID().replace(/-/g, "");
   let hosts: readonly string[] = [];
-  const server = Bun.serve({ hostname, port: options.port, fetch: (req) => handler(deps, token, hosts)(req) });
+  const keys: KeyControl = {
+    rotate: async () => {
+      const key = newKey();
+      // Kept first: a key in use that a restart would not find again would leave the owner without a link.
+      if (options.saveKey !== undefined) {
+        const saved = await options.saveKey(key);
+        if (!saved.ok) return saved;
+      }
+      token = key;
+      options.onRotate?.();
+      return { ok: true, key };
+    },
+  };
+  const server = Bun.serve({ hostname, port: options.port, fetch: (req) => handler(deps, token, hosts, keys)(req) });
   const port = server.port ?? options.port;
   hosts = allowedHosts(hostname, port, options.names ?? []);
   const shown = options.names?.[0] ?? hostname;
   return {
-    url: `${options.scheme ?? "http"}://${shown}:${port}/#t=${token}`,
-    token,
+    get url() {
+      return `${options.scheme ?? "http"}://${shown}:${port}/#t=${token}`;
+    },
+    get token() {
+      return token;
+    },
     stop: async (force = false) => {
       await server.stop(force);
     },

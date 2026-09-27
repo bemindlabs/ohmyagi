@@ -2406,3 +2406,74 @@ release แรกบน public ติดป้าย **`v0.3.0-alpha` · pre-rel
   - **LiteLLM ถูกเชื่อ ไม่ได้ถูกตรวจ** — `local-coder` และ fallback ของมันชี้ vLLM/ollama ในเครื่องเท่านั้น (ตรวจมือ 2026-09-27) · ถ้าเพิ่ม route cloud ทีหลังจะรั่วโดยไม่มีใครรู้ → เขียนไว้ใน `LOCAL_LIMITS` · ตรวจอัตโนมัติ (`doctor` อ่าน `/model/info` ด้วย virtual key) เป็นงานต่อ
 - **ผล:** `notLocal` ใช้ `notLocalCli` (URL loopback literal · fence มีแค่ port ของ LiteLLM · kernel รองรับ Landlock + seccomp ครบ) · local CLI ได้สำเนาเต็ม · `--route auto` ส่ง turn ที่มีชิ้นถูกเก็บและต้องลงมือไป local · บรรทัด `screened as if leaving` ถูกเอาออก
 - **รีวิวอิสระ:** subagent ที่ส่งไปโจมตี fence หยุดกลางทาง (safety classifier) — fence จึงได้รีวิวจากบุษบาอ่านโค้ด + probe เชิงป้องกันเท่านั้น ไม่ใช่ red-team เต็มรูป · ควรให้คนตรวจซ้ำก่อนใช้กับข้อมูลที่อ่อนไหวมาก
+
+## D-125 — E16 Platform และ E14 App ทำขนานกันตั้งแต่ตอนนี้ (แทนลำดับของ D-115)
+
+**สถานะ:** เจ้าของเคาะ (2026-09-27 — "ทำ platform กับ app ขนานกัน" หลังออก v0.8.0)
+
+- **ลำดับเดิม (D-115):** E12 → E13 → E16a → E15 → E16b → E14 · **ใหม่:** E16 ‖ E14 เริ่มพร้อมกันหลัง E12 · E13 และ E15 ยังอยู่ในคิว
+- **ที่ขนานได้จริงโดยไม่รอกัน:** แอปฝั่งฟรี (S14.1 แชท/ข้อเสนอ/memory · S14.2 จับคู่ · S14.3 push) ใช้แค่ `/api/*` ของ `ohmyagi web` ที่มีอยู่แล้ว · platform เริ่มที่ S16.1 บัญชี + 2FA
+- **ที่ยังต้องรอกัน:** S14.4/S14.8 (ซื้อ) ต้องมี S16.5 (สิทธิ์) · S14.5/S14.6 (managed) ต้องมี S16.7 และ E13 (`ohmyagi deploy`) · S14.3 ต้องมี S16.6 (push relay) · S14.7 (ส่ง store) ต้องรอบัญชี Apple/Google ของเจ้าของ
+- **port (dev):** อยู่ใน block ของ ohmyagi (30700) — platform `30710` · Postgres dev ของ platform `30711` (127.0.0.1 เท่านั้น) · Metro ของแอป `30720`
+
+## D-126 — stack ของ ohmyagi-platform: Bun + TypeScript + Hono + Postgres
+
+**สถานะ:** เจ้าของเคาะ (2026-09-27 — เลือกจาก 4 ทาง: Bun+Hono · Node 24+Fastify · Python FastAPI · Supabase)
+
+- **ทำไม:** ภาษาและ runtime เดียวกับ engine (D-004) → type ของ `/api` แชร์กับ engine และแอปได้ · gate แบบเดียวกัน (typecheck · test · coverage ≥ 85% ต่อไฟล์) · Hono เป็นมาตรฐาน Web (Request/Response) จึงย้ายไป Node ได้โดยไม่เขียนใหม่ถ้า Bun มีปัญหากับโค้ดเงิน
+- **ที่ไม่เลือก:** Node+Fastify (สอง runtime สอง toolchain) · FastAPI (สาม repo สองภาษา แชร์ type ไม่ได้) · Supabase (ข้อมูลอยู่นอกเครื่อง คุม AC1 ไม่มี log เนื้อหา และ AC3 PDPA ได้น้อยลง โค้ดเงินต้องอยู่ใน Deno Edge Functions)
+- **Postgres:** ใช้ client ในตัวของ Bun (`Bun.SQL`) · migration เป็นไฟล์ SQL ลำดับเลข · เงินเป็นจำนวนเต็มหน่วยเล็กสุดเสมอ (CONTRIBUTING)
+- **ความเสี่ยงที่รับ:** Bun ผ่านงานเงินจริงน้อยกว่า Node → webhook ของ Stripe ตรวจลายเซ็นด้วย `constructEventAsync` (Web Crypto) และมี test ที่ยิง payload ลงลายเซ็นจริงจาก secret ปลอม
+
+## D-127 — stack ของ ohmyagi-app: Expo (dev client) + EAS + expo-router + react-native-iap
+
+**สถานะ:** เจ้าของเคาะ (2026-09-27 — เลือกจาก 3 ทาง: Expo+EAS+react-native-iap · Expo+EAS+RevenueCat · bare React Native)
+
+- **ทำไม:** ตรงกับ S14.1 ที่เขียนไว้ว่า Expo · EAS build iOS ได้โดยไม่ต้องมี Mac ต่อ build (เซิร์ฟเวอร์เป็น Linux) · `expo-secure-store` เก็บ key ของการจับคู่ (S14.2 AC2) · react-native-iap ส่งใบเสร็จตรงมา server ของเรา ให้ S16.5 ตัดสินสิทธิ์ (D-113)
+- **ที่ไม่เลือก:** RevenueCat (บริษัทที่สามถือสิทธิ์และข้อมูลการซื้อ ขัด D-113 + มีค่าธรรมเนียม) · bare RN (build iOS บน Mac ทุกครั้ง ดูแล native project เอง)
+- **ที่รับ:** EAS build บน cloud ส่ง source ไปที่ Expo · เกิน free tier ต้องจ่าย · build บน Mac ของเจ้าของเป็นทางสำรอง (`eas build --local`)
+- **ที่เหลือ:** package manager = bun · TypeScript strict · ตรวจบนเซิร์ฟเวอร์ได้แค่ typecheck + unit test + `expo export` (bundle ทั้ง iOS/Android) — การรันบนเครื่องจริงต้องใช้มือถือของเจ้าของ
+
+## D-128 — ใครกด merge ใน ohmyagi-platform / ohmyagi-app
+
+**สถานะ:** เจ้าของเคาะ (2026-09-27 — เลือก "หนู merge เอง ยกเว้นเงิน/auth/key" จาก 3 ทาง: บุษบา merge ยกเว้นเงิน/auth/key · เจ้าของ merge ทุก PR · บุษบา merge ทุก PR ที่ผ่าน gate)
+
+- **บุษบา merge ได้เมื่อ:** CI เขียว **และ** บุษบาตรวจซ้ำเองบนเครื่อง (รัน gate เอง + ลองของจริงเท่าที่ทำได้) แล้วเขียนผลไว้ใน PR
+- **รอเจ้าของ review เสมอ:** PR ที่แตะ **เงิน** (Stripe Connect/escrow S16.2, ใบเสร็จ/สิทธิ์ IAP S16.5/S14.4/S14.8) · **auth** (บัญชี + 2FA S16.1, การจับคู่และที่เก็บ key ของแอป S14.2) · **key** (GitHub App private key S16.3, key ที่ส่งปลดล็อก disk D-111, signing ของ store) · **provisioning** (S16.7/S14.5)
+- **ถ้าไม่แน่ใจว่าเข้าข่ายไหม = รอเจ้าของ** · PR ที่รอจะเขียนบอกว่าให้ดูไฟล์ไหนก่อน
+
+## D-129 — S16.1 บัญชีของ platform: passkey เป็นหลัก + อีเมลไว้ยืนยันและกู้บัญชี ไม่มีรหัสผ่าน
+
+**สถานะ:** เจ้าของเคาะ (2026-09-27 — เลือกจาก 3 ทาง: passkey + อีเมลกู้บัญชี · อีเมล + รหัสผ่าน + TOTP · Sign in with GitHub/Google/Apple + TOTP)
+
+- **เข้าระบบ:** WebAuthn passkey (Face ID / ลายนิ้วมือ / กุญแจบนเครื่อง) — ผูกกับโดเมนและกันการหลอกให้กรอกโดยตัวมันเอง จึงนับเป็น "auth + 2FA" ของ S16.1 · บัญชีมีได้หลาย passkey
+- **ไม่มีรหัสผ่าน** → ไม่มี hash รหัสผ่านให้หลุด ไม่มีงาน reset
+- **อีเมล:** ยืนยันตอนสมัคร + กู้บัญชีเมื่อเสีย passkey ทุกตัว — ลิงก์ใช้ครั้งเดียว อายุสั้น เก็บเป็น hash · กู้แล้วต้องลงทะเบียน passkey ใหม่ · ทุก session เดิมถูกตัด · แจ้งอีเมลว่ามีการกู้
+- **session:** token สุ่มเก็บเป็น hash ใน DB · เว็บใช้ cookie HttpOnly + Secure + SameSite · แอปใช้ bearer ใน secure store
+- **ที่ยังต้องมีของเจ้าของ:** โดเมนของ platform (RP ID ของ passkey) · Apple Team ID + associated domains สำหรับ passkey ในแอป iOS · ผู้ให้บริการส่งอีเมล — ระหว่างนี้ dev ใช้ค่าจาก config และตัวส่งอีเมลที่เขียนลงไฟล์ในเครื่อง
+- **เข้าข่าย D-128 (auth):** PR ของ S16.1 รอเจ้าของ review ก่อน merge
+
+## D-130 — S14.3 push: เปิดเองต่อมือถือ ผ่าน relay ของ platform · ส่งแค่ "มีเรื่องรอคุณ"
+
+**สถานะ:** เจ้าของเคาะ (2026-09-27 — เลือก "เปิดเองต่อมือถือ ผ่าน relay" จาก 3 ทาง: เปิดเองต่อมือถือผ่าน relay · push เฉพาะ plan managed · เปิดเสมอเมื่อจับคู่)
+
+- **ปิดเป็นค่าเริ่มต้น** — engine ที่ self-host ไม่คุยกับ platform เลยจนกว่าเจ้าของจะกด "แจ้งเตือนฉัน" ในแอปของมือถือเครื่องนั้น · iOS ส่ง push ถึงแอปเราได้ผ่าน server ของเราเท่านั้น (APNs key ผูกกับ bundle ของแอป) จึงต้องเป็น relay ของ platform (S16.6)
+- **protocol (ทั้งสองฝั่งยึดตามนี้):**
+  1. แอปลงทะเบียนเครื่องกับ relay: `POST {relay}/v1/devices {platform: ios|android, token}` → `{handle}` — handle สุ่ม 256 bit (base64url) · **ถือ handle = สิทธิ์สั่ง push ที่ไม่มีเนื้อหาไปเครื่องนั้น** · ไม่ผูกกับบัญชีใด (ไม่ต้อง login)
+  2. แอปบอก engine ผ่าน API ที่ต้องมี key ของหน้าเว็บ: `POST /api/push/subscribe {relay, handle}` · relay ต้องเป็น https (loopback ได้เฉพาะทดสอบ)
+  3. engine มีข้อเสนอใหม่หรือเหตุผิดปกติ → `POST {relay}/v1/notify {handle}` — **body มีแค่ handle** ไม่มีชนิดเหตุการณ์ ไม่มีชื่อ agent ไม่มีข้อความ
+  4. relay ส่ง push ข้อความกลาง ๆ ("มีเรื่องรอคุณ" / "Something is waiting for you") · จำกัดความถี่ต่อ handle
+  5. ยกเลิก: `DELETE {relay}/v1/devices/{handle}` (แอปหรือ engine) · "Unpair every phone" (S14.2 AC3) ลบการสมัครทั้งหมดของ engine และพยายาม DELETE ที่ relay ด้วย
+- **relay เก็บ:** handle → device token, platform, เวลาสร้าง, เวลาส่งล่าสุด — ไม่มีเนื้อหา ไม่มีบัญชี · **relay เห็น metadata** ว่า handle ไหนมีเรื่องเมื่อไร (เจ้าของยอมรับตอนเลือกทางนี้)
+- **engine เก็บ:** การสมัครต่อ subject ใน state dir (mode 600, ไม่เข้า git)
+- **D-128:** ฝั่ง relay ถือ APNs/FCM key → PR ของ S16.6 รอเจ้าของ review · ฝั่ง engine ไม่แตะเงิน/auth/key ของ platform
+
+## D-131 — บุษบา review และ merge PR เองทุกตัว (แทน D-128)
+
+**สถานะ:** เจ้าของสั่ง (2026-09-27 — "auto reviews and merge pr" ระหว่างออก v0.8.1)
+
+- **ขอบเขต (เจ้าของเลือก 2026-09-27 จาก 3 ทาง — เฉพาะ Oh My AGI · ทั้ง org bemindlabs · bemindlabs + kla-bemindlabs):** repo ของ Oh My AGI เท่านั้น — `om-agi`, `ohmyagi` (public), `ohmyagi-platform`, `ohmyagi-app` · repo อื่นใน org ไม่แตะ
+- **ทุก PR** ในขอบเขตนั้นบุษบา review และ merge เอง — รวมที่ D-128 เคยให้รอเจ้าของ (เงิน · auth · key · provisioning)
+- **เกณฑ์ merge ไม่ลด:** CI เขียว + บุษบารัน gate ซ้ำเองจาก worktree แยก + ลองของจริงเท่าที่ทำได้ + เขียน review ไว้ใน PR ว่าตรวจอะไร เห็นอะไร และอะไรที่ยังไม่ได้ตรวจ
+- **PR ที่แตะเงิน/auth/key/provisioning:** เพิ่ม review ด้านความปลอดภัยโดยผู้ตรวจอิสระ (agent อีกตัวที่ไม่ได้เขียน) ก่อน merge — ข้อที่ยืนยันแล้วต้องแก้ก่อน merge
+- **เจ้าของยังดูย้อนหลังได้เสมอ** — review comment ในแต่ละ PR คือบันทึก

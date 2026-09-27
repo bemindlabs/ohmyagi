@@ -532,6 +532,15 @@ ${MARKDOWN_CSS}
       <p class="hint">These are set where <code>ohmyagi</code> starts, so they cannot be switched from a page.</p>
     </section>
 
+    <section aria-labelledby="h-pair">
+      <h2 id="h-pair">Pair a phone</h2>
+      <p class="hint">The Oh My AGI app reads this page's link — its address and key — from a code. Anyone who scans it can use this page as you, so show it only to your own phone.</p>
+      <div class="row"><button id="showPair">Show the code</button><button id="hidePair" hidden>Hide it</button><button id="rotateKey">Unpair every phone</button></div>
+      <div id="pairBox" hidden><div id="pairCode" style="width:min(18rem,100%);margin-top:.75rem;background:#fff;border-radius:8px;padding:4px"></div></div>
+      <p class="hint">“Unpair every phone” changes this page's key: every paired phone, every other open tab and every saved link stop working. This tab keeps working with the new key.</p>
+      <p class="hint" id="pushLine" hidden></p>
+    </section>
+
     <section aria-labelledby="h-version">
       <h2 id="h-version">Version</h2>
       <p id="versionLine"></p>
@@ -551,7 +560,7 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
 (() => {
   const hashParams = new URLSearchParams(location.hash.slice(1));
   document.getElementById("role").addEventListener("click", (e) => e.currentTarget.classList.toggle("open"));
-  const token = hashParams.get("t") || sessionStorage.getItem("ohmyagi-t") || "";
+  let token = hashParams.get("t") || sessionStorage.getItem("ohmyagi-t") || "";
   const startTab = hashParams.get("tab") || sessionStorage.getItem("ohmyagi-tab") || "home";
   if (token) { sessionStorage.setItem("ohmyagi-t", token); history.replaceState(null, "", location.pathname); }
   const $ = (id) => document.getElementById(id);
@@ -1729,11 +1738,39 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
     guard("Personal-word filter", s.guards.needles > 0, s.guards.needles > 0 ? s.guards.needles + " word(s) kept from leaving; plus shapes like phone numbers, always." : "No personal words listed yet — shapes like phone numbers are still caught. List words with ohmyagi egress needles.");
     guard("Local judge", !!s.guards.judge, s.guards.judge ? "A model on this computer (" + s.guards.judge + ") reads meaning before anything leaves." : "Off. Set OM_AGI_EGRESS_JUDGE to a local model to turn it on — chat apps need it.");
     guard("Risk check for suggestions", s.guards.triage, s.guards.triage ? "“Check risk” asks TypeSafe's Jev about a suggestion when you press it." : "Off. It needs a TypeSafe key (TYPESAFE_API_KEY_FILE).");
+    try {
+      const p = await api("/api/push");
+      $("pushLine").hidden = typeof p.count !== "number";
+      $("pushLine").textContent = p.count > 0
+        ? p.count + " phone(s) are told when something is waiting — through the Oh My AGI relay, which learns when, never what."
+        : "No phone is told when something is waiting. A phone turns it on in the app.";
+    } catch {}
     $("versionLine").textContent = "You have " + s.version.current + (s.version.latest ? " · newest published " + s.version.latest : "") + (s.version.checked ? " · checked " + s.version.checked : "");
   }
   let subject = "";
   function showModelNow() { const p = choice(); $("modelNow").textContent = p.backend || p.model ? "Using " + (p.backend || "the default backend") + (p.model ? " · " + p.model : "") : "Using the default."; }
   $("saveModel").onclick = () => { store.set("ohmyagi-backend", $("backendSel").value); store.set("ohmyagi-model", $("modelIn").value.trim()); showModelNow(); syncPicker(); toast("Saved for this browser."); };
+  $("rotateKey").onclick = async () => {
+    if (!confirm("Change this page's key?\\n\\nEvery paired phone, every other open tab and every saved link stop working, bookmarks included. This tab keeps working.")) return;
+    $("rotateKey").disabled = true;
+    let r; try { r = await api("/api/pair/rotate", { origin: location.origin }); } catch { $("rotateKey").disabled = false; return; }
+    $("rotateKey").disabled = false;
+    if (!r.ok) { toast(r.error || "The key was not changed."); return; }
+    token = r.token; try { sessionStorage.setItem("ohmyagi-t", token); } catch {}
+    toast("Every phone is unpaired" + (r.unsubscribed > 0 ? " and no longer notified" : "") + ". Pair again with the new code."); loadSettings();
+    if (!$("pairBox").hidden) $("showPair").click();
+  };
+  $("showPair").onclick = async () => {
+    $("showPair").disabled = true;
+    let r; try { r = await api("/api/pair?origin=" + encodeURIComponent(location.origin)); } catch { $("showPair").disabled = false; return; }
+    $("showPair").disabled = false;
+    if (!r.code) { toast(r.error || "Could not make the code."); return; }
+    const NS = "http://www.w3.org/2000/svg", svg = document.createElementNS(NS, "svg"), bg = document.createElementNS(NS, "rect"), path = document.createElementNS(NS, "path");
+    svg.setAttribute("viewBox", "0 0 " + r.code.size + " " + r.code.size); svg.setAttribute("shape-rendering", "crispEdges"); svg.setAttribute("role", "img"); svg.setAttribute("aria-label", "Pairing code for the Oh My AGI app");
+    bg.setAttribute("width", r.code.size); bg.setAttribute("height", r.code.size); bg.setAttribute("fill", "#fff"); path.setAttribute("fill", "#000"); path.setAttribute("d", r.code.d);
+    svg.append(bg, path); $("pairCode").replaceChildren(svg); $("pairBox").hidden = false; $("showPair").hidden = true; $("hidePair").hidden = false;
+  };
+  $("hidePair").onclick = () => { $("pairCode").replaceChildren(); $("pairBox").hidden = true; $("showPair").hidden = false; $("hidePair").hidden = true; };
   $("checkUpdate").onclick = async () => { $("checkUpdate").disabled = true; const r = await api("/api/update-check", {}); toast(r.message || (r.ok ? "Checked." : "Could not check.")); $("checkUpdate").disabled = false; loadSettings(); };
   pickSummary(); loadModels();
   refresh().then(() => { if (startTab !== "home") showTab(startTab); }); setInterval(refresh, 5000);
