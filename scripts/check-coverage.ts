@@ -314,7 +314,8 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // 133 since S12.7: the fixed hidden seccomp supervisor is dispatched before
   // public commands and excluded from the automatic update check, just like
   // the existing fence helper. Its process behaviour is covered by fence tests.
-  ["bin/om-agi.ts", { lines: 133, why: "entry point — dispatch and process.exit" }],
+  // 136 since S13.1: one `case` label and one import, for `deploy`.
+  ["bin/om-agi.ts", { lines: 136, why: "entry point — dispatch and process.exit" }],
   // One `export const USAGE = \`…\`` around 240 lines of help text. A test could
   // import it and the floor would read 100% off a single declaration while the
   // text said anything at all; the size is the only honest number here.
@@ -329,7 +330,9 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // that om-agi does not turn an agent's own actions into proposals.
   // S12.1/S12.3 adds the route flag and explains when the local chain is put
   // before the usual one; this is user-facing contract text, not hidden logic.
-  ["bin/usage.ts", { lines: 573, why: "help text — one declaration, 573 lines of prose" }],
+  // 588 since S13.1: `deploy plan`'s entry, and the four deploy subcommands
+  // listed under "Not built yet" with the stories that owe them.
+  ["bin/usage.ts", { lines: 590, why: "help text — one declaration, 590 lines of prose" }],
   // The commands. Each is `cmdX(rest)` returning an exit code, and each reads
   // `process.env`, `homedir()` or `cwd` on its way. Calling them in-process
   // would mean swapping `HOME` inside the test runner; the tests spawn instead.
@@ -338,11 +341,17 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // report-writing that can only run in a spawned process lives on this side of
   // the line.
   ["bin/commands/autonomy.ts", { lines: 295, why: "command — run by spawning the CLI" }],
-  ["bin/commands/backends.ts", { lines: 54, why: "command — run by spawning the CLI" }],
+  ["bin/commands/backends.ts", { lines: 58, why: "command — run by spawning the CLI (test/cli/backends.test.ts runs it end to end)" }],
   ["bin/commands/doctor.ts", { lines: 91, why: "command — run by spawning the CLI (the LiteLLM key and own addresses it reads: readLiteLLMKey, checkLocalAction)" }],
   // 266 since odd3: `printErasePlan` takes the stream it writes to, and
   // `cmdErase` picks stderr under `--json` so stdout is the document alone.
   ["bin/commands/erase.ts", { lines: 266, why: "command — run by spawning the CLI" }],
+  // S13.1. The plan itself is `src/deploy/` (target, plan, commands, render),
+  // on the floor and tested there; what is here is the parsing, the soul check,
+  // the two output shapes and the not-built subcommands — spawn-only, and run
+  // by `test/cli/deploy.test.ts` under a PATH of traps for every program a plan
+  // names.
+  ["bin/commands/deploy.ts", { lines: 83, why: "command — run by spawning the CLI; its parts are tested in src/deploy, and test/cli/deploy.test.ts runs it" }],
   ["bin/commands/guard.ts", { lines: 171, why: "command — run by spawning the CLI" }],
   ["bin/commands/ledger.ts", { lines: 244, why: "command — run by spawning the CLI" }],
   ["bin/commands/new.ts", { lines: 58, why: "command — run by spawning the CLI" }],
@@ -360,7 +369,7 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   ["bin/commands/persona.ts", { lines: 266, why: "command — asks a local model and a person at a terminal; its parts are tested in src/soul/extract, and test/cli/persona.test.ts runs it against a stub model" }],
   ["bin/commands/chat.ts", { lines: 227, why: "command — serve polls until Ctrl-C; its parts are tested in src/connectors, and test/cli/chat.test.ts runs it against a stub Telegram" }],
   ["bin/commands/update.ts", { lines: 77, why: "command — asks GitHub; its parts are tested in src/update" }],
-  ["bin/commands/web.ts", { lines: 404, why: "command — serves until Ctrl-C; its parts are tested in src/web (the --qr print: src/web/qr.ts; the key change: startWeb + replaceKey; the push wiring and 30 s watch: src/web/push.ts, checked live against a loopback relay 2026-09-27)" }],
+  ["bin/commands/web.ts", { lines: 400, why: "command — serves until Ctrl-C; its parts are tested in src/web (the --qr print: src/web/qr.ts; the key change: startWeb + replaceKey; the push wiring and 30 s watch, per page key: src/web/push.ts, checked live against a loopback relay 2026-09-27)" }],
   ["bin/commands/memory.ts", { lines: 625, why: "command — run by spawning the CLI" }],
   ["bin/commands/observe.ts", { lines: 750, why: "command — run by spawning the CLI" }],
   // S5.2. The store itself is `src/decide/proposals.ts`, on the floor and
@@ -485,7 +494,7 @@ export const PROOFS = new Map<string, Proof>([
       provedOn: "2026-09-24",
       by: "npm run demo -- --model <a local model>",
       result:
-        "15/15 criteria passed on 2026-09-27 on the tree released as 0.8.1 (run 0a4d532e, table kept in notes/2026-09-27_demo-v0.8.1.txt), on 0.8.0 the same day (run 391c781f, table kept in notes/2026-09-27_demo-v0.8.0.txt), on 0.7.2 on 2026-09-26 (run f28cd0ba, table kept in notes/2026-09-26_demo-v0.7.2.txt), on 0.7.1 the same day (run 0eaea0cf, table kept in notes/2026-09-26_demo-v0.7.1.txt), on 0.7.0 the same day (run 1c88d842, table kept in notes/2026-09-26_demo-v0.7.0.txt), on 0.6.1 the same day (run 3eaea63f, table kept in notes/2026-09-26_demo-v0.6.1.txt), on 0.6.0 the same day (run 1972948d, table kept in notes/2026-09-26_demo-v0.6.0.txt), on 0.5.1 on 2026-09-25 (run caa68c60, table kept in notes/2026-09-25_demo-v0.5.1.txt), on 0.5.0 the same day (run 5e5f6903, table kept in notes/2026-09-25_demo-v0.5.0.txt), on 0.4.2 the same day (run fbad84d0, table kept in notes/2026-09-25_demo-v0.4.2.txt), on 0.4.1 the same day (run 8a52848c, table kept in notes/2026-09-25_demo-v0.4.1.txt), on 0.4.0 the day before (run 065c6900, table kept in notes/2026-09-24_demo-v0.4.0.txt), on 0.3.0 the same day (run cbeda900, " +
+        "15/15 criteria passed on 2026-09-27 on the tree released as 0.8.2 (run c7517aef, table kept in notes/2026-09-27_demo-v0.8.2.txt), on 0.8.1 the same day (run 0a4d532e, table kept in notes/2026-09-27_demo-v0.8.1.txt), on 0.8.0 the same day (run 391c781f, table kept in notes/2026-09-27_demo-v0.8.0.txt), on 0.7.2 on 2026-09-26 (run f28cd0ba, table kept in notes/2026-09-26_demo-v0.7.2.txt), on 0.7.1 the same day (run 0eaea0cf, table kept in notes/2026-09-26_demo-v0.7.1.txt), on 0.7.0 the same day (run 1c88d842, table kept in notes/2026-09-26_demo-v0.7.0.txt), on 0.6.1 the same day (run 3eaea63f, table kept in notes/2026-09-26_demo-v0.6.1.txt), on 0.6.0 the same day (run 1972948d, table kept in notes/2026-09-26_demo-v0.6.0.txt), on 0.5.1 on 2026-09-25 (run caa68c60, table kept in notes/2026-09-25_demo-v0.5.1.txt), on 0.5.0 the same day (run 5e5f6903, table kept in notes/2026-09-25_demo-v0.5.0.txt), on 0.4.2 the same day (run fbad84d0, table kept in notes/2026-09-25_demo-v0.4.2.txt), on 0.4.1 the same day (run 8a52848c, table kept in notes/2026-09-25_demo-v0.4.1.txt), on 0.4.0 the day before (run 065c6900, table kept in notes/2026-09-24_demo-v0.4.0.txt), on 0.3.0 the same day (run cbeda900, " +
         "table kept in notes/2026-09-24_demo-v0.3.0.txt), on 0.2.0 the same day (run fd433912, " +
         "table kept in notes/2026-09-24_demo-v0.2.0.txt), and earlier that day on the tree released as 0.1.0 (run 2ddacb38, " +
         "table kept in notes/2026-09-24_demo-v0.1.0.txt). Before that, " +
@@ -500,13 +509,20 @@ export const PROOFS = new Map<string, Proof>([
   [
     "scripts/cli-parity.ts",
     {
-      sha256: "5eeab6f7a1e7acb9a7bc8f0c2ad32dac3b06370e881a4fdf8e50e7fb546a1f3d",
-      provedOn: "2026-09-25",
+      sha256: "fef39e519726a66756223e1f729b944235419fe722e36683f6955b71e8e45ee6",
+      provedOn: "2026-09-27",
       by: "npm run parity -- --base . --selftest",
       result:
         "exit 0 — control 1 steady, control 2 not blind to a changed character, control 3 not " +
         "blind to an added line, and control 4 refusing a side with no engine in it, over all " +
-        "17 case(s), 188 invocation(s) per side. Re-proved for `basis` (D-077), which added bare `basis` " +
+        "18 case(s), 199 invocation(s) per side. Re-proved for `deploy` (S13.1), which added the case " +
+        "`18-deploy` — the not-built subcommands, `plan` refused on a repository with no commit, its " +
+        "`--json`, a target with a secret in it and a subject that is not the soul's. The first run was " +
+        "not steady, and not because of this: its base side found a collection `omagi__example` (2 " +
+        "points) in this machine's real Qdrant at 127.0.0.1:10300, which `13-erase` dropped, so the head " +
+        "side found none; nothing in `18-deploy` indexes memory, and the re-run on the same bytes was " +
+        "steady. Before that, 17 case(s), 188 invocation(s) per side, proved 2026-09-25. " +
+        "Re-proved for `basis` (D-077), which added bare `basis` " +
         "to `02-unknown` — control 1 first caught a test that had left a collection in the machine's real " +
         "Qdrant, which that test no longer can; before that for `eval` (D-073), which added bare `eval` " +
         "to `02-unknown`; before that for `persona` (D-072), which added bare `persona` " +

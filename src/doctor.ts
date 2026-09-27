@@ -1174,8 +1174,26 @@ export function parseModelInfo(body: unknown): readonly LiteLLMRoute[] | undefin
 
 export type RoutePlace = "here" | "network" | "unknown" | "outside";
 
-/** Providers whose default address, with no `api_base`, is this machine. */
-const LOCAL_BY_DEFAULT: readonly string[] = ["ollama", "ollama_chat"];
+/** Providers whose address, with no `api_base`, is set somewhere LiteLLM does not show (`OLLAMA_API_BASE`). */
+const ADDRESS_ELSEWHERE: readonly string[] = ["ollama", "ollama_chat"];
+
+/**
+ * An address one parser could read differently from another. LiteLLM's clients (httpx, yarl, urllib) take a `\`
+ * in the authority as part of the user name, where a WHATWG parser takes it as `/`: `http://127.0.0.1\@a.example`
+ * is 127.0.0.1 here and a.example there. So an authority with `@` or `\`, or anything outside printable ASCII,
+ * is read as leaving — a disagreement between parsers is never a pass.
+ */
+function ambiguous(apiBase: string): boolean {
+  if (/[^\x21-\x7e]/.test(apiBase)) return true;
+  const rest = apiBase.replace(/^[A-Za-z][A-Za-z0-9+.-]*:\/\//, "");
+  const authority = rest.split(/[/?#]/, 1)[0] ?? "";
+  return authority.includes("@") || authority.includes("\\") || rest.split(/[?#]/, 1)[0]!.includes("\\");
+}
+
+/** Text from LiteLLM's answer, safe to print: no control characters (a terminal would obey them), bounded. */
+export function printable(text: string): string {
+  return text.replace(/[\u0000-\u001f\u007f-\u009f]/g, "?").slice(0, 200);
+}
 
 const V4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
 
@@ -1191,15 +1209,16 @@ function privateV4(octets: readonly number[]): boolean {
  */
 export function routePlace(route: LiteLLMRoute, own: readonly string[]): { readonly place: RoutePlace; readonly host: string } {
   if (route.apiBase === undefined) {
-    return LOCAL_BY_DEFAULT.includes(route.provider)
-      ? { place: "here", host: `${route.provider} default (localhost)` }
-      : { place: "outside", host: `${route.provider || "an unnamed provider"}'s own servers (no api_base)` };
+    return ADDRESS_ELSEWHERE.includes(route.provider)
+      ? { place: "unknown", host: `${printable(route.provider)} with no api_base — LiteLLM's own OLLAMA_API_BASE decides, which it does not show` }
+      : { place: "outside", host: `${printable(route.provider) || "an unnamed provider"}'s own servers (no api_base)` };
   }
+  if (ambiguous(route.apiBase)) return { place: "outside", host: `${printable(route.apiBase)} (an address parsers disagree on)` };
   let host: string;
   try {
     host = new URL(route.apiBase).hostname.replace(/^\[|\]$/g, "").toLowerCase();
   } catch {
-    return { place: "unknown", host: route.apiBase };
+    return { place: "outside", host: `${printable(route.apiBase)} (not an address this can read)` };
   }
   if (host === "localhost" || host === "host.docker.internal" || host === "::1" || own.includes(host)) return { place: "here", host };
   const v4 = V4.exec(host);
@@ -1251,10 +1270,10 @@ export async function checkLocalAction(env: DoctorEnv): Promise<DoctorSection | 
   }
   const findings: Finding[] = mine.map((route, index) => {
     const { place, host } = routePlace(route, own);
-    return { id: `local-action:route:${index}`, severity: PLACE_SEVERITY[place], label: route.provider || "route", detail: `${host} — ${PLACE_WORDS[place]}` };
+    return { id: `local-action:route:${index}`, severity: PLACE_SEVERITY[place], label: printable(route.provider) || "route", detail: `${printable(host)} — ${PLACE_WORDS[place]}` };
   });
   const others = routes.filter((route) => route.group !== LOCAL_MODEL).map((route) => route.group);
-  if (others.length > 0) notes.push(`the key can also use ${[...new Set(others)].join(", ")} — a key for local action should see local-coder alone`);
+  if (others.length > 0) notes.push(`the key can also use ${[...new Set(others.map(printable))].join(", ")} — a key for local action should see local-coder alone`);
   return { title, findings, notes };
 }
 

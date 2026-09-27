@@ -148,6 +148,21 @@ async function setup(box: Sandbox, argv: readonly string[]): Promise<void> {
   expect(child.exitCode, `setup failed: om-agi ${argv.join(" ")}\n${stderr}`).toBe(0);
 }
 
+/**
+ * A first commit, made by the real git as a person would: `deploy plan` refuses
+ * a repository a clone would carry nothing of. The pre-commit hook `new`
+ * installed runs too, with this sandbox's PATH.
+ */
+async function commitIn(box: Sandbox, dir: string): Promise<void> {
+  for (const argv of [["add", "-A"], ["commit", "-q", "-m", "first"]]) {
+    const child = Bun.spawn([REAL_GIT, ...argv], { cwd: dir, env: box.env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    const stderr = await new Response(child.stderr).text();
+    await new Response(child.stdout).text();
+    await child.exited;
+    expect(child.exitCode, `git ${argv.join(" ")}\n${stderr}`).toBe(0);
+  }
+}
+
 /** An agent repository with all three soul places on disk. */
 async function agentIn(box: Sandbox): Promise<string> {
   const parent = await mkdtemp(join(tmpdir(), "om-agi-json-agents-"));
@@ -307,6 +322,28 @@ const ROWS: readonly Row[] = [
       "--out",
       join(box.home, "certificate.json"),
     ],
+  },
+  {
+    file: "deploy.ts",
+    id: "deploy plan --json",
+    code: 0,
+    stdout: "document",
+    // ~25 KB: every command, every unit file, every limit — past the cut.
+    atLeast: OVER_THE_CUT,
+    build: async (box) => {
+      const agent = await agentIn(box);
+      await commitIn(box, agent);
+      const target = join(box.home, "target.json");
+      await Bun.write(target, JSON.stringify({ name: "vps-1", provider: "ssh", ssh: { host: "203.0.113.10", user: "deploy" } }));
+      return ["deploy", "plan", agent, "--subject", SUBJECT, "--target", target, "--json"];
+    },
+  },
+  {
+    file: "deploy.ts",
+    id: "deploy plan --json with a command line the CLI will not run",
+    code: 2,
+    stdout: "empty",
+    build: async () => ["deploy", "plan", "--json"],
   },
   {
     file: "erase.ts",

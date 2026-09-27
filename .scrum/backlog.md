@@ -748,7 +748,7 @@ E5 ──────┴──> E10 Web console (ทุกปุ่มคือ�
 
 | # | Story | วัน | ค่า/แรง |
 |---|---|---|---|
-| S13.1 | `ohmyagi deploy plan` — ไฟล์เป้าหมาย (provider · host/project/region · ขนาด) + dry run บอกว่าอะไรไปอยู่ที่ไหน ก่อนทำจริง | 1 | สูง |
+| 🟡 S13.1 | `ohmyagi deploy plan` — ไฟล์เป้าหมาย (provider · host/project/region · ขนาด) + dry run บอกว่าอะไรไปอยู่ที่ไหน ก่อนทำจริง · **สร้างแล้วบน branch `e13/s13.1-deploy-plan` รอ review/merge** · data map เป็นลิสต์เดียว (`src/erase/map.ts`) ที่ erase กับ deploy อ่านร่วมกัน ทุกที่บอกว่าไป/สร้างใหม่/อยู่ที่นี่ · เงื่อนไข 4 ข้อของ D-100 ต่อ provider · คำสั่ง ssh/gcloud/aws ที่ `apply` จะรัน (แสดงเฉยๆ ไม่รัน) · ไม่เขียน ไม่ spawn ไม่ออกเน็ต (มีเทสต์) | 1 | สูง |
 | S13.2 | VPS ผ่าน ssh (Hostinger) — ติดตั้ง binary · clone repo ของ agent · systemd (web/triggers) · เข้า tailnet · volume เข้ารหัส | 2 | **สูงสุด** |
 | S13.3 | GCP ผ่าน `gcloud` — สร้าง VM + disk ด้วยกุญแจของเจ้าของ (CSEK/CMEK) แล้วใช้ bootstrap เดียวกับ S13.2 | 1 | สูง |
 | S13.4 | AWS ผ่าน `aws` — EC2 + EBS เข้ารหัสด้วย KMS key ของเจ้าของ แล้ว bootstrap เดียวกัน | 1 | สูง |
@@ -794,7 +794,7 @@ E5 ──────┴──> E10 Web console (ทุกปุ่มคือ�
 
 | # | Story | วัน | ค่า/แรง |
 |---|---|---|---|
-| S15.1 | web app ตลาดงาน — onboard agent (agent card A2A · ทักษะ · ราคา/ฟรี) · ผู้จ้างโพสต์งาน | 3 | สูง |
+| S15.1 | web app ตลาดงาน — onboard agent (agent card A2A · ทักษะ · ราคา/ฟรี) · ผู้จ้างโพสต์งาน · **เริ่ม 2026-09-27 ใน ohmyagi-platform, Hono JSX (D-132)** · 🟡 **หน้าแรกขึ้นแล้ว** (PR #5: สมัคร/เข้าด้วย passkey · onboard agent · โพสต์งาน · รวม agent/งาน) บน https://<host>.<tailnet>.ts.net:10720 · ยังไม่มีรับงาน/จ่ายเงิน | 3 | สูง |
 | S15.2 | รับงาน — agent เห็นงาน · เจ้าของ (หรือ dial) อนุมัติการรับ · workspace แยกต่องาน (I-3) | 2 | **สูงสุด** (ประตู) |
 | S15.3 | ทำและส่งผ่าน git — clone repo ของผู้จ้าง · branch · PR บน GitHub (ค่าเริ่มต้น) · egress ตรวจทุก diff ก่อน push | 2 | **สูงสุด** |
 | S15.4 | วัด token จริงต่องาน — จาก ledger (usage ต่อ turn) · ใบแจ้งที่ทั้งสองฝ่ายตรวจได้ | 2 | สูง |
@@ -815,6 +815,8 @@ E5 ──────┴──> E10 Web console (ทุกปุ่มคือ�
 ---
 
 ### E16 — Platform backend (D-115) · repo แยก · ขนานกับ E14 (D-125) · Bun + Hono + Postgres (D-126)
+
+> **deploy แล้ว (2026-09-27, เจ้าของสั่ง "deploy ที่ bemindlabs server ได้เลย"):** tailnet-only — https://<host>.<tailnet>.ts.net:10720 (S16.1 บัญชี + S16.6 relay) · Postgres docker 127.0.0.1:10721 · e-mail/push ลงไฟล์ outbox จนกว่าจะมีผู้ให้บริการอีเมล + APNs/FCM key ของเจ้าของ · เปิด public ต้องมีโดเมน (RP ID ของ passkey) ของเจ้าของก่อน · วิธีอัปเดตอยู่ใน PORTS.md
 
 > บริการที่ **เรา** host · **ไม่อยู่ใน engine** (engine ที่คน self-host ไม่มีโค้ดเงินหรือบัญชี) · ไม่เห็น prompt/memory ของ agent ใด (BYOK D-109 · ไม่มี proxy D-106)
 

@@ -49,9 +49,10 @@ import { UNDELETABLE } from "../ledger/store.ts";
 import { SUMMARY_PATH } from "../observer/actions.ts";
 import { RAG_UNDELETABLE } from "../memory/store-admin.ts";
 import { OBSERVER_UNDELETABLE } from "../observer/store.ts";
+import { PLACE_IDS, type PlaceId } from "./place-id.ts";
 
-/** The five places AC1 names. Closed: a sixth id does not type-check. */
-export type PlaceId = "soul" | "observer" | "rag" | "ledger" | "lora";
+/** The five places AC1 names — declared in `place-id.ts`, which says why. */
+export type { PlaceId };
 
 /** Whether om-agi has code that deletes this place, or only an address for it. */
 export type PlaceStatus =
@@ -192,8 +193,8 @@ export const PLACES = {
   },
 } as const satisfies Record<PlaceId, Place>;
 
-/** Every id, in the order AC1 lists them. */
-export const PLACE_IDS: readonly PlaceId[] = ["soul", "observer", "rag", "ledger", "lora"];
+/** Every id, in the order AC1 lists them — declared beside the type, in `place-id.ts`. */
+export { PLACE_IDS };
 
 /**
  * One place, widened to {@link Place}.

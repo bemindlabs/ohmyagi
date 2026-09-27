@@ -42,7 +42,7 @@
  * is verified against a manifest hash. Erase removes; revoke puts back.
  */
 
-import { chmod, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DAGI_DIR, SOUL_DIR } from "../agent/template.ts";
 import { locate, strip } from "../soul/block.ts";
@@ -168,6 +168,13 @@ export async function planBlocks(
   for (const path of [...new Set(paths)].sort()) {
     let mode: number;
     try {
+      // A link is refused, not followed or replaced: renaming a stripped copy over it would put a plain file where
+      // the link was and leave the block in the file it pointed to (review 2026-09-27). Callers hand over resolved
+      // paths; one that is still a link is a path nobody resolved.
+      if ((await lstat(path)).isSymbolicLink()) {
+        plans.push({ path, outcome: "refused", reason: "a symbolic link — om-agi strips the file it points to, and was handed the link" });
+        continue;
+      }
       const info = await stat(path);
       if (!info.isFile()) {
         plans.push({ path, outcome: "refused", reason: "not a regular file" });

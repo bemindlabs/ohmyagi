@@ -1530,6 +1530,32 @@ export const SCENARIOS: readonly Scenario[] = [
       { argv: ["proposal", "new", BROKEN, "--subject", "example", "--what", "x", "--why", "y", "--impact", "z"] },
     ],
   },
+  {
+    // S13.1. The plan is a pure function of the sandbox, the target file and
+    // the engine version, so both sides print the same bytes — the version
+    // line is the one intended difference across a release. `new` leaves a
+    // repository with no commit, so the plan steps exit 1 with the refusal
+    // first, which is the path worth pinning; the secret file is refused
+    // before anything is planned, and its value must never appear.
+    id: "18-deploy",
+    files: [
+      ["target.json", `${JSON.stringify({ name: "vps-1", provider: "ssh", ssh: { host: "203.0.113.10", user: "deploy" }, home: "desk" })}\n`],
+      ["secret.json", `${JSON.stringify({ name: "vps-1", provider: "ssh", ssh: { host: "h", user: "u" }, password: "SYNTHETIC-not-a-password" })}\n`],
+    ],
+    steps: [
+      { argv: ["deploy", "--help"] },
+      { argv: ["deploy"] },
+      { argv: ["deploy", "wat"] },
+      { argv: ["deploy", "apply"] },
+      { argv: ["deploy", "destroy"] },
+      { argv: ["deploy", "plan"] },
+      { argv: ["new", "demo", "--subject", "example"] },
+      { argv: ["deploy", "plan", "demo", "--subject", "example", "--target", "target.json"] },
+      { argv: ["deploy", "plan", "demo", "--subject", "example", "--target", "target.json", "--json"] },
+      { argv: ["deploy", "plan", "demo", "--subject", "example", "--target", "secret.json"] },
+      { argv: ["deploy", "plan", "demo", "--subject", "somebody-else", "--target", "target.json"] },
+    ],
+  },
 ];
 
 /**

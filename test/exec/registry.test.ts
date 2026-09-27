@@ -797,6 +797,10 @@ describe("S12.6 — hardening sent at every level", () => {
       }
     }
     expect(env["GROK_MANAGED_MCPS_ENABLED"]).toBe("0");
+    // xAI's remote config turned telemetry and trace upload on after login (2026-09-27); these win over it.
+    expect(env["GROK_TELEMETRY_ENABLED"]).toBe("0");
+    expect(env["GROK_TELEMETRY_TRACE_UPLOAD"]).toBe("0");
+    expect(env["GROK_FEEDBACK_ENABLED"]).toBe("0");
     expect(env["GROK_CLAUDE_RULES_ENABLED"]).toBeUndefined();
     expect(vendor("grok").identity.instructionFiles).toEqual(["~/.claude/CLAUDE.md"]);
   });

@@ -273,6 +273,17 @@ Usage:
                                         \`erase … --json | jq\` reads a document
                                         and \`2>&1 | jq\` does not. Keep the two
                                         streams apart.
+  ohmyagi deploy plan <agent-dir> --subject <id> --target <file> [--json]
+                                        What deploying this agent to the machine
+                                        in <file> (ssh, gcp or aws; JSON, no
+                                        secrets in it) would do, before anything
+                                        is done: what goes where on the
+                                        encrypted volume, what is made there,
+                                        what stays here, D-100's four conditions
+                                        for that provider, and every command it
+                                        would run. Reads sizes from disk; runs
+                                        nothing, writes nothing, sends nothing.
+                                        Exit 1 when apply would refuse.
   ohmyagi guard install [<dir>]         Write the pre-commit and pre-push hooks
                                         into <dir>. \`new\` already did this for
                                         the repository it made; a fresh clone
@@ -364,13 +375,15 @@ Usage:
   ohmyagi triggers schedule <dir> --subject <id> [--every <5m>]
                                         Print a systemd timer and a cron line
                                         that call tick. Installs nothing.
-  ohmyagi web <dir> --subject <id> [--port <n>] [--host <addr>] [--name <host,…>] [--https] [--key-file <path>]
+  ohmyagi web <dir> --subject <id> [--port <n>] [--host <addr>] [--name <host,…>] [--https] [--key-file <path>] [--qr]
                                         A page for one agent in your browser:
                                         what it may do, what waits for your
                                         yes or no, a chat, and the brake. Every
                                         button runs a command; level 3, consent,
                                         releasing the brake and erase stay in
                                         the terminal. Loopback, with a link key.
+                                        --qr prints the link as a code for the
+                                        phone app (it holds the key).
                                         On a tailnet address it also answers to
                                         this machine's tailnet names; --name
                                         adds others. --https: behind
@@ -604,4 +617,8 @@ that a group SIGTERM killed.
 
 Not built yet (see .scrum/backlog.md):
   ohmyagi run <name>          Act on its own, on a trigger it chose  [S5.3]
+  ohmyagi deploy apply        Do what the plan says, after a phrase typed at a terminal  [S13.2–S13.4]
+  ohmyagi deploy status       What runs there                                             [S13.5]
+  ohmyagi deploy update       A newer binary or agent onto it                             [S13.5]
+  ohmyagi deploy destroy      The machine and its disk gone, and the provider asked again [S13.5]
 `;

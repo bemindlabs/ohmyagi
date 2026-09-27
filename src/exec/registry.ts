@@ -680,14 +680,26 @@ export const GROK_GRANT: GrantSpec = {
  * CLI reads Claude Code's and Cursor's settings on purpose, and on the owner's
  * home that put five Claude hooks — a SessionStart hook injecting another
  * persona among them — and seven MCP servers from `~/.claude.json` into every
- * grok turn, level 1 included. With these switches `grok inspect` lists every
- * one of them disabled (2026-09-26, 1.0.40, no model call). The `rules`
+ * grok turn, level 1 included. With these switches the compat surfaces read
+ * `enabled: false (env)`; `grok inspect` still *lists* what it discovered, so
+ * it is not the evidence. The evidence is a run (2026-09-27, 1.0.40, the
+ * owner's home, a model id that does not exist so nothing reaches xAI, debug
+ * log): without the switches the SessionStart hook ran (1) and seven MCP
+ * servers were spawned and handshaken (7); with them, 0 and 0. The `rules`
  * surface stays on: it is how this vendor reads `~/.claude/CLAUDE.md`, the
  * instruction file {@link IdentityChannel} names.
  *
- * Not reached by any switch: hooks shipped inside Claude *plugins*
- * (`~/.claude/plugins`). `grok inspect` still lists them enabled, and the only
- * off switch is `[plugins] disabled` in a config file om-agi does not own.
+ * Claude *plugins* (`~/.claude/plugins`) are discovered either way; in that run
+ * no plugin hook was dispatched at session start with or without the switches.
+ * Hooks a plugin registers for tool use were not reached (no tool ran), and the
+ * only off switch for plugins is `[plugins] disabled` in a config om-agi does
+ * not own.
+ *
+ * The last three switch off what xAI's remote config turns on after login for
+ * the owner's account — `telemetry=true (remote) trace_upload=true (remote)` in
+ * the same run. With them the CLI resolves all three from the environment and
+ * does not re-resolve after login. grok-local already writes them off in its
+ * own config; a cloud turn uses the owner's.
  */
 const GROK_HARDENING = {
   args: [
@@ -706,12 +718,16 @@ const GROK_HARDENING = {
     GROK_CURSOR_AGENTS_ENABLED: "0",
     GROK_CURSOR_SKILLS_ENABLED: "0",
     GROK_MANAGED_MCPS_ENABLED: "0",
+    GROK_TELEMETRY_ENABLED: "0",
+    GROK_TELEMETRY_TRACE_UPLOAD: "0",
+    GROK_FEEDBACK_ENABLED: "0",
   },
   why:
     "the MCP meta-tools a level-1 turn tried to reach a shell through, the interactive and " +
-    "vendor-hosted extras a headless turn has no use for (probed 2026-09-26 against 1.0.40), and " +
+    "vendor-hosted extras a headless turn has no use for (probed 2026-09-26 against 1.0.40), " +
     "the hooks, MCP servers, agents and skills this CLI borrows from Claude Code and Cursor " +
-    "settings (grok inspect, same date)",
+    "settings (0 run and 0 spawned with the switches, 1 and 7 without — 2026-09-27), and the " +
+    "telemetry, trace upload and feedback xAI's remote config turns on after login",
 } as const;
 
 const GROK: VendorSpec = {

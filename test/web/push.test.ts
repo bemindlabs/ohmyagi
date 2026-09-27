@@ -8,7 +8,9 @@ import {
   addSubscription,
   clearSubscriptions,
   forgetAll,
+  forgetEverything,
   HANDLE,
+  MAX_FILE_ENTRIES,
   MAX_SUBSCRIPTIONS,
   MIN_GAP_MS,
   notifyAll,
@@ -17,6 +19,7 @@ import {
   readSubscriptions,
   relayProblem,
   removeSubscription,
+  subscriptionsFor,
   WaitingWatch,
   type Fetcher,
 } from "../../src/web/push.ts";
@@ -34,6 +37,8 @@ async function dir(): Promise<string> {
 const H1 = "a".repeat(43);
 const H2 = "B-_".repeat(14) + "c";
 const NOW = new Date("2026-09-27T12:00:00Z");
+const K1 = "1111111111111111";
+const K2 = "2222222222222222";
 
 describe("where and what", () => {
   test("one directory per subject under the state root", () => {
@@ -61,12 +66,12 @@ describe("where and what", () => {
 describe("the subscriptions file", () => {
   test("added at 0600 in a 0700 directory, one per handle, the relay kept without a trailing slash", async () => {
     const d = await dir();
-    expect(await addSubscription(d, "https://push.example/", H1, NOW)).toEqual({ ok: true, count: 1 });
-    expect(await addSubscription(d, "https://push.example", H1, NOW)).toEqual({ ok: true, count: 1 });
-    expect(await addSubscription(d, "https://other.example", H2, NOW)).toEqual({ ok: true, count: 2 });
+    expect(await addSubscription(d, "https://push.example/", H1, K1, NOW)).toEqual({ ok: true, count: 1 });
+    expect(await addSubscription(d, "https://push.example", H1, K1, NOW)).toEqual({ ok: true, count: 1 });
+    expect(await addSubscription(d, "https://other.example", H2, K1, NOW)).toEqual({ ok: true, count: 2 });
     expect(await readSubscriptions(d)).toEqual([
-      { relay: "https://push.example", handle: H1, added: NOW.toISOString() },
-      { relay: "https://other.example", handle: H2, added: NOW.toISOString() },
+      { relay: "https://push.example", handle: H1, added: NOW.toISOString(), key: K1 },
+      { relay: "https://other.example", handle: H2, added: NOW.toISOString(), key: K1 },
     ]);
     expect((await stat(join(d, "subscriptions.json"))).mode & 0o777).toBe(0o600);
     expect((await stat(d)).mode & 0o777).toBe(0o700);
@@ -75,25 +80,25 @@ describe("the subscriptions file", () => {
 
   test("refused: a bad relay, a bad handle, one phone too many", async () => {
     const d = await dir();
-    expect(await addSubscription(d, "http://push.example", H1, NOW)).toEqual({ ok: false, reason: "the relay must be https (http only to a loopback address)" });
-    expect(await addSubscription(d, "https://push.example", "short", NOW)).toEqual({ ok: false, reason: "that is not a relay handle (43 base64url characters)" });
-    for (let i = 0; i < MAX_SUBSCRIPTIONS; i++) await addSubscription(d, "https://push.example", String(i).padStart(43, "x"), NOW);
-    expect(await addSubscription(d, "https://push.example", H1, NOW)).toEqual({ ok: false, reason: `${MAX_SUBSCRIPTIONS} phones already get notifications — unpair one first` });
+    expect(await addSubscription(d, "http://push.example", H1, K1, NOW)).toEqual({ ok: false, reason: "the relay must be https (http only to a loopback address)" });
+    expect(await addSubscription(d, "https://push.example", "short", K1, NOW)).toEqual({ ok: false, reason: "that is not a relay handle (43 base64url characters)" });
+    for (let i = 0; i < MAX_SUBSCRIPTIONS; i++) await addSubscription(d, "https://push.example", String(i).padStart(43, "x"), K1, NOW);
+    expect(await addSubscription(d, "https://push.example", H1, K1, NOW)).toEqual({ ok: false, reason: `${MAX_SUBSCRIPTIONS} phones already get notifications — unpair one first` });
   });
 
   test("removed one at a time, or all at once; a missing or broken file reads as none", async () => {
     const d = await dir();
     expect(await readSubscriptions(d)).toEqual([]);
-    expect(await clearSubscriptions(d)).toEqual([]);
-    await addSubscription(d, "https://push.example", H1, NOW);
-    await addSubscription(d, "https://push.example", H2, NOW);
+    expect(await clearSubscriptions(d, K1)).toEqual([]);
+    await addSubscription(d, "https://push.example", H1, K1, NOW);
+    await addSubscription(d, "https://push.example", H2, K1, NOW);
     expect((await removeSubscription(d, H1))?.handle).toBe(H1);
     expect(await removeSubscription(d, H1)).toBeUndefined();
-    expect((await clearSubscriptions(d)).map((s) => s.handle)).toEqual([H2]);
+    expect((await clearSubscriptions(d, K1)).map((s) => s.handle)).toEqual([H2]);
     expect(await readSubscriptions(d)).toEqual([]);
     await writeFile(join(d, "subscriptions.json"), "not json");
     expect(await readSubscriptions(d)).toEqual([]);
-    await writeFile(join(d, "subscriptions.json"), JSON.stringify({ subscriptions: [{ relay: "http://evil.example", handle: H1, added: "x" }, { relay: "https://ok.example", handle: "bad", added: "x" }, "junk"] }));
+    await writeFile(join(d, "subscriptions.json"), JSON.stringify({ subscriptions: [{ relay: "http://evil.example", handle: H1, added: "x", key: K1 }, { relay: "https://ok.example", handle: "bad", added: "x", key: K1 }, { relay: "https://ok.example", handle: H1, added: "x" }, "junk"] }));
     expect(await readSubscriptions(d)).toEqual([]);
     await writeFile(join(d, "subscriptions.json"), JSON.stringify({ subscriptions: "no" }));
     expect(await readSubscriptions(d)).toEqual([]);
@@ -116,9 +121,9 @@ describe("what is sent", () => {
     const { seen, fetcher } = recorder((url) => (url.includes("down") ? new Error("refused") : new Response(null, { status: url.includes("busy") ? 429 : 202 })));
     const result = await notifyAll(
       [
-        { relay: "https://push.example/base", handle: H1, added: "x" },
-        { relay: "https://down.example", handle: H2, added: "x" },
-        { relay: "https://busy.example", handle: H1, added: "x" },
+        { relay: "https://push.example/base", handle: H1, added: "x", key: K1 },
+        { relay: "https://down.example", handle: H2, added: "x", key: K1 },
+        { relay: "https://busy.example", handle: H1, added: "x", key: K1 },
       ],
       fetcher,
     );
@@ -129,8 +134,64 @@ describe("what is sent", () => {
 
   test("forgetting asks each relay to delete the handle, and a relay that fails does not stop the rest", async () => {
     const { seen, fetcher } = recorder((url) => (url.includes("down") ? new Error("refused") : new Response(null, { status: 204 })));
-    await forgetAll([{ relay: "https://down.example", handle: H1, added: "x" }, { relay: "https://push.example", handle: H2, added: "x" }], fetcher);
+    await forgetAll([{ relay: "https://down.example", handle: H1, added: "x", key: K1 }, { relay: "https://push.example", handle: H2, added: "x", key: K1 }], fetcher);
     expect(seen.map((s) => `${s.method} ${s.url}`)).toEqual([`DELETE https://down.example/v1/devices/${H1}`, `DELETE https://push.example/v1/devices/${H2}`]);
+  });
+});
+
+describe("subscriptions belong to the page key they were made under", () => {
+  test("a page tells, counts and drops only its own key's phones; another key's are untouched", async () => {
+    const d = await dir();
+    await addSubscription(d, "https://push.example", H1, K1, NOW);
+    await addSubscription(d, "https://push.example", H2, K2, NOW);
+    expect((await subscriptionsFor(d, K1)).map((s) => s.handle)).toEqual([H1]);
+    expect((await subscriptionsFor(d, K2)).map((s) => s.handle)).toEqual([H2]);
+    const asked: string[] = [];
+    const fetcher: Fetcher = async (url, init) => { asked.push(`${init.method} ${url}`); return new Response(null, { status: 204 }); };
+    expect(await forgetEverything(d, K1, fetcher)).toBe(1);
+    expect(asked).toEqual([`DELETE https://push.example/v1/devices/${H1}`]);
+    expect((await readSubscriptions(d)).map((s) => s.handle)).toEqual([H2]);
+  });
+
+  test("the cap is per key; past the file's cap the oldest other-key entries go first", async () => {
+    const d = await dir();
+    for (let i = 0; i < MAX_SUBSCRIPTIONS; i++) await addSubscription(d, "https://push.example", String(i).padStart(43, "y"), K2, NOW);
+    expect((await addSubscription(d, "https://push.example", H1, K1, NOW)).ok).toBe(true);
+    const filler = MAX_FILE_ENTRIES - MAX_SUBSCRIPTIONS - 1;
+    for (let i = 0; i < filler; i++) await addSubscription(d, "https://push.example", String(i).padStart(43, "o"), `${String(i % 10).repeat(15)}f`, new Date(NOW.getTime() + i));
+    expect((await readSubscriptions(d)).length).toBe(MAX_FILE_ENTRIES);
+    expect((await addSubscription(d, "https://push.example", H2, K1, new Date(NOW.getTime() + 999_999))).ok).toBe(true);
+    const after = await readSubscriptions(d);
+    expect(after.length).toBe(MAX_FILE_ENTRIES);
+    expect(after.some((s) => s.handle === String(0).padStart(43, "y"))).toBe(false); // an oldest K2 entry made room
+    expect(after.filter((s) => s.key === K1).map((s) => s.handle)).toEqual([H1, H2]);
+  });
+
+  test("a key print that is not one is refused", async () => {
+    expect(await addSubscription(await dir(), "https://push.example", H1, "nope", NOW)).toEqual({ ok: false, reason: "not a key print" });
+  });
+
+  test("writes take turns: four at once all land", async () => {
+    const d = await dir();
+    const handles = ["a", "b", "c", "d"].map((c) => c.repeat(43));
+    await Promise.all(handles.map((h) => addSubscription(d, "https://push.example", h, K1, NOW)));
+    expect((await readSubscriptions(d)).map((s) => s.handle).sort()).toEqual(handles);
+    await Promise.all([removeSubscription(d, handles[0]!), clearSubscriptions(d, K2), addSubscription(d, "https://push.example", H2, K1, NOW)]);
+    expect((await readSubscriptions(d)).length).toBe(4);
+  });
+});
+
+describe("forgetting everything", () => {
+  test("drops every subscription, asks each relay to forget, and says how many", async () => {
+    const d = await dir();
+    await addSubscription(d, "https://push.example", H1, K1, NOW);
+    await addSubscription(d, "https://other.example", H2, K1, NOW);
+    const asked: string[] = [];
+    const fetcher: Fetcher = async (url, init) => { asked.push(`${init.method} ${url}`); return new Response(null, { status: 204 }); };
+    expect(await forgetEverything(d, K1, fetcher)).toBe(2);
+    expect(await readSubscriptions(d)).toEqual([]);
+    expect(asked.sort()).toEqual([`DELETE https://other.example/v1/devices/${H2}`, `DELETE https://push.example/v1/devices/${H1}`]);
+    expect(await forgetEverything(d, K1, fetcher)).toBe(0);
   });
 });
 

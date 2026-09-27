@@ -3,6 +3,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { PAGE_HTML } from "../../src/web/page.ts";
 import { allowedHosts, handler, pairingLink, sameToken, startWeb, tailnetNames, TOKEN_HEADER, type KeyControl, type WebDeps } from "../../src/web/server.ts";
+import { keyPrint } from "../../src/web/key.ts";
 import { ago, excerpt, levelSentence, remoteForPage, triageChips, type AgentInfo, type SettingsState, type ViewState } from "../../src/web/view.ts";
 import type { Triage } from "../../src/decide/triage.ts";
 
@@ -866,15 +867,15 @@ describe("push (S14.3, D-130)", () => {
     const calls: string[] = [];
     let subs = 0;
     const push: NonNullable<WebDeps["push"]> = {
-      subscribe: async (relay, handle) => {
-        calls.push(`subscribe ${relay} ${handle}`);
+      subscribe: async (relay, handle, key) => {
+        calls.push(`subscribe ${relay} ${handle} ${key}`);
         if (relay.startsWith("http://evil")) return { ok: false, reason: "the relay must be https" };
         subs++;
         return { ok: true, count: subs };
       },
       unsubscribe: async (handle) => { calls.push(`unsubscribe ${handle}`); return handle === HANDLE; },
-      count: async () => subs,
-      clear: async () => { const n = subs; subs = 0; calls.push("clear"); return n; },
+      count: async (key) => { calls.push(`count ${key}`); return subs; },
+      clear: async (key) => { const n = subs; subs = 0; calls.push(`clear ${key}`); return n; },
     };
     return { push, calls };
   }
@@ -903,24 +904,56 @@ describe("push (S14.3, D-130)", () => {
     expect(await (await h(post("/api/push/unsubscribe", { handle: HANDLE }))).json()).toEqual({ ok: true, removed: true });
     expect(await (await h(post("/api/push/unsubscribe", { handle: "x".repeat(43) }))).json()).toEqual({ ok: true, removed: false });
     expect((await h(req("/api/push/subscribe"))).status).toBe(404);
-    expect(calls).toEqual([`subscribe https://relay.example ${HANDLE}`, `subscribe http://evil.example ${HANDLE}`, `unsubscribe ${HANDLE}`, `unsubscribe ${"x".repeat(43)}`]);
+    const P = keyPrint("tok");
+    expect(calls).toEqual([`subscribe https://relay.example ${HANDLE} ${P}`, `count ${P}`, `subscribe http://evil.example ${HANDLE} ${P}`, `unsubscribe ${HANDLE}`, `unsubscribe ${"x".repeat(43)}`]);
     expect(runs).toEqual([]);
   });
 
   test("changing the key drops every subscription (a phone unpaired is a phone not told)", async () => {
     const { deps } = fakeDeps();
     const { push, calls } = withPush();
-    await push.subscribe("https://relay.example", HANDLE);
-    await push.subscribe("https://relay.example", "k".repeat(43));
+    await push.subscribe("https://relay.example", HANDLE, keyPrint("tok"));
+    await push.subscribe("https://relay.example", "k".repeat(43), keyPrint("tok"));
     const keys: KeyControl = { rotate: async () => ({ ok: true, key: "c".repeat(64) }) };
     const res = await handler({ ...deps, push }, "tok", HOSTS, keys)(post("/api/pair/rotate", {}));
     expect(((await res.json()) as { unsubscribed: number }).unsubscribed).toBe(2);
-    expect(calls.at(-1)).toBe("clear");
+    // The old key's phones — not the new key's, of which there are none yet.
+    expect(calls.at(-1)).toBe(`clear ${keyPrint("tok")}`);
+  });
+
+  test("if the old key's phones cannot be dropped, the key has still changed and the tab is told so", async () => {
+    const { deps } = fakeDeps();
+    const { push } = withPush();
+    const broken = { ...push, clear: async () => { throw Object.assign(new Error("EACCES: permission denied, open '/home/someone/.local/state/om-agi/push/x'"), { code: "EACCES" }); } };
+    const keys: KeyControl = { rotate: async () => ({ ok: true, key: "d".repeat(64) }) };
+    const res = await handler({ ...deps, push: broken }, "tok", HOSTS, keys)(post("/api/pair/rotate", {}));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { token: string; unsubscribed: number; warning: string };
+    expect(body.token).toBe("d".repeat(64));
+    expect(body.unsubscribed).toBe(0);
+    expect(body.warning).toContain("(EACCES)");
+    expect(body.warning).not.toContain("/home/");
+  });
+
+  test("an error nobody caught is a bare JSON 500 — no stack, no path", async () => {
+    const { deps } = fakeDeps();
+    const server = startWeb({ ...deps, state: async () => { throw new Error("boom at /home/someone/secret-path"); } }, { port: 0 });
+    try {
+      const res = await fetch(`http://127.0.0.1:${new URL(server.url).port}/api/state`, { headers: { [TOKEN_HEADER]: server.token } });
+      expect(res.status).toBe(500);
+      expect(res.headers.get("content-type")).toContain("application/json");
+      const text = await res.text();
+      expect(text).not.toContain("/home/");
+      expect(text).not.toContain("boom");
+    } finally {
+      await server.stop(true);
+    }
   });
 
   test("the page shows how many phones are told, and says what the relay learns", () => {
     expect(PAGE_HTML).toContain('api("/api/push")');
     expect(PAGE_HTML).toContain("which learns when, never what");
+    expect(PAGE_HTML).toContain("toast(r.warning ? r.warning :");
   });
 });
 

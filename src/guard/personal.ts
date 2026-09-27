@@ -43,6 +43,19 @@ export type PersonalDir =
   | { readonly ok: false; readonly path: string; readonly reason: string };
 
 /**
+ * `$XDG_DATA_HOME/om-agi/<subject>/personal/` — the address, and nothing asked of it.
+ *
+ * Pure, so the data map (`src/erase/map.ts`) can name it for a machine that is
+ * not this one: `ohmyagi deploy plan` evaluates every resolver with the
+ * remote's roots, and walking *this* filesystem for a `.git` above a path that
+ * only exists there would answer a question about the wrong machine.
+ * {@link personalDir} is the half that checks.
+ */
+export function personalPath(env: PersonalEnv, subject: SubjectId): string {
+  return join(dataRoot(env.home, env.env), subject, "personal");
+}
+
+/**
  * `$XDG_DATA_HOME/om-agi/<subject>/personal/`, if that is outside git.
  *
  * Resolves and checks; writes nothing. {@link ensurePersonalDir} is the half
@@ -50,7 +63,7 @@ export type PersonalDir =
  * status`, `doctor` later — cannot create one as a side effect of asking.
  */
 export async function personalDir(env: PersonalEnv, subject: SubjectId): Promise<PersonalDir> {
-  const path = join(dataRoot(env.home, env.env), subject, "personal");
+  const path = personalPath(env, subject);
 
   const repo = await enclosingGitRepo(path);
   if (repo !== undefined) {

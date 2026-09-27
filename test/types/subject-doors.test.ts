@@ -135,7 +135,14 @@ const MODULES: Readonly<Record<string, { doors: readonly string[]; downstream: R
     downstream: { resolveSoulDir: "finds which directory holds a soul; reads no subject's data" },
   },
   "src/guard/personal.ts": {
-    doors: ["personalDir", "ensurePersonalDir"],
+    // `personalPath` is the address alone (S13.1): the data map names the
+    // personal directory with it for this machine and for a remote one.
+    doors: ["personalDir", "ensurePersonalDir", "personalPath"],
+    downstream: {},
+  },
+  // The data map (S7.1, S13.1): every place one subject's data lives, resolved.
+  "src/erase/map.ts": {
+    doors: ["subjectTrees", "dataMap"],
     downstream: {},
   },
 };

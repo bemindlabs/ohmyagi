@@ -124,6 +124,17 @@ describe("manifestTargets", () => {
 // ---------------------------------------------------------------------------
 
 describe("planBlocks", () => {
+  test("a link is refused, never followed or renamed over (review 2026-09-27)", async () => {
+    const root = await sandbox();
+    const real = join(root, "real.md");
+    await withBlock(real, SUBJECT, "# notes\n");
+    const { symlink } = await import("node:fs/promises");
+    await symlink(real, join(root, "link.md"));
+    const [plan] = await planBlocks([join(root, "link.md")], SUBJECT);
+    expect(plan!.outcome).toBe("refused");
+    expect(plan!.reason).toContain("a symbolic link");
+  });
+
   test("this subject's block is planned out, and the human's text is what is left", async () => {
     const root = await sandbox();
     const path = join(root, "CLAUDE.md");

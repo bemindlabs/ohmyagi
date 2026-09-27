@@ -84,7 +84,8 @@ describe("when a check may run by itself", () => {
     expect(autoCheckDue({ ...base, env: { CI: "true" } })).toBe(false);
     expect(autoCheckDue({ ...base, interactive: false })).toBe(false);
     expect(autoCheckDue({ ...base, argv: ["turn", "--json"] })).toBe(false);
-    for (const verb of ["observe", "update", "a2a", "web", undefined]) expect(autoCheckDue({ ...base, verb })).toBe(false);
+    // `deploy`: its plan says no request leaves the machine while it runs (S13.1).
+    for (const verb of ["observe", "update", "a2a", "web", "deploy", undefined]) expect(autoCheckDue({ ...base, verb })).toBe(false);
     expect(autoCheckDue({ ...base, last: { at: "2026-09-24T01:00:00Z", latest: null } })).toBe(false);
     expect(autoCheckDue({ ...base, last: { at: "2026-09-23T11:00:00Z", latest: null } })).toBe(true);
     expect(autoCheckDue({ ...base, last: { at: "nonsense", latest: null } })).toBe(true);

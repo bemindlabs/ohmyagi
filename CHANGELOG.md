@@ -2,6 +2,67 @@
 
 ## Unreleased
 
+## 0.8.2 — 2026-09-27
+
+Fixes reported on 0.8.1 and found by an independent review of its engine; the first E13 command, `deploy plan`.
+
+### Fixed — reported on 0.8.1 by agent-fern
+- **`ohmyagi backends` crashed** with `unknown vendor "claude-local"` since the local backends arrived (0.8.0): the
+  table asked the vendor registry about every backend, and a local one is not a vendor — it runs one. Its row now
+  names the vendor it runs and says its identity file is in a home of its own under the state root, never yours.
+  The command had no end-to-end test; it has one now.
+- **`ohmyagi web --help` lists `--qr`.**
+- **The test suite no longer writes into this machine's Qdrant.** Two `turn` test files ran the CLI without
+  `OM_AGI_QDRANT_URL`, leaving a synthetic `omagi__example` collection on the real store at every run.
+
+### `ohmyagi deploy plan` — what a deploy would do, before anything is done (S13.1, E13, D-100)
+- **A target file and a dry run.** `ohmyagi deploy plan <agent-dir> --subject <id> --target <file> [--json]`
+  reads a JSON target — `ssh` (a VPS you rent), `gcp` or `aws`, with `arch` and an optional `home` (the machine
+  on your tailnet where the local model is) — and prints what would go where: the binary for that CPU, the
+  agent's repository as a git bundle, and each place of the subject's data with its size read off this disk and
+  its path there, all of it on an encrypted volume. What is made there rather than copied (`.dagi/`, the vector
+  collection), what stays here and why (the apply backups, level-3 confirmations, run records by pid, trigger
+  times keyed by this machine's path), and what is not in the data map and does not go (vendor logins — S13.7;
+  local models — S13.6; the brake). Then the services it would install (the page on 127.0.0.1, reaching the
+  tailnet only through `tailscale serve`; the triggers timer), D-100's four conditions with how this provider
+  can meet each and which story it waits on, and every `ssh`/`gcloud`/`aws` command line `apply` would run —
+  keys on stdin, never in an argv. It ends with what it does not check, like `doctor`.
+- **It runs nothing, writes nothing, sends nothing**, and skips the daily update check. Measured, not
+  claimed: the plan is made in a test with spawn and fetch taken away and the tree counted before and after;
+  the CLI runs under a PATH of traps for `ssh`, `scp`, `gcloud`, `aws`, `git` and `tar`; and the import closure
+  of `src/deploy/` holds no process or network API — not even the spawn chokepoint.
+- **The target file is strict.** Unknown fields are refused at every level, the provider block must match the
+  provider, hosts that `ssh` would read as an option are refused, the arch must agree with the machine type,
+  and `home` must be a tailnet name or address. A field named like a secret is refused as one, and the file
+  goes through the repo guard's scanner; no value is quoted back once anything secret-shaped is found.
+- `apply`, `status`, `update` and `destroy` are named and answer "not built yet" (S13.2–S13.5) with exit 2.
+- **The data map is one list now** (`src/erase/map.ts`): erase removes what it names, deploy moves what it
+  names, and each entry says how it travels. The remote's paths are erase's own resolvers evaluated with the
+  remote's roots, which is what D-100 #2 needs. Erase's output is unchanged.
+
+### Found while reviewing the app's and the relay's pull requests, and by an independent review of this engine (D-131)
+- **Push subscriptions belong to the page key they were made under.** A page tells only the phones paired with the
+  key it holds: after a key change of any kind — "Unpair every phone", a deleted key file, a page that makes a new
+  key each start — the old key's phones are told nothing more, and a second page run for the same subject neither
+  tells nor drops the first page's phones (the earlier wipe at a key-less start did drop them). Changing the key from
+  the page drops the old key's subscriptions and asks the relays to forget them; if that fails, the key has still
+  changed and the tab is told so instead of being locked out. Writes to the subscriptions file take turns.
+- **An uncaught error on the page is a bare JSON 500** — no stack, no path.
+- **Cloud grok turns switch off xAI's telemetry, trace upload and feedback.** After login, the owner's account got
+  `telemetry=true` and `trace_upload=true` from xAI's remote config; `GROK_TELEMETRY_ENABLED=0`,
+  `GROK_TELEMETRY_TRACE_UPLOAD=0` and `GROK_FEEDBACK_ENABLED=0` now ride every grok turn and win over it. The D-119
+  switches were re-measured at run time rather than from `grok inspect` (which lists what it found either way):
+  with them, 0 hooks ran and 0 MCP servers were spawned at session start; without them, 1 and 7.
+- **`doctor` no longer passes a route that parsers read differently.** An `api_base` with `@` or `\\` in its
+  authority, anything outside printable ASCII, or one that cannot be parsed is now read as leaving (a Python client
+  took `http://127.0.0.1\\@api.example.com` to api.example.com); an ollama route with no `api_base` is "unknown",
+  since LiteLLM takes that address from its own environment. Text from LiteLLM's answer is printed without control
+  characters.
+- **`erase` follows a linked instruction file to the file it points to.** kimi's home `AGENTS.md` as a link into
+  dotfiles was replaced by an empty file while the block stayed in dotfiles, and the certificate said erased; now the
+  link is resolved, a file two vendors reach is stripped once, and a link handed to the stripper is refused. The
+  certificate also says a push relay keeps a phone's registration until it is told — unpair first.
+
 ## 0.8.1 — 2026-09-27
 
 The engine side of the companion app (E14, D-125): pairing, unpairing and push. Plus two checks that close gaps

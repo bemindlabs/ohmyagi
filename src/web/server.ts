@@ -27,7 +27,7 @@ import type { AgentInfo, PrivacyState, SettingsState, ViewState } from "./view.t
 import { isLocalBackend } from "./turninfo.ts";
 import { PAGE_HTML } from "./page.ts";
 import { encodeQr, qrPath } from "./qr.ts";
-import { newKey } from "./key.ts";
+import { keyPrint, newKey } from "./key.ts";
 import { timingSafeEqual } from "node:crypto";
 
 export const TOKEN_HEADER = "x-ohmyagi-token";
@@ -64,11 +64,12 @@ export interface WebDeps {
    * it; the routes then answer 404.
    */
   readonly push?: {
-    readonly subscribe: (relay: string, handle: string) => Promise<{ readonly ok: true; readonly count: number } | { readonly ok: false; readonly reason: string }>;
+    /** `key` is the {@link keyPrint} of the key the request came with: the subscription belongs to it. */
+    readonly subscribe: (relay: string, handle: string, key: string) => Promise<{ readonly ok: true; readonly count: number } | { readonly ok: false; readonly reason: string }>;
     readonly unsubscribe: (handle: string) => Promise<boolean>;
-    readonly count: () => Promise<number>;
-    /** Every subscription dropped, each relay asked to forget; how many there were. */
-    readonly clear: () => Promise<number>;
+    readonly count: (key: string) => Promise<number>;
+    /** The subscriptions made under this key dropped, each relay asked to forget; how many there were. */
+    readonly clear: (key: string) => Promise<number>;
   };
   /** The agent directory and subject every action is about. */
   readonly dir: string;
@@ -194,23 +195,32 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[], 
     if (req.method === "POST" && url.pathname === "/api/pair/rotate") {
       if (keys === undefined) return json({ error: "this page cannot change its key" }, 404);
       const body = (await req.json().catch(() => ({}))) as { origin?: unknown };
+      const oldPrint = keyPrint(token);
       const changed = await keys.rotate();
       if (!changed.ok) return json({ error: `the key was not changed: ${changed.reason}` }, 500);
-      // A phone unpaired is a phone no longer told anything (D-130).
-      const unsubscribed = deps.push === undefined ? 0 : await deps.push.clear();
+      // A phone unpaired is a phone no longer told anything (D-130). The key has changed whatever happens here, so
+      // a failure is said, not thrown: the tab keeps its new key, and the old key's phones are inert anyway —
+      // only subscriptions made under the key a page holds are ever told.
+      let unsubscribed = 0;
+      let warning: string | undefined;
+      try {
+        unsubscribed = deps.push === undefined ? 0 : await deps.push.clear(oldPrint);
+      } catch (error) {
+        warning = `the key changed, but the phones paired with the old key could not be dropped here (${(error as NodeJS.ErrnoException).code ?? "error"}); they are no longer told anything`;
+      }
       const link = typeof body.origin === "string" ? pairingLink(body.origin, changed.key, hosts) : undefined;
-      return json({ ok: true, token: changed.key, unsubscribed, ...(link === undefined ? {} : { link }) });
+      return json({ ok: true, token: changed.key, unsubscribed, ...(warning === undefined ? {} : { warning }), ...(link === undefined ? {} : { link }) });
     }
     if (url.pathname === "/api/push" || url.pathname === "/api/push/subscribe" || url.pathname === "/api/push/unsubscribe") {
       if (deps.push === undefined) return json({ error: "this page does not send notifications" }, 404);
-      if (req.method === "GET" && url.pathname === "/api/push") return json({ count: await deps.push.count() });
+      if (req.method === "GET" && url.pathname === "/api/push") return json({ count: await deps.push.count(keyPrint(token)) });
       if (req.method === "POST") {
         const body = (await req.json().catch(() => ({}))) as { relay?: unknown; handle?: unknown };
         if (typeof body.handle !== "string") return json({ error: "a handle is required" }, 400);
         if (url.pathname === "/api/push/unsubscribe") return json({ ok: true, removed: await deps.push.unsubscribe(body.handle) });
         if (url.pathname === "/api/push/subscribe") {
           if (typeof body.relay !== "string") return json({ error: "a relay is required" }, 400);
-          const added = await deps.push.subscribe(body.relay, body.handle);
+          const added = await deps.push.subscribe(body.relay, body.handle, keyPrint(token));
           return added.ok ? json({ ok: true, count: added.count }) : json({ error: added.reason }, 400);
         }
       }
@@ -530,7 +540,14 @@ export function startWeb(
       return { ok: true, key };
     },
   };
-  const server = Bun.serve({ hostname, port: options.port, fetch: (req) => handler(deps, token, hosts, keys)(req) });
+  const server = Bun.serve({
+    hostname,
+    port: options.port,
+    fetch: (req) => handler(deps, token, hosts, keys)(req),
+    // An uncaught error is a bare JSON 500: no stack, no path, nothing a page or a phone could be shown.
+    error: () => json({ error: "something went wrong on this computer — the terminal running ohmyagi web may say more" }, 500),
+    development: false,
+  });
   const port = server.port ?? options.port;
   hosts = allowedHosts(hostname, port, options.names ?? []);
   const shown = options.names?.[0] ?? hostname;

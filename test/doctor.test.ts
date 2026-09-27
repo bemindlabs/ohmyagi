@@ -30,6 +30,7 @@ import {
   parseQdrantCollections,
   parseModelInfo,
   parseVersion,
+  printable,
   renderDoctor,
   routePlace,
   runDoctor,
@@ -1087,11 +1088,19 @@ describe("D-124 — where LiteLLM sends local-coder", () => {
     expect(at("http://[fd00::5]:8000")).toBe("network");
     expect(at("http://vllm:8000")).toBe("unknown");
     expect(at("http://gpu.internal:8000")).toBe("unknown");
-    expect(at("not a url")).toBe("unknown");
+    expect(at("not a url")).toBe("outside"); // unreadable is never a pass
+    // Parsers disagree on these (httpx takes \\ as user-info; WHATWG as /): read as leaving (review 2026-09-27).
+    expect(at("http://127.0.0.1\\@api.example.com/v1")).toBe("outside");
+    expect(at("http://127.0.0.1@api.example.com/v1")).toBe("outside");
+    expect(at("http://u:p@127.0.0.1:10410/v1")).toBe("outside");
+    expect(at("https://api.example.com:\uff14\uff14\uff13/v1")).toBe("outside"); // full-width port digits
+    expect(at("http://evil.example.com^/v1")).toBe("outside");
+    expect(at("http://127.0.0.1:10410/v1\\x")).toBe("outside");
     expect(at("https://api.example.com/v1")).toBe("outside");
     expect(at("http://8.8.8.8/")).toBe("outside");
     expect(at("http://[2001:db8::1]/")).toBe("outside");
-    expect(at(undefined, "ollama")).toBe("here");
+    // LiteLLM takes ollama's address from its own OLLAMA_API_BASE, which /model/info does not show.
+    expect(at(undefined, "ollama")).toBe("unknown");
     expect(routePlace({ group: "local-coder", provider: "openai", apiBase: undefined }, own)).toEqual({ place: "outside", host: "openai's own servers (no api_base)" });
     expect(routePlace({ group: "local-coder", provider: "", apiBase: undefined }, own).host).toBe("an unnamed provider's own servers (no api_base)");
   });
@@ -1104,6 +1113,16 @@ describe("D-124 — where LiteLLM sends local-coder", () => {
     expect(await warnOf(info(["local-coder", "hosted_vllm/x", "http://192.168.1.5:1"]))).toEqual([["warn", "local-action:route:0"]]);
     const problem: DoctorEnv = { ...(await machine()), liteLLM: { url: "http://127.0.0.1:10400", problem: "holds only LITELLM_MASTER_KEY" } };
     expect((await checkLocalAction(problem))!.findings).toEqual([{ id: "local-action:key", severity: "warn", label: "key", detail: "holds only LITELLM_MASTER_KEY" }]);
+  });
+
+  test("nothing from LiteLLM's answer reaches the terminal as a control sequence", async () => {
+    const { env } = await withRoutes(info(["local-coder", "openai\u001b[8m/gpt", "https://api.example.com/v1"], ["gpt\u001b[2J", "openai/gpt"]));
+    const report = await runDoctor(env);
+    const text = renderDoctor(report).join("\n");
+    expect(text).not.toContain("\u001b");
+    expect(text).toContain("openai?[8m");
+    expect(printable("a\u0007b\u009bc")).toBe("a?b?c");
+    expect(printable("x".repeat(500)).length).toBe(200);
   });
 
   test("a key that can use more than local-coder is pointed out", async () => {

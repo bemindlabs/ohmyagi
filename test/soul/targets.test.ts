@@ -74,6 +74,32 @@ describe("expandPath", () => {
     expect(shared.alsoReads).toEqual([{ path: join(HOME, ".kimi-code/AGENTS.md"), by: "kimi" }]);
   });
 
+  test("a linked home file is the file it points to, and one that is another vendor's target is not read twice", async () => {
+    const { mkdtemp, mkdir, symlink, writeFile, rm, realpath } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const home = await realpath(await mkdtemp(join(tmpdir(), "om-targets-link-")));
+    try {
+      await mkdir(join(home, ".kimi-code"));
+      await mkdir(join(home, "dotfiles"));
+      await writeFile(join(home, "dotfiles", "AGENTS.md"), "x\n");
+      await symlink(join(home, "dotfiles", "AGENTS.md"), join(home, ".kimi-code", "AGENTS.md"));
+      const linked = (await resolveTargets(["kimi"], { home, cwd: home, env: {}, which: async () => true }))[0]!;
+      if (linked.kind !== "file") throw new Error("expected a file target");
+      expect(linked.alsoReads).toEqual([{ path: join(home, "dotfiles", "AGENTS.md"), by: "kimi" }]);
+
+      await rm(join(home, ".kimi-code", "AGENTS.md"));
+      await mkdir(join(home, ".claude"));
+      await writeFile(join(home, ".claude", "CLAUDE.md"), "y\n");
+      await symlink(join(home, ".claude", "CLAUDE.md"), join(home, ".kimi-code", "AGENTS.md"));
+      const both = await resolveTargets(["claude", "kimi"], { home, cwd: home, env: {}, which: async () => true });
+      const kimi = both.find((t) => t.kind === "file" && t.backend === "kimi");
+      if (kimi === undefined || kimi.kind !== "file") throw new Error("expected kimi's target");
+      expect(kimi.alsoReads).toEqual([]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   test("kimi: written in the project, and its home AGENTS.md read as well — never written", () => {
     const [written, also] = vendor("kimi").identity.instructionFiles;
     expect(written).toBe("./AGENTS.md");

@@ -326,6 +326,9 @@ export const NOT_SEARCHED: readonly string[] = [
     "database are never searched, because a zero there would need a rewrite to become true and " +
     "om-agi does not rewrite history (see GIT_UNDELETABLE).",
   "freed disk blocks, and any snapshot or backup another program on this machine has taken.",
+  "a push relay (D-130). The handles on this machine go, but a relay keeps a phone's registration " +
+    "until it is told to forget it or its retention drops it — press \"Unpair every phone\" on " +
+    "the agent's page before erasing, and the relays are told.",
 ];
 
 /**

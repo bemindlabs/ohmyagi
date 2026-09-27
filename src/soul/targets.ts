@@ -121,6 +121,15 @@ async function readersOf(path: string, context: TargetContext): Promise<string[]
   return readers;
 }
 
+async function alsoReadsOf(spec: VendorSpec, files: readonly string[], target: string, context: TargetContext): Promise<AlsoRead[]> {
+  const out: AlsoRead[] = [];
+  for (const file of files) {
+    const path = await resolveReal(expandPath(file, context));
+    if (path !== target && !out.some((known) => known.path === path)) out.push({ path, by: spec.id });
+  }
+  return out;
+}
+
 async function fileTargetFor(spec: VendorSpec, context: TargetContext): Promise<FileTarget> {
   const [declaredAs, ...rest] = spec.identity.instructionFiles;
   const wanted = expandPath(declaredAs!, context);
@@ -135,7 +144,9 @@ async function fileTargetFor(spec: VendorSpec, context: TargetContext): Promise<
     declaredAs: declaredAs!,
     strength: spec.identity.strength,
     alsoReadBy: readers.filter((id) => id !== spec.id),
-    alsoReads: rest.map((file) => ({ path: expandPath(file, context), by: spec.id })),
+    // Resolved like the target itself: a link here (kimi's home AGENTS.md pointing into dotfiles, say) is the file
+    // it points to — what `worn` reads and `erase` strips — and one that lands on the target is not a second file.
+    alsoReads: await alsoReadsOf(spec, rest, path, context),
     reachable: await context.which(spec.binary),
     ...(path === wanted ? {} : { symlinkedFrom: wanted }),
   };
@@ -184,5 +195,7 @@ export async function resolveTargets(
     targets.push(target);
   }
 
-  return targets;
+  // A file one vendor also reads may be another's target (kimi's home AGENTS.md linked to ~/.claude/CLAUDE.md):
+  // it is read and stripped once, as that target.
+  return targets.map((t) => (t.kind === "file" ? { ...t, alsoReads: t.alsoReads.filter((extra) => !byPath.has(extra.path)) } : t));
 }

@@ -127,6 +127,12 @@ const WRITE_SIDE: ReadonlyMap<string, string> = new Map([
   ["UNDELETABLE", "constant — the sentences `ledger forget` and `erase` print about what deletion cannot reach"],
   ["VENDORS_HOLD", "constant — one of those sentences, said again before a cloud send (S7.2 AC4)"],
   ["append", "write — one line in, the file's path out; A2A records every message before it is delivered or sent (S8.2 AC5, D-063)"],
+  [
+    "ledgerDir",
+    "path — a `join` over the state root that opens nothing. The data map (src/erase/map.ts) names " +
+      "the ledger's directory with it so erase and `deploy plan` (S13.1) agree on where it is; deploy " +
+      "plan stats its size and never opens a line. Reading what is in it is still a READERS verb",
+  ],
 ]);
 
 /** A file allowed to read the ledger, the verb that allows it, and why. */

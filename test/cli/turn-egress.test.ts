@@ -41,6 +41,8 @@ async function setup() {
     PATH: `${bin}:${await barePath(home)}`,
     XDG_STATE_HOME: join(home, "state"),
     XDG_DATA_HOME: join(home, "data"),
+    // Nothing listens on port 9: no test turn writes a collection into this machine's real Qdrant.
+    OM_AGI_QDRANT_URL: "http://127.0.0.1:9",
     OLLAMA_HOST: ollama.url,
   };
   const run = async (args: readonly string[]) => {
@@ -125,7 +127,7 @@ describe("S8.3 — personal data does not leave through a turn", () => {
     try {
       const child = Bun.spawn([BUN, "run", BIN, ...turn("token t5 — how do I close the month?")], {
         cwd: ROOT,
-        env: { HOME: home, PATH: `${join(home, "bin")}:${await barePath(home)}`, XDG_STATE_HOME: join(home, "state"), XDG_DATA_HOME: join(home, "data"), OLLAMA_HOST: `http://127.0.0.1:${judge.port}`, OM_AGI_EGRESS_JUDGE: "stub" },
+        env: { HOME: home, PATH: `${join(home, "bin")}:${await barePath(home)}`, XDG_STATE_HOME: join(home, "state"), XDG_DATA_HOME: join(home, "data"), OM_AGI_QDRANT_URL: "http://127.0.0.1:9", OLLAMA_HOST: `http://127.0.0.1:${judge.port}`, OM_AGI_EGRESS_JUDGE: "stub" },
         stdout: "pipe",
         stderr: "pipe",
       });

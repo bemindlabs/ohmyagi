@@ -413,6 +413,10 @@ describe("C. behaviour — every command, watched by a git that writes down its 
     ).toBe(0);
     await run(["proposal", "list", soulDir, "--subject", SUBJECT]);
 
+    // Where `deploy plan` is told the agent would go: a documentation address.
+    const deployTarget = join(workspace, "target.json");
+    await Bun.write(deployTarget, JSON.stringify({ name: "vps-1", provider: "ssh", ssh: { host: "203.0.113.10", user: "deploy" } }));
+
     // Every command that takes an agent directory, run for real.
     const exercised = [
       ["version"],
@@ -498,6 +502,10 @@ describe("C. behaviour — every command, watched by a git that writes down its 
       // S7.2's. The dry run and the real one both, because the deleting path
       // is the one that reads git (`rev-list --count`, on the verb allowlist)
       // and the one somebody would most want to be sure never pushed.
+      // S13.1's. Its output is a list of `git bundle` and `ssh` command lines,
+      // so it is exactly the command that must be seen to run none of them —
+      // and it goes before `erase`, while the repository still holds its soul.
+      ["deploy", "plan", agent, "--subject", SUBJECT, "--target", deployTarget],
       ["erase", SUBJECT, "--agent", agent, "--by", "the no-push test"],
       ["erase", SUBJECT, "--agent", agent, "--by", "the no-push test", "--yes"],
       ["new", "second", "--subject", SUBJECT],
@@ -576,6 +584,8 @@ describe("C. behaviour — every command, watched by a git that writes down its 
       "eval",
       "basis",
       "update",
+      // S13.1's: the plan only, which names `git bundle` and runs no git.
+      "deploy",
       // S5.2's. Run in sequence above rather than in the flat list, because
       // `decide` needs the id `new` printed.
       "proposal",

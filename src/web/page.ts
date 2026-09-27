@@ -1757,7 +1757,7 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
     $("rotateKey").disabled = false;
     if (!r.ok) { toast(r.error || "The key was not changed."); return; }
     token = r.token; try { sessionStorage.setItem("ohmyagi-t", token); } catch {}
-    toast("Every phone is unpaired" + (r.unsubscribed > 0 ? " and no longer notified" : "") + ". Pair again with the new code."); loadSettings();
+    toast(r.warning ? r.warning : "Every phone is unpaired" + (r.unsubscribed > 0 ? " and no longer notified" : "") + ". Pair again with the new code."); loadSettings();
     if (!$("pairBox").hidden) $("showPair").click();
   };
   $("showPair").onclick = async () => {

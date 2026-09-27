@@ -54,7 +54,6 @@
 
 import { rmdir, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { runsDirFor } from "../decide/runs.ts";
 import { historyFacts, historySentence, type HistoryFacts } from "../guard/history.ts";
 import { personalDir } from "../guard/personal.ts";
 import {
@@ -72,12 +71,6 @@ import {
   type Census,
   type PurgePlan,
 } from "../observer/store.ts";
-import { confirmationsDirFor } from "../decide/confirm.ts";
-import { triggersDirFor } from "../decide/triggers.ts";
-import { a2aDirFor } from "../a2a/peers.ts";
-import { chatDirFor } from "../connectors/users.ts";
-import { pushDirFor } from "../web/push-dir.ts";
-import { basisDirFor } from "../consent/basis.ts";
 import { collectionFor } from "../memory/collection.ts";
 import { ragDirFor, readRagMarker, type RagMarker } from "../memory/marker.ts";
 import {
@@ -88,6 +81,7 @@ import {
 import { vectorEndpoints } from "../memory/endpoints.ts";
 import { dataRoot, stateRoot } from "../state.ts";
 import type { SubjectId } from "../types.ts";
+import { subjectTrees } from "./map.ts";
 import { notBuiltPlaces, type PlaceId } from "./places.ts";
 import {
   searchScopes,
@@ -99,11 +93,9 @@ import {
 import {
   backupTree,
   commitBlocks,
-  dagiTree,
   manifestTargets,
   personFile,
   planBlocks,
-  soulTree,
   type BlockRemoval,
   type BlockRemovalResult,
 } from "./soul.ts";
@@ -248,7 +240,15 @@ export async function planErase(
   const notes: string[] = [];
 
   // --- the trees, and the one file ---------------------------------------
-  const wanted: { place: PlaceId; label: string; dir: string }[] = [];
+  // The trees are the data map's (`map.ts`), in its order: `ohmyagi deploy
+  // plan` reads the same list, so a place added there is a place both erase
+  // and deploy know about, rather than one of them.
+  //
+  // Why the run records, the trigger times and the rest are under `ledger`
+  // rather than a sixth id, and why a record left behind is not a politeness
+  // question: `verifyErase` searches the whole state root for the identifier
+  // afterwards, so anything the list forgot would turn every erase into
+  // `erased-with-remainder` — a true report of a mess this file made.
   const files: string[] = [];
 
   if (agentDir === null) {
@@ -256,76 +256,28 @@ export async function planErase(
       "--no-agent: no repository was examined. soul/, .dagi/ and the working tree are recorded " +
         "on the certificate as not examined, at the requester's word.",
     );
-  } else {
-    if (scope === "all") {
-      wanted.push({ place: "soul", label: "the soul in git", dir: soulTree(agentDir) });
-    } else {
-      files.push(personFile(agentDir));
-      notes.push(
-        "--personal keeps role.md, memory/ and consent/. The soul will not load again until a " +
-          "new person.md is written: a soul is two files and the loader requires both.",
-      );
-    }
-    wanted.push({ place: "soul", label: "the derived directory", dir: dagiTree(agentDir) });
+  } else if (scope === "personal") {
+    files.push(personFile(agentDir));
+    notes.push(
+      "--personal keeps role.md, memory/ and consent/. The soul will not load again until a " +
+        "new person.md is written: a soul is two files and the loader requires both.",
+    );
   }
-
-  wanted.push({ place: "soul", label: "the apply backups", dir: backupTree(env, subject) });
-  // Who confirmed level 3 for this subject's dial, and when (D-042). Keyed by
-  // subject since the erase that would otherwise have walked past it.
-  wanted.push({ place: "soul", label: "the level-3 confirmations", dir: confirmationsDirFor(env, subject) });
-
-  // The record that a vector collection was written for this subject. It names
-  // the subject, so it goes like any other tree; it is read first, below.
-  const ragDir = ragDirFor(env.home, env.env, subject);
-  wanted.push({ place: "rag", label: "the record of where vectors were written", dir: ragDir });
-
-  // The run records (S5.4). Under the `ledger` place rather than a sixth id:
-  // AC1 names five places and `src/erase/places.ts` is closed to exactly those
-  // five, and these records belong to the same fact the ledger holds — a turn,
-  // keyed by the same turn id, under the same state root, withdrawn by the same
-  // request. What is different is only that these describe a turn *in flight*.
-  //
-  // It is not optional politeness: `verifyErase` searches the whole state root
-  // for the identifier afterwards, so a record left behind would turn every
-  // erase into `erased-with-remainder` — a true report of a mess this file made.
-  wanted.push({
-    place: "ledger",
-    label: "run records for turns that were in flight",
-    dir: runsDirFor(env, subject),
-  });
-  // When each scheduled trigger last fired (S5.3 AC6). Under `ledger` for the
-  // reason the run records are: it is a fact about turns, keyed by subject.
-  wanted.push({ place: "ledger", label: "when each trigger last fired", dir: triggersDirFor(env, subject) });
-  // The A2A peer list (D-063): who this subject's agent may talk to, with the
-  // tokens issued to them. Under `ledger` beside the other per-subject state;
-  // the inbox itself is under the personal directory and goes with it.
-  wanted.push({ place: "ledger", label: "the A2A peers and their tokens", dir: a2aDirFor(env, subject) });
-  // Who the agent answers in chat apps, who has been told it is an AI, and
-  // where each platform was read up to (D-066). The messages are in the ledger.
-  wanted.push({ place: "ledger", label: "the chat allowlist and who has been told", dir: chatDirFor(env, subject) });
-  // D-130: the relay handles of the phones told when something waits — a way to reach this subject's devices.
-  wanted.push({ place: "ledger", label: "the phones told when something is waiting (push handles)", dir: pushDirFor(env, subject) });
-  // The basis records (S7.3, D-077): who approved this subject's data coming
-  // in, and for what. With the data gone there is nothing left for them to cover.
-  wanted.push({ place: "ledger", label: "the basis records for taking this subject's data in", dir: basisDirFor(env, subject) });
 
   const emptyParents: string[] = [];
   const personal = await personalDir(env, subject);
   if (!personal.ok) {
     refusals.push(`the personal directory cannot be resolved: ${personal.reason}`);
   } else {
-    wanted.push({
-      place: "observer",
-      // Named for what goes, not for the place id it is counted under: the raw
-      // capture tree and the proposal store (S5.2, D-029) are both subtrees of
-      // this one directory, and a certificate that said "observer record" while
-      // removing somebody's proposals would be claiming to have deleted less
-      // than it deleted — which is I-4's second half read backwards.
-      label: "the personal directory (raw capture and the proposal store live under it)",
-      dir: personal.path,
-    });
     emptyParents.push(dirname(personal.path));
   }
+  // The personal directory goes only where it resolved outside git. Its raw
+  // capture tree and the proposal store (S5.2, D-029) are both under it, which
+  // is why the map labels it for what goes rather than for its place id.
+  const wanted = subjectTrees(env, subject, agentDir, scope === "all").filter(
+    (tree) => tree.key !== "personal" || personal.ok,
+  );
+  const ragDir = ragDirFor(env.home, env.env, subject);
 
   const trees: TreeTarget[] = [];
   for (const target of wanted) {

@@ -109,7 +109,9 @@ export async function writeCheck(stateDir: string, record: CheckRecord): Promise
 /**
  * Whether this run may check by itself. Never when told not to, never when
  * nobody is at a terminal to read the line (hooks, pipes, CI), never for the
- * commands whose output a program reads, and at most once a day.
+ * commands whose output a program reads, and at most once a day. Never after
+ * `deploy` either: `deploy plan` says no request leaves this machine while it
+ * runs, and a check after it would make that false once a day (S13.1).
  */
 export function autoCheckDue(options: {
   readonly env: Readonly<Record<string, string | undefined>>;
@@ -123,7 +125,7 @@ export function autoCheckDue(options: {
   if (v !== undefined && v !== "" && v !== "0") return false;
   if (options.env["CI"] !== undefined && options.env["CI"] !== "") return false;
   if (!options.interactive) return false;
-  if (options.verb === undefined || ["update", "version", "--version", "-v", "observe", "a2a", "web"].includes(options.verb)) return false;
+  if (options.verb === undefined || ["update", "version", "--version", "-v", "observe", "a2a", "web", "deploy"].includes(options.verb)) return false;
   if (options.argv.includes("--json")) return false;
   if (options.last === undefined) return true;
   const at = Date.parse(options.last.at);

@@ -53,6 +53,11 @@ export function isLocalCliId(id: string): id is LocalCliId {
   return (LOCAL_BACKENDS as readonly string[]).includes(id);
 }
 
+/** The vendor CLI a local backend runs: its flags, usage pointers and instruction file are that vendor's. */
+export function localBaseVendor(id: LocalCliId): "claude" | "grok" {
+  return id === "claude-local" ? "claude" : "grok";
+}
+
 /**
  * Read one dotenv value without evaluating the file.
  *
@@ -288,7 +293,7 @@ function localSpec(
   key: string,
   baseUrl: string,
 ): VendorSpec {
-  const base = vendor(id === "claude-local" ? "claude" : "grok");
+  const base = vendor(localBaseVendor(id));
   const common = baseEnvironment(paths, env);
 
   if (id === "claude-local") {
@@ -449,7 +454,7 @@ export class LocalCliExec implements ExecBackend {
         prompt: request.prompt,
         raw: reason,
         durationMs: Math.round(performance.now() - startedAt),
-        usage: extractUsage(vendor(this.id === "claude-local" ? "claude" : "grok"), "", ""),
+        usage: extractUsage(vendor(localBaseVendor(this.id)), "", ""),
       },
     });
 

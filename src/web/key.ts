@@ -53,3 +53,11 @@ export async function replaceKey(path: string, key: string): Promise<{ readonly 
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
 }
+
+/**
+ * A short, one-way name for a page key (16 hex of its SHA-256): what a push subscription records so that only the
+ * page holding that key tells that phone anything (D-130). It says nothing about the key a holder could use.
+ */
+export function keyPrint(key: string): string {
+  return new Bun.CryptoHasher("sha256").update(key).digest("hex").slice(0, 16);
+}

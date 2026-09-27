@@ -59,7 +59,7 @@ export interface LedgerEnv {
 }
 
 /** `<state>/ledger/<subject>` — one directory per subject, never shared (I-3). */
-export function ledgerDir(env: LedgerEnv, subject: SubjectId): string {
+export function ledgerDir(env: Pick<LedgerEnv, "home" | "env">, subject: SubjectId): string {
   return join(stateRoot(env.home, env.env), "ledger", subject);
 }
 

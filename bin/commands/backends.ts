@@ -10,6 +10,7 @@ import {
   readonlyLimits,
   vendor,
 } from "../../src/exec/index.ts";
+import { isLocalCliId, localBaseVendor } from "../../src/exec/local-cli.ts";
 import { bold, dim } from "../shared.ts";
 
 const MARK: Record<string, string> = { ok: "OK", no: "--" };
@@ -22,13 +23,18 @@ export async function cmdBackends(): Promise<number> {
 
   console.log(bold("backend      reach    identity  writes?          where the identity lives"));
   for (const { b, availability } of checks) {
-    const spec = b.id === "ollama" ? undefined : vendor(b.id);
+    // A local backend (claude-local, grok-local — E12) is a vendor CLI on the local model: its flags are that
+    // vendor's, and its identity file is in a home of its own under the state root, never yours (D-117).
+    const local = isLocalCliId(b.id);
+    const spec = b.id === "ollama" ? undefined : vendor(local ? localBaseVendor(b.id) : b.id);
     const where =
       spec === undefined
         ? "system prompt field (no file needed)"
-        : spec.identity.instructionFiles
-            .map((f) => expandPath(f))
-            .join(", ") + (isProjectScopedOnly(spec) ? "  [per project only]" : "");
+        : local
+          ? `${spec.id}'s file, in a home of its own under the state root — not yours; every turn fenced (D-118)`
+          : spec.identity.instructionFiles
+              .map((f) => expandPath(f))
+              .join(", ") + (isProjectScopedOnly(spec) ? "  [per project only]" : "");
 
     console.log(
       `${b.id.padEnd(12)} ${(availability.ok ? MARK["ok"] : MARK["no"])!.padEnd(8)} ` +

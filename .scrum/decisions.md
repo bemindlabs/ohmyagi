@@ -2346,6 +2346,9 @@ release แรกบน public ติดป้าย **`v0.3.0-alpha` · pre-rel
 - **ยืนยันผ่าน `CliExec` ของ om-agi เอง (model ในเครื่อง):** ระดับ 1 เขียน 0 ตอบได้ 2/2 (อีก 1 ครั้ง grok ค้างหลัง stream จบจนหมดเวลา → silent ถูกต้อง, เพิ่มเป็น trap) · ระดับ 2 แก้+test 2/2 และคำสั่ง `$?` 1/1 · turn ที่ถูกยกเลิก (แม้มีประโยคนำ) → silent 3/3 · 0 connect ออกนอกเครื่อง
 - **ความเสี่ยงที่รับไว้:** grok ระดับ 2 รันอะไรก็ได้ — อำนาจเท่า claude ที่ได้ `Bash` ทั้งก้อน · turn ในเครื่องจะถูกจำกัดด้วย Landlock (D-118) ซึ่ง S12.2 ยังไม่ได้สร้าง · turn บน cloud มีแค่ระดับของ dial กันไว้ · deny list ของ hardening fail open เมื่อ vendor เปลี่ยนชื่อ (รั้วระดับ 1 ยังเป็น allow list) · hook ที่มากับ Claude *plugin* (`~/.claude/plugins`) ไม่มี env ปิด ยังทำงานใน turn ของ grok · web search ฝั่ง server บน config cloud ยังไม่ได้วัด
 
+- **วัดซ้ำตอนรัน (2026-09-27):** `grok inspect` ยัง *แสดง* hook/MCP/skill ที่เจอเสมอ จึงไม่ใช่หลักฐาน · รันจริงบน HOME ของเจ้าของด้วย model id ที่ไม่มีจริง (ไม่มีอะไรถึง xAI) + debug log: ไม่มี switch → SessionStart hook รัน 1 และ MCP spawn 7 · มี switch → 0 และ 0 · hook ของ Claude *plugin* ไม่ถูก dispatch ตอนเริ่ม session ทั้งสองแบบ (hook ตอนใช้เครื่องมือยังไม่ได้วัด)
+- **เพิ่ม (2026-09-27):** remote config ของ xAI เปิด `telemetry=true` และ `trace_upload=true` ให้บัญชีเจ้าของหลัง login → hardening ของ grok ส่ง `GROK_TELEMETRY_ENABLED=0` `GROK_TELEMETRY_TRACE_UPLOAD=0` `GROK_FEEDBACK_ENABLED=0` ทุกระดับ · วัดแล้ว: ค่ามาจาก env และไม่ถูก resolve ใหม่หลัง login
+
 ## D-120 — kimi ระดับ 1 ใช้ profile file ที่ om-agi เขียนเอง (`--agent-file`, Read/Glob/Grep) · ไม่ใช้ `--agent plan`
 
 **สถานะ:** เจ้าของเคาะ (2026-09-26, S12.6 — เลือก "--agent-file ของ om-agi" จาก 2 ทาง: agent-file · คงปฏิเสธ kimi ที่ระดับ 1) · แทนข้อเสนอ `--agent plan` ใน D-116 ข้อ 3 และ SP-5 §4
@@ -2467,6 +2470,7 @@ release แรกบน public ติดป้าย **`v0.3.0-alpha` · pre-rel
 - **relay เก็บ:** handle → device token, platform, เวลาสร้าง, เวลาส่งล่าสุด — ไม่มีเนื้อหา ไม่มีบัญชี · **relay เห็น metadata** ว่า handle ไหนมีเรื่องเมื่อไร (เจ้าของยอมรับตอนเลือกทางนี้)
 - **engine เก็บ:** การสมัครต่อ subject ใน state dir (mode 600, ไม่เข้า git)
 - **D-128:** ฝั่ง relay ถือ APNs/FCM key → PR ของ S16.6 รอเจ้าของ review · ฝั่ง engine ไม่แตะเงิน/auth/key ของ platform
+- **แก้ protocol ข้อ 1 (2026-09-27, พบตอนทำแอป S14.3 — ทางเทคนิค ไม่เปลี่ยนสิ่งที่เจ้าของเลือก):** iOS ที่ build แบบ development ได้ token ของ APNs **sandbox** · relay ที่ตั้ง environment เดียวจะได้ `BadDeviceToken` แล้วลบเครื่องนั้นทิ้ง → `POST /v1/devices` รับ `environment: "production" | "sandbox"` (เฉพาะ ios, ไม่ส่ง = production) · relay ผูกค่านี้กับแถวของเครื่อง (อยู่ใน AAD เหมือน platform) แล้วส่งไป host ของ APNs ที่ตรงกัน — key `.p8` ตัวเดียวใช้ได้ทั้งสองที่ · แอปอ่านค่าจาก entitlement ของ build (`aps-environment`)
 
 ## D-131 — บุษบา review และ merge PR เองทุกตัว (แทน D-128)
 
@@ -2477,3 +2481,36 @@ release แรกบน public ติดป้าย **`v0.3.0-alpha` · pre-rel
 - **เกณฑ์ merge ไม่ลด:** CI เขียว + บุษบารัน gate ซ้ำเองจาก worktree แยก + ลองของจริงเท่าที่ทำได้ + เขียน review ไว้ใน PR ว่าตรวจอะไร เห็นอะไร และอะไรที่ยังไม่ได้ตรวจ
 - **PR ที่แตะเงิน/auth/key/provisioning:** เพิ่ม review ด้านความปลอดภัยโดยผู้ตรวจอิสระ (agent อีกตัวที่ไม่ได้เขียน) ก่อน merge — ข้อที่ยืนยันแล้วต้องแก้ก่อน merge
 - **เจ้าของยังดูย้อนหลังได้เสมอ** — review comment ในแต่ละ PR คือบันทึก
+
+## D-132 — web UI ตลาด agent (S15.1) เริ่มตอนนี้ ใน ohmyagi-platform เป็นหน้า server-rendered (Hono JSX)
+
+**สถานะ:** เจ้าของเคาะ (2026-09-27 — ถาม "have web ui agents marketplace ?" แล้วเลือก "เริ่มเลย ใน ohmyagi-platform" จาก 3 ทาง: ใน platform · แยกเป็น Next.js app · รอจบ E16a ก่อน)
+
+- **ที่อยู่:** ใน service เดียวกับ API ของ platform (:10720 ที่ deploy แล้ว) · หน้าเว็บ render ฝั่ง server ด้วย Hono JSX · JS เท่าที่จำเป็น (WebAuthn ของ passkey) เป็นไฟล์ static ของ app เอง ไม่โหลดอะไรจากข้างนอก · origin เดียวกับบัญชี S16.1 จึงใช้ session cookie `__Host-` ได้ตรง ๆ
+- **ลำดับ (แทนส่วนนี้ของ D-115):** S15.1 + API ตลาดขั้นต่ำ (S16.4: รายการ agent · งานที่โพสต์) มาก่อน · Stripe Connect (S16.2/S15.6), GitHub App (S16.3/S15.10) และการรับ/ทำงาน (S15.2+) ตามมาเมื่อมีบัญชี Stripe/GitHub ของเจ้าของ
+- **ขอบเขตรอบแรก:** หน้าเข้า/สมัครด้วย passkey + ยืนยัน/กู้บัญชีทางอีเมล (หน้าที่ S16.1 ยังไม่มี) · agent onboard (agent card: ชื่อ คำอธิบาย ทักษะ ราคาต่อ token หรือฟรี) · ผู้จ้างโพสต์งาน (หัวข้อ รายละเอียด repo เพดานงบ) · หน้ารวม agent และงานที่เปิดอยู่ · ของตัวเอง (แก้/ปิด) · **ยังไม่มีการจ่ายเงินหรือการรับงาน** และหน้าเว็บบอกตรง ๆ
+- **เงิน:** ราคาและเพดานเป็นจำนวนเต็มหน่วยเล็กสุดพร้อมสกุลเงิน (CONTRIBUTING) — แสดงผลเท่านั้นในรอบนี้
+- **D-131:** มี auth (หน้า passkey) → ผู้ตรวจความปลอดภัยอิสระก่อน merge
+
+## D-133 — build iOS ของ ohmyagi-app ทำบน Mac ของฟลีต (agent-anna) แทน EAS cloud
+
+**สถานะ:** เจ้าของสั่ง (2026-09-27 — "สำหรับ ios ส่งไป build ที่เครื่อง anna นะ") · แก้ส่วน build ของ D-127 (EAS cloud เป็นทางหลัก → Mac ของฟลีตเป็นทางหลัก)
+
+- **ทำไม:** source ไม่ต้องออกไปที่ Expo · เครื่องเซิร์ฟเวอร์เป็น Linux build iOS เองไม่ได้ · Mac ของฟลีตมีอยู่แล้วบน tailnet
+- **ตอนนี้:** build สำหรับ iOS Simulator แบบไม่ sign (`expo prebuild` → `pod install` → `xcodebuild … -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO`) — ตรวจว่า native project ของ Expo SDK 57 + expo-camera/notifications/secure-store build ผ่านจริง ซึ่ง `expo export` บนเซิร์ฟเวอร์ตรวจไม่ได้
+- **ที่ต้องรอเจ้าของ:** build ลงเครื่องจริง/TestFlight ต้องมี Apple Developer team + signing (S14.7) · Android ยัง build บน EAS หรือเซิร์ฟเวอร์ได้ (ยังไม่เคาะ)
+- **ส่งงานผ่าน fleet room** (`fleet-room.sh --to agent-anna`) · ผลกลับมาทางเดียวกัน · agent-anna ไม่ commit ลง repo และไม่ใช้บัญชี Apple ใด ๆ
+
+## D-134 — สิ่งที่ `deploy plan` (S13.1) วางไว้ให้ `apply` ทำตาม — ทางเทคนิคภายใต้ D-100
+
+**สถานะ:** บุษบาเคาะทางเทคนิค (2026-09-27, ตอน review S13.1) · ไม่เปลี่ยนสิ่งที่เจ้าของเลือกใน D-100/D-111 · S13.2–S13.5 วัดของจริงแล้วแก้ได้
+
+- **อะไรไป:** binary ตาม CPU · working tree ของ repo agent (ไม่มี `.git/` `.dagi/` — ส่งเป็น git bundle) · จาก data map (`src/erase/map.ts` ชุดเดียวกับ erase): ledger, personal, a2a, chat, push, basis
+- **สร้างที่ปลายทาง ไม่ copy:** `.dagi/`, vector collection, rag marker (copy marker ไปจะทำให้ erase ที่นั่นไปหา store ที่ไม่เคยเขียน)
+- **อยู่ที่เครื่องนี้:** apply backups, level-3 confirmations, run records, trigger times, block ใน instruction file ของ vendor
+- **ไม่ไป:** login ของ vendor (S13.7 BYOK), model ในเครื่อง (S13.6 เรียกกลับบ้านผ่าน tailnet), brake, key ของหน้าเว็บ
+- **ที่อยู่ปลายทาง:** ทุกอย่างส่วนตัวอยู่ใต้ `/srv/ohmyagi` บน volume เข้ารหัส · service user `ohmyagi` (ไม่มี login shell) HOME อยู่บน volume
+- **เข้ารหัส (D-100 #1):** LUKS2 ในเครื่องสำหรับทุก provider · กุญแจสร้างที่เครื่องนี้ ส่งทาง stdin ไม่เคยเขียนลงปลายทาง · ไม่มีใน fstab/crypttab (ปลดล็อกตาม D-111/S13.8) · GCP CSEK และ AWS KMS เป็นชั้นที่สองเท่านั้น เพราะกุญแจของสองอย่างนั้นอยู่ในที่ของ provider
+- **ช่องทาง (D-100 #3):** ssh เป็นช่อง bootstrap แล้ว tailnet · web/a2a bind 127.0.0.1 + `tailscale serve` · **AWS:** security group เปิด tcp/22 ให้ address ของเครื่องนี้ `/32` เท่านั้น (ไม่ใช่ 0.0.0.0/0) และถอนกฎนั้นหลัง `tailscale up` (แก้ตอน review — ร่างแรกเปิดให้ทั้งโลก) · VPS: sshd ของ provider · GCP: rule default-allow-ssh ของ network ค่าเริ่มต้น — ของ provider om-agi ไม่แตะ แต่ plan บอกไว้ · S13.3 ควรวัด IAP tunnel แทน
+- **VPS:** volume เป็นไฟล์ container ขนาดตายตัว 20 GB (ไฟล์เป้าหมายแบบ ssh ยังไม่มีช่องขนาด)
+- **service บนปลายทางรอบแรก:** web + triggers เท่านั้น (a2a serve / chat serve ยังไม่ติดตั้ง)

@@ -30,6 +30,7 @@ import { cmdEval } from "./commands/eval.ts";
 import { cmdBasis } from "./commands/basis.ts";
 import { cmdAutonomy } from "./commands/autonomy.ts";
 import { cmdBackends } from "./commands/backends.ts";
+import { cmdDeploy } from "./commands/deploy.ts";
 import { cmdDoctor } from "./commands/doctor.ts";
 import { cmdErase } from "./commands/erase.ts";
 import { cmdGuard } from "./commands/guard.ts";
@@ -183,6 +184,9 @@ async function main(rawArgv: readonly string[]): Promise<number> {
 
     case "erase":
       return cmdErase(rest);
+
+    case "deploy":
+      return cmdDeploy(rest);
 
     case "guard":
       return cmdGuard(rest);

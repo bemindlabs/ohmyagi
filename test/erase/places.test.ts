@@ -203,8 +203,16 @@ function arrivalSignals(source: string): string[] {
   return ARRIVAL_SIGNALS.filter((signal) => lower.includes(signal));
 }
 
-/** `places.ts` is the registry: it holds the reserved address and the word LoRA because that is its job. */
-const ALLOWED_TO_NAME: readonly string[] = [join("src", "erase", "places.ts")];
+/**
+ * `places.ts` is the registry: it holds the reserved address and the word LoRA because that is its job.
+ * `place-id.ts` is the registry's closed id type, moved out of it for S13.1 so the data map can name a
+ * place without pulling the spawn chokepoint and `fetch` into `src/deploy/`'s closure — it says `"lora"`
+ * because the type has to, and holds no path and no code.
+ */
+const ALLOWED_TO_NAME: readonly string[] = [
+  join("src", "erase", "places.ts"),
+  join("src", "erase", "place-id.ts"),
+];
 
 /**
  * What would mean a store had been written to rather than listed.

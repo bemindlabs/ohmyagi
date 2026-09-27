@@ -31,6 +31,7 @@
  */
 
 export * from "./places.ts";
+export * from "./map.ts";
 export * from "./search.ts";
 export * from "./soul.ts";
 export * from "./plan.ts";

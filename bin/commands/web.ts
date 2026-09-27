@@ -17,9 +17,9 @@ import { startWeb, tailnetNames } from "../../src/web/server.ts";
 import { ago, excerpt, levelSentence, remoteForPage, triageChips, type AgentInfo, type PrivacyState, type SettingsState, type ViewState } from "../../src/web/view.ts";
 import { basisDirFor, readBasis, recordState } from "../../src/consent/basis.ts";
 import { listMemories, memoryGraph, readMemoryFile, whoMentions } from "../../src/web/memories.ts";
-import { loadOrCreateKey, replaceKey } from "../../src/web/key.ts";
+import { keyPrint, loadOrCreateKey, replaceKey } from "../../src/web/key.ts";
 import { encodeQr, qrTerminal } from "../../src/web/qr.ts";
-import { addSubscription, clearSubscriptions, forgetAll, notifyAll, pushDirFor, readSubscriptions, removeSubscription, WaitingWatch, type Fetcher } from "../../src/web/push.ts";
+import { addSubscription, forgetAll, forgetEverything, notifyAll, pushDirFor, removeSubscription, subscriptionsFor, WaitingWatch, type Fetcher } from "../../src/web/push.ts";
 import { profileOf } from "../../src/soul/profile.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -365,18 +365,14 @@ export async function cmdWeb(argv: readonly string[]): Promise<number> {
         }
       },
       push: {
-        subscribe: (relay, handle) => addSubscription(pushDir, relay, handle, new Date()),
+        subscribe: (relay, handle, key) => addSubscription(pushDir, relay, handle, key, new Date()),
         unsubscribe: async (handle) => {
           const gone = await removeSubscription(pushDir, handle);
           if (gone !== undefined) await forgetAll([gone], relayFetch);
           return gone !== undefined;
         },
-        count: async () => (await readSubscriptions(pushDir)).length,
-        clear: async () => {
-          const gone = await clearSubscriptions(pushDir);
-          await forgetAll(gone, relayFetch);
-          return gone.length;
-        },
+        count: async (key) => (await subscriptionsFor(pushDir, key)).length,
+        clear: (key) => forgetEverything(pushDir, key, relayFetch),
       },
       run: async (args) => {
         const out = await runGuarded([...engineCommand().argv, ...args]);
@@ -420,7 +416,8 @@ export async function cmdWeb(argv: readonly string[]): Promise<number> {
     const inventory = pdir.ok ? await readProposals(pdir.path) : { proposals: [] };
     const waitingIds = inventory.proposals.filter(({ proposal }) => proposal.decision === null).map(({ proposal }) => proposal.id);
     if (!watch.due(waitingIds, Date.now())) return;
-    const subscriptions = await readSubscriptions(pushDir);
+    // Only the phones paired with the key this page holds now (D-130).
+    const subscriptions = await subscriptionsFor(pushDir, keyPrint(server.token));
     if (subscriptions.length === 0) return;
     const { sent, failed } = await notifyAll(subscriptions, relayFetch);
     watch.sent(Date.now());

@@ -140,6 +140,9 @@ async function run(home: string, args: readonly string[], options: RunOptions) {
       PATH: options.path,
       XDG_STATE_HOME: join(home, "state"),
       CODEX_HOME: join(home, ".codex"),
+      // Nothing listens on port 9: a test turn never writes a collection into this machine's real Qdrant (it had
+      // been leaving omagi__example there on every run).
+      OM_AGI_QDRANT_URL: "http://127.0.0.1:9",
       ...(options.stubMode === undefined ? {} : { OM_AGI_STUB_MODE: options.stubMode }),
       ...(options.ollama === undefined ? {} : { OLLAMA_HOST: options.ollama }),
     },

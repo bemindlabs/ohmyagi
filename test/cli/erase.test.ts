@@ -208,6 +208,25 @@ describe("ohmyagi erase", () => {
     expect(after).toContain("the owner's own line for kimi");
   }, 60_000);
 
+  test("a linked home file is stripped where it points, and the link stays a link (review 2026-09-27)", async () => {
+    const { home, agent } = await makeAgent();
+    const { symlink, lstat } = await import("node:fs/promises");
+    await mkdir(join(home, ".kimi-code"), { recursive: true });
+    await mkdir(join(home, "dotfiles"), { recursive: true });
+    const body = "# Someone\n";
+    const marker = `<!-- om-agi:soul:begin subject=${SUBJECT} sha256=${sha256(body)} lead=0 tail=1 -->`;
+    const real = join(home, "dotfiles", "AGENTS.md");
+    await writeFile(real, `the owner's own line\n\n${marker}\n${body}\n<!-- om-agi:soul:end -->\n`);
+    await symlink(real, join(home, ".kimi-code", "AGENTS.md"));
+
+    const erased = await run(home, ["erase", SUBJECT, "--agent", agent, "--by", "a reviewer", "--yes", "--json"]);
+    expect(erased.code, erased.stderr).toBe(0);
+    expect((await lstat(join(home, ".kimi-code", "AGENTS.md"))).isSymbolicLink()).toBe(true);
+    const after = await Bun.file(real).text();
+    expect(after).not.toContain(SUBJECT);
+    expect(after).toContain("the owner's own line");
+  }, 60_000);
+
   test("--out writes the machine form, and om-agi keeps no copy of its own", async () => {
     const { home, agent } = await makeAgent();
     const elsewhere = await sandbox("om-agi-erase-out-");
