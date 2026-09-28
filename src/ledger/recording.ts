@@ -19,7 +19,47 @@ import type { ExecBackend, TurnRequest, TurnResult } from "../exec/backend.ts";
 import type { Availability, BackendKind, IdentityStrength } from "../exec/backend.ts";
 import { byteLength, LEDGER_VERSION, type LedgerContent, type LedgerEntry } from "./entry.ts";
 import { append, type LedgerEnv } from "./store.ts";
-import { UNREPORTED_USAGE } from "../types.ts";
+import { chargeTurn } from "../pricing/cost.ts";
+import type { PricesInForce } from "../pricing/table.ts";
+import { UNREPORTED_USAGE, type TurnModel } from "../types.ts";
+
+/** What one line says about its model (D-142): see `LedgerEntry.model` and `model_requested`. */
+export interface ModelOfTurn {
+  /** The model the turn ran on, as far as it is known; what the line is priced by. */
+  readonly model: string | null;
+  /** The model om-agi asked the backend for, or null for the backend's own default. */
+  readonly requested: string | null;
+  /**
+   * True when a vendor CLI's output named no model at all — the one case {@link requested} may price the line,
+   * and then only by an exact price-table name (`pricingModel`). False when it named one or more, and for a
+   * backend that runs its model by construction.
+   */
+  readonly silent: boolean;
+}
+
+/**
+ * The model facts of one turn, from what the backend said and what om-agi knows it handed over (D-142).
+ *
+ * @param told A vendor CLI's own account (`evidence.model`), or undefined from a backend that gives none.
+ * @param named The model the request itself named, when a caller ran one backend directly with one.
+ * @param runs The model this backend runs by construction — ollama's, a local CLI's `local-coder` — or null for a
+ *   vendor CLI, whose model is whatever it says it ran.
+ */
+export function modelOfTurn(told: TurnModel | undefined, named: string | null, runs: string | null): ModelOfTurn {
+  if (told === undefined) {
+    const model = named ?? runs;
+    return { model, requested: model, silent: false };
+  }
+  const reported = told.reported;
+  // One name, and a readable one, or nothing: a turn that called two models ran on neither alone, and a slot
+  // the reader could not read is a name nobody may price by.
+  const single = reported.length === 1 ? (reported[0] ?? null) : null;
+  return {
+    model: single ?? (reported.length === 0 ? runs : null),
+    requested: told.requested ?? runs,
+    silent: reported.length === 0,
+  };
+}
 
 export interface RecordingOptions {
   readonly ledger: LedgerEnv;
@@ -29,8 +69,21 @@ export interface RecordingOptions {
   readonly newId: () => string;
   /** `withheld` is `--private`: the line is written, the text is not. */
   readonly content: LedgerContent;
-  /** Model named on the command line, or null when the backend used its own default. */
+  /**
+   * The model this backend runs by construction, or null for a vendor CLI (S15.9, D-142).
+   *
+   * ollama runs the model om-agi hands the daemon; a local CLI runs `local-coder`. A vendor CLI is different:
+   * the model it was handed is only a request (`opus` is an alias), so its line names the model its own output
+   * reports and records the request apart, as `model_requested` — see {@link modelOfTurn}. A model named in the
+   * request itself wins over this, because that is the one the backend received.
+   */
   readonly model: string | null;
+  /**
+   * The price tables in force when this turn began (S15.9). Every line is priced against them at the moment
+   * it is written, and records which table and which rates — nothing is priced afterwards, when the table
+   * that was in force can no longer be known.
+   */
+  readonly prices: PricesInForce;
   /** sha256 of the rendered soul this turn wore. */
   readonly soulSha: string | null;
   /**
@@ -89,6 +142,14 @@ export class RecordingExec implements ExecBackend {
 
   private entryFor(at: string, request: TurnRequest, result: TurnResult): LedgerEntry {
     const withheld = this.options.content === "withheld";
+    // A backend that reported nothing still gets a usage object rather than
+    // an absent field, so that "written before counts existed" (absent) and
+    // "written by a backend nobody surveyed" (`unreported`) stay two
+    // different facts a reader can tell apart.
+    const usage = result.evidence.usage ?? UNREPORTED_USAGE;
+    const about = modelOfTurn(result.evidence.model, request.model ?? null, this.options.model);
+    // D-142: the requested name is offered to the price table only when the output named no model at all.
+    const charge = chargeTurn(usage, this.inner.id, about.model, this.options.prices, about.silent ? about.requested : null);
     return {
       v: LEDGER_VERSION,
       kind: "turn",
@@ -100,7 +161,8 @@ export class RecordingExec implements ExecBackend {
       // this one rewrites that field to name the chain, and the line has to
       // say which single backend held the text.
       backend: this.inner.id,
-      model: this.options.model,
+      model: about.model,
+      model_requested: about.requested,
       content: this.options.content,
       prompt: withheld ? null : request.prompt,
       prompt_bytes: byteLength(request.prompt),
@@ -109,14 +171,11 @@ export class RecordingExec implements ExecBackend {
       confidence: result.confidence,
       exit: result.evidence.exitCode ?? null,
       duration_ms: result.evidence.durationMs ?? null,
-      // See `LedgerEntry.cost`: no figure in a currency is recorded, because
-      // every one available is true for some owners and false for others.
-      cost: null,
-      // A backend that reported nothing still gets a usage object rather than
-      // an absent field, so that "written before counts existed" (absent) and
-      // "written by a backend nobody surveyed" (`unreported`) stay two
-      // different facts a reader can tell apart.
-      usage: result.evidence.usage ?? UNREPORTED_USAGE,
+      // See `LedgerEntry.cost`: om-agi's price for the counts below, never the
+      // vendor's own figure — or null, and `not_charged` says why (D-110).
+      cost: charge.cost,
+      not_charged: charge.not_charged,
+      usage,
       identity: result.identityStrength,
       soul_sha: this.options.soulSha,
     };

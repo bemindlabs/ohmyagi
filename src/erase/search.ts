@@ -41,7 +41,7 @@
  */
 
 import { readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 
 /** One thing to look for, and how it is allowed to be reported. */
 export interface Needle {
@@ -90,13 +90,27 @@ export interface ScopeResult {
  * failure. `git` — the agent's working tree, where a hit is a *remainder* the
  * owner has to decide about: deleting somebody's committed file on their behalf
  * is not om-agi's call, and a result that is not clean and says so beats a
- * clean one that lies.
+ * clean one that lies. `kept` — what the scope the owner asked for keeps on
+ * purpose outside git: `erase --personal` keeps the agent's signing key, whose
+ * path names the subject (S15.8, D-138). Reported, never deleted, and still a
+ * remainder: the identifier is on disk, and saying so is the point.
  */
-export type ScopeKind = "deletable" | "git";
+export type ScopeKind = "deletable" | "git" | "kept";
 
-/** Somewhere to search: one tree to walk, or an explicit list of files. */
+/**
+ * Somewhere to search: one tree to walk, or an explicit list of files.
+ *
+ * A tree may name **files** under it that are `kept`. A hit is filed as kept only when it is on one of those
+ * files, or on a directory that holds nothing — checked on disk, at search time — but kept files and
+ * directories that themselves hold only kept files. Everything else stays in this scope's kind.
+ *
+ * Narrow on purpose (S15.8 re-review). The first version classed a hit as kept if a kept path merely sat
+ * *under* it, by string prefix: under `--personal` the name hit on `$DATA/om-agi/<subject>` then always went
+ * to `kept`, key or no key — and that name hit is often the only sign of a place nobody knows about. A
+ * directory that holds anything besides the key is a leftover, and says so.
+ */
 export type Scope =
-  | { readonly label: string; readonly kind: ScopeKind; readonly tree: string }
+  | { readonly label: string; readonly kind: ScopeKind; readonly tree: string; readonly kept?: readonly string[] }
   | { readonly label: string; readonly kind: ScopeKind; readonly files: readonly string[] };
 
 /** Characters a {@link import("../types.ts").SubjectId} may contain. */
@@ -255,6 +269,8 @@ export interface SearchReport {
   readonly deletableHits: number;
   /** Hits in the agent's working tree. Reported, never deleted for you. */
   readonly gitHits: number;
+  /** Hits in what the requested scope keeps on purpose — the signing key under `--personal`. */
+  readonly keptHits: number;
 }
 
 /** Search every scope, in the order given. */
@@ -268,13 +284,47 @@ export async function searchScopes(
       "tree" in scope
         ? await searchTree(scope.label, scope.tree, needles)
         : await searchFiles(scope.label, scope.files, needles);
-    results.push({ ...found, kind: scope.kind });
+    const kept = "tree" in scope ? (scope.kept ?? []) : [];
+    if (kept.length === 0) {
+      results.push({ ...found, kind: scope.kind });
+      continue;
+    }
+    const keptHits: Hit[] = [];
+    const otherHits: Hit[] = [];
+    for (const hit of found.hits) (await isKept(hit.path, kept) ? keptHits : otherHits).push(hit);
+    results.push({ ...found, hits: otherHits, kind: scope.kind });
+    results.push({ label: `${scope.label}: kept on purpose`, where: kept.join(", "), filesRead: 0, hits: keptHits, kind: "kept" });
   }
   return {
     scopes: results,
     deletableHits: count(results, "deletable"),
     gitHits: count(results, "git"),
+    keptHits: count(results, "kept"),
   };
+}
+
+/** A kept file itself, or a directory holding nothing but kept files — asked of the disk, not of the string. */
+async function isKept(path: string, kept: readonly string[]): Promise<boolean> {
+  if (kept.includes(path)) return true;
+  return kept.some((file) => file.startsWith(path + sep)) && (await holdsOnlyKept(path, kept));
+}
+
+/** Whether `dir` holds at least one kept file and nothing else — no other file, link or directory. */
+async function holdsOnlyKept(dir: string, kept: readonly string[]): Promise<boolean> {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  if (entries.length === 0) return false;
+  for (const entry of entries) {
+    const path = join(dir, entry.name);
+    if (entry.isFile() && kept.includes(path)) continue;
+    if (entry.isDirectory() && kept.some((file) => file.startsWith(path + sep)) && (await holdsOnlyKept(path, kept))) continue;
+    return false;
+  }
+  return true;
 }
 
 function count(

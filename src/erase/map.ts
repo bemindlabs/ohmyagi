@@ -39,6 +39,7 @@ import { confirmationsDirFor } from "../decide/confirm.ts";
 import { runsDirFor } from "../decide/runs.ts";
 import { triggersDirFor } from "../decide/triggers.ts";
 import { personalPath } from "../guard/personal.ts";
+import { identityDirFor } from "../identity/dir.ts";
 import { ledgerDir } from "../ledger/store.ts";
 import { collectionFor } from "../memory/collection.ts";
 import { ragDirFor } from "../memory/marker.ts";
@@ -78,6 +79,7 @@ export type MapKey =
   | "push"
   | "basis"
   | "personal"
+  | "identity"
   | "ledger";
 
 /** One directory of the map. */
@@ -109,7 +111,9 @@ const COPIED: Travel = { kind: "copied" };
  * The trees erase removes whole, in its order.
  *
  * `withSoul` is false for `erase --personal`, which keeps `soul/` in git and
- * takes `person.md` alone — a file, which erase plans itself.
+ * takes `person.md` alone — a file, which erase plans itself. It keeps the
+ * agent's signing key too, for the same reason it keeps `role.md`: the key is
+ * the agent's identity, not the person's data (S15.8 review; D-138).
  */
 export function subjectTrees(
   env: MapEnv,
@@ -226,6 +230,19 @@ export function subjectTrees(
     dir: personalPath(env, subject),
     travel: COPIED,
   });
+  // The agent's own ed25519 key (S15.8, D-108, D-138) — beside personal/, not in it: a credential, not
+  // somebody's personal data. Copied, because the agent there is the same agent: a new key would be a
+  // different signer to everyone who knew this one. On the encrypted volume, like everything copied.
+  // Gated like `soul/`: a full erase of the subject takes it, `--personal` keeps it and says so.
+  if (withSoul) {
+    trees.push({
+      key: "identity",
+      place: "soul",
+      label: "the agent's own ed25519 signing key",
+      dir: identityDirFor(env, subject),
+      travel: COPIED,
+    });
+  }
 
   return trees;
 }

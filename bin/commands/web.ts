@@ -26,7 +26,8 @@ import { tmpdir } from "node:os";
 import { a2aDirFor, readPeers } from "../../src/a2a/peers.ts";
 import { chatDirFor, contactKey, readChatState } from "../../src/connectors/users.ts";
 import { describeFindings, judgeConfig, loadLexicon, readBlocked } from "../../src/egress/index.ts";
-import { allBackends, PHASE_A_BACKENDS } from "../../src/exec/index.ts";
+import { allBackends, PHASE_A_BACKENDS, routeModels, takesNoModel, VENDORS } from "../../src/exec/index.ts";
+import { loadPrices, pricesInForce } from "../../src/pricing/table.ts";
 import { OLLAMA_MODEL_ENV } from "../../src/exec/ollama-exec.ts";
 import { modelChoices, ollamaTags, type ModelsState } from "../../src/web/models.ts";
 import { stateRoot } from "../../src/state.ts";
@@ -37,7 +38,7 @@ import { decideDial, dialEnv } from "../dial.ts";
 import { bold, dim, ledgerEnv, parseArgs, report, usageError } from "../shared.ts";
 import { extname, join, resolve } from "node:path";
 
-const USAGE = "usage: ohmyagi web <dir> --subject <id> [--port <n>] [--host <addr>] [--name <host,…>] [--https] [--key-file <path>] [--qr] [--backend a,b] [--model <m>]";
+const USAGE = "usage: ohmyagi web <dir> --subject <id> [--port <n>] [--host <addr>] [--name <host,…>] [--https] [--key-file <path>] [--qr] [--backend a,b] [--model <m> | --model <backend>=<m>,…]";
 
 /** The default port: om-agi's block in the dev band, beside the A2A default (30700). */
 export const WEB_PORT = 30701;
@@ -107,37 +108,64 @@ async function gather(dir: string, id: SubjectId, options: ReadonlyMap<string, s
   };
 }
 
-/** What answers from this page: the chain, the local model, the judge, and the last turn that really answered. */
-function engineOf(options: ReadonlyMap<string, string>, entries: readonly { readonly at: string; readonly backend: string; readonly model: string | null; readonly confidence: string }[], now: Date): ViewState["engine"] {
+/** The chain `ohmyagi web` was started with: its `--backend`, else the usual one. */
+function startedChain(options: ReadonlyMap<string, string>): string[] {
   const named = (options.get("backend") ?? "").split(",").map((b) => b.trim()).filter((b) => b !== "");
+  return named.length > 0 ? named : [...PHASE_A_BACKENDS];
+}
+
+/** What answers from this page: the chain, the local model, the judge, and the last turn that really answered. */
+function engineOf(
+  options: ReadonlyMap<string, string>,
+  entries: readonly { readonly at: string; readonly backend: string; readonly model: string | null; readonly model_requested?: string | null; readonly confidence: string }[],
+  now: Date,
+): ViewState["engine"] {
+  const chain = startedChain(options);
   const answered = [...entries]
     .filter((e) => (e.confidence === "confirmed" || e.confidence === "partial") && !e.backend.includes(":"))
     .sort((a, b) => b.at.localeCompare(a.at))[0];
+  // D-142: `--model` is ollama's only when it names ollama's step — `--model claude=opus` is not a local model.
+  const routed = routeModels(options.get("model"), chain);
   return {
-    chain: named.length > 0 ? named : [...PHASE_A_BACKENDS],
-    localModel: options.get("model") || process.env[OLLAMA_MODEL_ENV]?.trim() || null,
+    chain,
+    localModel: (routed.ok ? routed.models.get("ollama") : undefined) || process.env[OLLAMA_MODEL_ENV]?.trim() || null,
     judge: judgeConfig(process.env)?.model ?? null,
-    last: answered === undefined ? null : { backend: answered.backend, model: answered.model, when: ago(answered.at, now) },
+    last:
+      answered === undefined
+        ? null
+        : { backend: answered.backend, model: answered.model, modelRequested: answered.model_requested ?? null, when: ago(answered.at, now) },
   };
 }
 
-/** The chat picker's choices (D-085): which backends answer, and model names with a reason to work. */
-async function gatherModels(id: SubjectId, options: ReadonlyMap<string, string>): Promise<ModelsState> {
+/**
+ * The chat picker's choices (D-085, D-142): which backends answer, and model names with a reason to work — the
+ * vendor's own documented names and the price table's for that backend, never the ledger's history.
+ */
+async function gatherModels(options: ReadonlyMap<string, string>): Promise<ModelsState> {
   const all = allBackends();
-  const [backends, ledger, tags] = await Promise.all([
+  const ledger = ledgerEnv();
+  const [backends, prices, tags] = await Promise.all([
     Promise.all(all.map(async (b) => ({ id: b.id, available: (await b.available()).ok }))),
-    query(ledgerEnv(), id),
+    loadPrices(ledger.home, ledger.env),
     // The local list, if Ollama answers quickly; a picker is not worth waiting for.
     fetch(`${(process.env["OLLAMA_HOST"] ?? "http://127.0.0.1:11434").replace(/\/+$/, "")}/api/tags`, { signal: AbortSignal.timeout(1500) })
       .then(async (r) => (r.ok ? ollamaTags(await r.json()) : []))
       .catch(() => []),
   ]);
-  const engine = engineOf(options, ledger.entries, new Date());
+  const engine = engineOf(options, [], new Date());
   return {
     backends,
     chain: engine.chain,
     defaultTurn: { backend: options.get("backend") ?? null, model: options.get("model") ?? null },
-    models: modelChoices({ backends: all.map((b) => b.id), entries: ledger.entries, localModel: engine.localModel, ollama: tags }),
+    models: modelChoices({
+      backends: all.map((b) => b.id),
+      listed: Object.fromEntries(VENDORS.flatMap((v) => (v.model === undefined ? [] : [[v.id, v.model.listed] as const]))),
+      // The owner's entries and the shipped ones — the shipped alone while the owner's file cannot be read.
+      priced: pricesInForce(prices),
+      modelless: all.map((b) => b.id).filter((b) => takesNoModel(b) !== undefined),
+      localModel: engine.localModel,
+      ollama: tags,
+    }),
   };
 }
 
@@ -277,6 +305,9 @@ export async function cmdWeb(argv: readonly string[]): Promise<number> {
     const value = options.get(name);
     return value === undefined || value === "" ? [] : [`--${name}`, value];
   });
+  // D-142: a `--model` every turn from this page would refuse is refused once, here, rather than on every message.
+  const startedModels = routeModels(options.get("model"), startedChain(options));
+  if (!startedModels.ok) return usageError(`${USAGE} — ${startedModels.reason}`);
 
   // The names a browser may use to reach it: any given with --name, and — on
   // a tailnet address — this machine's own tailnet names, so the URL a person
@@ -313,7 +344,7 @@ export async function cmdWeb(argv: readonly string[]): Promise<number> {
       turnFlags,
       state: () => gather(absolute, id, options),
       settings: () => gatherSettings(absolute, id, options),
-      models: () => gatherModels(id, options),
+      models: () => gatherModels(options),
       agent: () => gatherAgent(absolute, id),
       privacy: () => gatherPrivacy(absolute, id),
       memories: () => listMemories(absolute),
@@ -324,7 +355,7 @@ export async function cmdWeb(argv: readonly string[]): Promise<number> {
       turnDetail: async (entryId) => {
         const e = (await query(ledgerEnv(), id)).entries.find((x) => x.id === entryId);
         if (e === undefined) return undefined;
-        return { asked: e.prompt, answer: e.text, backend: e.backend, model: e.model, when: ago(e.at, new Date()), content: e.content };
+        return { asked: e.prompt, answer: e.text, backend: e.backend, model: e.model, modelRequested: e.model_requested ?? null, when: ago(e.at, new Date()), content: e.content };
       },
       profile: async () => {
         const loaded = await loadSoul(absolute, id);

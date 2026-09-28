@@ -229,6 +229,20 @@ describe("FallbackExec", () => {
     }
   });
 
+  test("a request that names a model is refused before any step runs — it would reach every backend (D-142)", async () => {
+    // One request goes to every step. A model on it would hand `qwen3:8b` to claude and price a line as a model
+    // the step never ran; each step's model is bound to that step when it is built.
+    const claude = fake({ id: "claude" });
+    const local = fake({ id: "ollama" });
+    const result = await new FallbackExec([claude, local]).run({ ...REQUEST, model: "qwen3:8b" });
+    expect(result.confidence).toBe("silent");
+    expect(result.text).toBe("");
+    expect(result.evidence.raw).toContain("refused");
+    expect(result.evidence.raw).toContain("would reach all 2 backend(s)");
+    expect(claude.seen).toEqual([]);
+    expect(local.seen).toEqual([]);
+  });
+
   test("an empty chain is a programmer error, not a silent no-op", () => {
     expect(() => new FallbackExec([])).toThrow("at least one backend");
   });

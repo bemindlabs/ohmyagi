@@ -64,14 +64,32 @@ afterEach(async () => {
  * asked for, and says whether the soul reached it through the system flag.
  */
 function stubSource(name: string, shape: "json" | "text"): string {
-  const reply = shape === "json" ? "JSON.stringify({ result: answer })" : "answer";
+  const reply = shape === "json" ? "JSON.stringify({ result: answer, text: answer, ...report })" : "answer";
   return `#!/usr/bin/env bun
 const argv = process.argv.slice(2);
 const flag = argv.indexOf("-p");
 const prompt = flag === -1 ? (argv[argv.length - 1] ?? "") : (argv[flag + 1] ?? "");
 const systemFlag = argv.indexOf("--append-system-prompt");
 const system = systemFlag === -1 ? "" : (argv[systemFlag + 1] ?? "");
-const mode = process.env["OM_AGI_STUB_MODE"] ?? "correct";
+// D-142: every argv this stub was handed, one JSON line per run, under the temporary HOME the turn gave it.
+require("node:fs").appendFileSync((process.env["HOME"] ?? ".") + "/argv-${name}.jsonl", JSON.stringify(argv) + "\\n");
+const silentHere = (process.env["OM_AGI_STUB_SILENT"] ?? "").split(",").includes("${name}");
+const mode = silentHere ? "silent" : (process.env["OM_AGI_STUB_MODE"] ?? "correct");
+// D-142: the per-model block claude and grok print, as measured — claude keys it by the dated id an alias
+// resolved to and puts the canonical name inside; grok keys it by the id it sent — with counts every part of
+// which is printed, so the turn can be priced.
+const modelAt = argv.indexOf("--model");
+const asked = modelAt === -1 ? undefined : argv[modelAt + 1];
+const resolve = JSON.parse(process.env["OM_AGI_STUB_RESOLVE"] ?? "{}");
+const ran = asked === undefined ? process.env["OM_AGI_STUB_DEFAULT_MODEL"] : (resolve[asked] ?? asked);
+const report = process.env["OM_AGI_STUB_REPORT"] === "1" && ran !== undefined
+  ? {
+      modelUsage: "${name}" === "claude"
+        ? { [ran + "-20260901"]: { inputTokens: 100, outputTokens: 10, canonicalModel: ran } }
+        : { [ran]: { inputTokens: 100, outputTokens: 10 } },
+      usage: { input_tokens: 100, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 10 },
+    }
+  : {};
 
 // Exit 0 having printed nothing: the failure a shell \`||\` cannot see.
 if (mode === "silent") process.exit(0);
@@ -130,6 +148,8 @@ interface RunOptions {
   readonly path: string;
   readonly stubMode?: string;
   readonly ollama?: string;
+  /** More for the child's environment — the stubs' D-142 switches. */
+  readonly env?: Readonly<Record<string, string>>;
 }
 
 async function run(home: string, args: readonly string[], options: RunOptions) {
@@ -145,6 +165,7 @@ async function run(home: string, args: readonly string[], options: RunOptions) {
       OM_AGI_QDRANT_URL: "http://127.0.0.1:9",
       ...(options.stubMode === undefined ? {} : { OM_AGI_STUB_MODE: options.stubMode }),
       ...(options.ollama === undefined ? {} : { OLLAMA_HOST: options.ollama }),
+      ...options.env,
     },
     stdout: "pipe",
     stderr: "pipe",
@@ -162,6 +183,38 @@ function token(): string {
 
 function ask(value: string): string {
   return `Reply with the token ${value} and nothing else.`;
+}
+
+/** Every argv a stub vendor was handed during the test, in order (D-142). */
+async function argvOf(home: string, name: string): Promise<string[][]> {
+  const text = await readFile(join(home, `argv-${name}.jsonl`), "utf8").catch(() => "");
+  return text.trim() === "" ? [] : text.trim().split("\n").map((line) => JSON.parse(line) as string[]);
+}
+
+/** The model a stub vendor was handed on one run, or undefined when it was handed none. */
+function modelIn(argv: readonly string[]): string | undefined {
+  const at = argv.indexOf("--model");
+  return at === -1 ? undefined : argv[at + 1];
+}
+
+interface LineModel {
+  readonly backend: string;
+  readonly model: string | null;
+  readonly model_requested?: string | null;
+  readonly cost: { readonly usd_micros: number } | null;
+  readonly not_charged: string | null;
+}
+
+/** This test's ledger lines for `example`, oldest first. */
+async function ledgerLines(home: string): Promise<LineModel[]> {
+  const dir = join(home, "state", "om-agi", "ledger", "example");
+  const files = await readdir(dir).catch(() => [] as string[]);
+  const lines: LineModel[] = [];
+  for (const file of files.sort()) {
+    const text = (await readFile(join(dir, file), "utf8")).trim();
+    if (text !== "") lines.push(...text.split("\n").map((l) => JSON.parse(l) as LineModel));
+  }
+  return lines;
 }
 
 async function writeLocalKey(home: string): Promise<void> {
@@ -523,6 +576,29 @@ console.log(JSON.stringify({
     }
   });
 
+  test("--json and the ledger never present a model the vendor CLI did not report as the one it ran (S15.9, PR #3 L2, D-142)", async () => {
+    // Since D-142 `--backend claude --model opus` hands claude `--model opus`. This stub prints no model, so
+    // what claude ran is still unknown: `model` stays null, and `opus` is recorded as what was asked, apart.
+    const harness = await makeHarness();
+    const value = token();
+    const result = await run(
+      harness.home,
+      ["turn", SOUL, "--subject", "example", "--prompt", ask(value), "--backend", "claude", "--model", "opus", "--json"],
+      { path: harness.withVendors, ollama: NO_OLLAMA },
+    );
+    expect(result.code, result.stderr).toBe(0);
+    const parsed = JSON.parse(result.stdout) as { backend: string; model: string | null; model_requested: string | null; text: string };
+    expect(parsed.backend).toBe("claude");
+    expect(parsed.text).toContain(value);
+    expect(parsed.model).toBeNull();
+    expect(parsed.model_requested).toBe("opus");
+    expect((await argvOf(harness.home, "claude"))[0]).toEqual(expect.arrayContaining(["--model", "opus"]));
+    const line = (await ledgerLines(harness.home))[0]!;
+    expect(line.model).toBeNull();
+    expect(line.model_requested).toBe("opus");
+    expect(line.cost).toBeNull();
+  });
+
   test("--json carries the route, the confidence and the evidence", async () => {
     const harness = await makeHarness();
     const ollama = serveOllama();
@@ -756,4 +832,124 @@ describe("ohmyagi turn — captures itself (D-032)", () => {
       await ollama.server.stop(true);
     }
   });
+});
+
+describe("D-142 — a model reaches the vendor CLI it was chosen for, and no other", () => {
+  /** Stubs that print a model report, resolving `opus` the way claude does. */
+  const REPORTING = { OM_AGI_STUB_REPORT: "1", OM_AGI_STUB_RESOLVE: JSON.stringify({ opus: "claude-opus-5-5" }) };
+
+  test("--backend claude --model opus: claude is handed it, and the line records what claude said it ran", async () => {
+    const harness = await makeHarness();
+    const value = token();
+    const result = await run(
+      harness.home,
+      ["turn", SOUL, "--subject", "example", "--prompt", ask(value), "--backend", "claude", "--model", "opus", "--json"],
+      { path: harness.withVendors, ollama: NO_OLLAMA, env: REPORTING },
+    );
+    expect(result.code, result.stderr).toBe(0);
+    const argv = (await argvOf(harness.home, "claude"))[0]!;
+    // The flag and the model, adjacent, the model one argv element of its own.
+    expect(argv[argv.indexOf("--model") + 1]).toBe("opus");
+    expect(argv.filter((a) => a === "--model")).toHaveLength(1);
+
+    const parsed = JSON.parse(result.stdout) as { model: string | null; model_requested: string | null };
+    expect(parsed.model).toBe("claude-opus-5-5");
+    expect(parsed.model_requested).toBe("opus");
+    const line = (await ledgerLines(harness.home))[0]!;
+    expect(line.model).toBe("claude-opus-5-5");
+    expect(line.model_requested).toBe("opus");
+    // Priced by what it ran: 100 × $4.00 + 10 × $20.00 per million tokens (claude-opus-5-5, shipped) = 600 µ$.
+    expect(line.cost?.usd_micros).toBe(600);
+    expect(line.not_charged).toBeNull();
+  }, 20_000);
+
+  test("a fallback chain: each step gets its own model or none — the one chosen for claude never reaches grok", async () => {
+    const harness = await makeHarness();
+    const value = token();
+    const result = await run(
+      harness.home,
+      ["turn", SOUL, "--subject", "example", "--prompt", ask(value), "--backend", "claude,grok", "--model", "claude=opus", "--json"],
+      { path: harness.withVendors, ollama: NO_OLLAMA, env: { ...REPORTING, OM_AGI_STUB_SILENT: "claude", OM_AGI_STUB_DEFAULT_MODEL: "grok-4.7" } },
+    );
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stderr).toContain("model: claude → opus; grok run their own default");
+    expect((await argvOf(harness.home, "claude")).map(modelIn)).toEqual(["opus"]);
+    expect((await argvOf(harness.home, "grok")).map(modelIn)).toEqual([undefined]);
+
+    const parsed = JSON.parse(result.stdout) as { backend: string; model: string | null; model_requested: string | null };
+    expect(parsed.backend).toBe("grok");
+    // grok ran its own default, and said which: that is the model; nothing was asked of it.
+    expect(parsed.model).toBe("grok-4.7");
+    expect(parsed.model_requested).toBeNull();
+    const lines = await ledgerLines(harness.home);
+    expect(lines.map((l) => [l.backend, l.model_requested ?? null])).toEqual([
+      ["claude", "opus"],
+      ["grok", null],
+    ]);
+  }, 20_000);
+
+  test("two steps, two models: each is handed its own", async () => {
+    const harness = await makeHarness();
+    const result = await run(
+      harness.home,
+      ["turn", SOUL, "--subject", "example", "--prompt", ask(token()), "--backend", "claude,grok", "--model", "grok=grok-4.7,claude=opus"],
+      { path: harness.withVendors, ollama: NO_OLLAMA, env: { OM_AGI_STUB_SILENT: "claude" } },
+    );
+    expect(result.code, result.stderr).toBe(0);
+    expect((await argvOf(harness.home, "claude")).map(modelIn)).toEqual(["opus"]);
+    expect((await argvOf(harness.home, "grok")).map(modelIn)).toEqual(["grok-4.7"]);
+  }, 20_000);
+
+  test("a bare --model in a chain of several stays ollama's, and no vendor CLI is handed it", async () => {
+    const harness = await makeHarness();
+    const ollama = serveOllama();
+    try {
+      const result = await run(
+        harness.home,
+        ["turn", SOUL, "--subject", "example", "--prompt", ask(token()), "--backend", "claude,ollama", "--model", "stub"],
+        { path: harness.withVendors, ollama: ollama.url, env: { OM_AGI_STUB_SILENT: "claude" } },
+      );
+      expect(result.code, result.stderr).toBe(0);
+      expect(result.stderr).toContain("answered by ollama");
+      expect(result.stderr).toContain("model: ollama → stub; claude run their own default");
+      expect((await argvOf(harness.home, "claude")).map(modelIn)).toEqual([undefined]);
+      const lines = await ledgerLines(harness.home);
+      expect(lines.map((l) => [l.backend, l.model, l.model_requested ?? null])).toEqual([
+        ["claude", null, null],
+        ["ollama", "stub", "stub"],
+      ]);
+    } finally {
+      await ollama.server.stop(true);
+    }
+  }, 20_000);
+
+  test("a model that cannot be handed over is refused before anything is sent, with exit 2", async () => {
+    const harness = await makeHarness();
+    const cases: readonly (readonly string[])[] = [
+      ["--backend", "claude", "--model", "-rf"],
+      ["--backend", "claude", "--model=--dangerously-skip-permissions"],
+      ["--backend", "claude", "--model", "opus;rm -rf /"],
+      ["--backend", "claude", "--model", "$(id)"],
+      ["--backend", "claude", "--model", "opus\n--yes"],
+      ["--backend", "claude", "--model", "x".repeat(129)],
+      // Which step was meant cannot be known.
+      ["--backend", "claude,codex", "--model", "opus"],
+      // Not a step of this chain, or a step that runs local-coder and nothing else.
+      ["--backend", "claude", "--model", "grok=grok-4.7"],
+      ["--model", "grok=grok-4.7"],
+      ["--backend", "claude-local", "--model", "opus"],
+      ["--backend", "claude", "--model", "claude=opus,claude=haiku"],
+    ];
+    for (const extra of cases) {
+      const result = await run(harness.home, ["turn", SOUL, "--subject", "example", "--prompt", ask(token()), ...extra], {
+        path: harness.withVendors,
+        ollama: NO_OLLAMA,
+      });
+      expect(result.code, `${extra.join(" ")}\n${result.stderr}`).toBe(2);
+      expect(result.stderr, extra.join(" ")).toContain("Nothing was sent");
+    }
+    // Nothing was spawned and nothing was written.
+    for (const name of ["claude", "codex", "grok"]) expect(await argvOf(harness.home, name)).toEqual([]);
+    expect(await ledgerLines(harness.home)).toEqual([]);
+  }, 30_000);
 });

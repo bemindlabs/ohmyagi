@@ -93,8 +93,13 @@ import type { ScopeKind } from "./search.ts";
  * The cost is one line and the alternative is teaching ourselves that this rule
  * is negotiable when the last bump was recent — which is the thing D-027 and
  * D-028 both say a discipline must not be.
+ *
+ * `@5` is S15.8's, by the same rule: a scope may now be of kind `kept` — what
+ * `--personal` keeps on purpose outside git, the agent's signing key — and
+ * `verification.keptHits` counts its hits. A reader that switched on `deletable`
+ * and `git` meets a third kind it has no arm for.
  */
-export const CERTIFICATE_SCHEMA = "om-agi/erase-certificate@4";
+export const CERTIFICATE_SCHEMA = "om-agi/erase-certificate@5";
 
 /**
  * Why the certificate does or does not carry a commit count.
@@ -223,6 +228,8 @@ export interface EraseCertificate {
     readonly failures: number;
     readonly deletableHits: number;
     readonly gitHits: number;
+    /** Hits in what `--personal` keeps on purpose — the signing key's path names the subject (D-138). */
+    readonly keptHits: number;
     readonly personalHits: number | null;
     /** `path:line` for every hit, with the needle's label and never its text. */
     readonly where: readonly string[];
@@ -447,6 +454,7 @@ export function certificate(input: CertificateInput): EraseCertificate {
       failures: verification?.failures ?? 0,
       deletableHits: verification?.search.deletableHits ?? 0,
       gitHits: verification?.search.gitHits ?? 0,
+      keptHits: verification?.search.keptHits ?? 0,
       personalHits: verification?.personal?.gitHits ?? null,
       where: verification === null ? [] : hitLines(verification),
       searched: SEARCHED,
@@ -720,6 +728,7 @@ export function formatCertificate(cert: EraseCertificate): readonly string[] {
         `${cert.verification.failures} failure(s) · ` +
         `${cert.verification.deletableHits} hit(s) where there must be none · ` +
         `${cert.verification.gitHits} hit(s) in git-tracked files` +
+        (cert.verification.keptHits === 0 ? "" : ` · ${cert.verification.keptHits} hit(s) in what --personal keeps (the signing key)`) +
         (cert.verification.personalHits === null
           ? ""
           : ` · ${cert.verification.personalHits} personal value(s) still in kept files`),

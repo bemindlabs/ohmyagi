@@ -25,6 +25,7 @@ import { IMPORT_KINDS, MAX_SOURCE_BYTES, urlProblem } from "../memory/import.ts"
 import { MAX_TAGS, withTags } from "../memory/tags.ts";
 import type { AgentInfo, PrivacyState, SettingsState, ViewState } from "./view.ts";
 import { isLocalBackend } from "./turninfo.ts";
+import { modelProblem } from "../exec/registry.ts";
 import { PAGE_HTML } from "./page.ts";
 import { encodeQr, qrPath } from "./qr.ts";
 import { keyPrint, newKey } from "./key.ts";
@@ -52,7 +53,7 @@ export interface WebDeps {
     write: boolean,
   ) => Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string }>;
   /** One ledger line, asked and answered, or undefined. */
-  readonly turnDetail: (id: string) => Promise<{ readonly asked: string | null; readonly answer: string | null; readonly backend: string; readonly model: string | null; readonly when: string; readonly content: string } | undefined>;
+  readonly turnDetail: (id: string) => Promise<{ readonly asked: string | null; readonly answer: string | null; readonly backend: string; readonly model: string | null; readonly modelRequested: string | null; readonly when: string; readonly content: string } | undefined>;
   /** The soul on every axis, or why it does not load. */
   readonly profile: () => Promise<{ readonly ok: true; readonly profile: Profile } | { readonly ok: false; readonly reason: string }>;
   /** `soul edit` with this profile — a dry run unless `write`. */
@@ -93,9 +94,13 @@ export interface WebServer {
 
 const ID = /^[0-9a-f-]{8,64}$/;
 const CATEGORIES = ["read", "write", "run", "reach"];
-/** A backend chain as `turn --backend` takes it, and a model name — nothing a shell or a flag could be smuggled in. */
+/**
+ * A backend chain as `turn --backend` takes it, and a model name — nothing a shell or a flag could be smuggled
+ * in. The model's rule is the engine's own (`modelProblem`, D-142), so the page can name exactly what `turn`
+ * would hand a CLI — `opus[1m]` included — and nothing it would refuse.
+ */
 const BACKEND_CHAIN = /^[a-z][a-z0-9-]{0,20}(,[a-z][a-z0-9-]{0,20}){0,5}$/;
-const MODEL = /^[A-Za-z0-9][A-Za-z0-9._:\/-]{0,99}$/;
+const isModel = (value: unknown): value is string => typeof value === "string" && modelProblem(value) === undefined;
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { "cache-control": "no-store" } });
 
 /** The Host values this server answers to, and nothing else (DNS rebinding). */
@@ -315,7 +320,7 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[], 
       // The page may name a backend and a model (Settings); anything that is not
       // one is ignored and the flags `ohmyagi web` was started with apply.
       const backend = typeof body["backend"] === "string" && BACKEND_CHAIN.test(body["backend"]) ? body["backend"] : undefined;
-      const model = typeof body["model"] === "string" && MODEL.test(body["model"]) ? body["model"] : undefined;
+      const model = isModel(body["model"]) ? body["model"] : undefined;
       // What the page names replaces what `ohmyagi web` was started with (D-085). A model belongs to its
       // backend: a model alone keeps the started backend, but a backend alone drops the started model —
       // `claude --model qwen3.8:27b` is a turn that cannot answer.
@@ -353,7 +358,9 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[], 
         route: answer["route"] ?? "",
         backend: answeredBy,
         local: answeredBy === "" ? false : isLocalBackend(answeredBy),
+        // D-142: what the backend ran, and apart from it what it was asked for — the page labels the second as asked.
         model: typeof answer["model"] === "string" ? answer["model"] : null,
+        modelRequested: typeof answer["model_requested"] === "string" ? answer["model_requested"] : null,
         held: typeof answer["held"] === "number" ? answer["held"] : 0,
         heldMessages: typeof answer["heldMessages"] === "number" ? answer["heldMessages"] : 0,
         changed: answer["changed"] ?? null,

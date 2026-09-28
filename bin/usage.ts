@@ -66,7 +66,7 @@ Usage:
                                         when it is the one you named, if you
                                         named one.
   ohmyagi soul verify <dir> --subject <id> [--backend a,b] [--home <dir>]
-                     [--model <m>] [--runs N] [--json]
+                     [--model <m> | --model <backend>=<m>,…] [--runs N] [--json]
                                         Ask each backend three questions only
                                         this soul can answer, and report what
                                         came back. Writes nothing.
@@ -78,12 +78,14 @@ Usage:
                                         without --apply; all or nothing.
   ohmyagi soul card <dir> --subject <id> [--url <base-url>]
                                         Print the A2A 1.0.0 Agent Card this soul
-                                        would publish — from role.md only, and
-                                        saying it is an AI. Nothing is served:
-                                        A2A stays off until the egress filter
-                                        (S8.3) exists.
+                                        would publish — from role.md only,
+                                        saying it is an AI, and with the agent's
+                                        public key if \`ohmyagi key\` made one
+                                        (it says so if not). Makes no key and
+                                        serves nothing; \`a2a serve\` serves it.
   ohmyagi turn <dir> --subject <id> (--prompt <text> | --prompt-file <path>)
-             [--backend a,b,c] [--route auto|local|cloud] [--model <m>] [--private] [--proposal <id>]
+             [--backend a,b,c] [--route auto|local|cloud] [--model <m> | --model <backend>=<m>,…]
+             [--private] [--proposal <id>]
              [--no-recall] [--no-proposals] [--recall-chars <n>] [--history-json <[{role,text}]>] [--json]
                                         Run one turn wearing this soul. Tries
                                         each backend in order until one really
@@ -113,6 +115,24 @@ Usage:
                                         filed as a proposal (filed by the
                                         agent); one already refused is not
                                         filed again.
+                                        --model is one backend's model, never
+                                        the whole chain's (D-142). With one
+                                        --backend it is that backend's, and a
+                                        vendor CLI is handed it on its own
+                                        model flag. In a chain of several a
+                                        bare name is ollama's, as before, and
+                                        claude=opus,ollama=qwen3:8b gives each
+                                        named step its own; the rest run their
+                                        own default. A backend that takes none
+                                        (claude-local, grok-local) or a name
+                                        that is not a model's (a leading -,
+                                        a space, a quote) is refused, exit 2,
+                                        before anything is sent. The ledger
+                                        and --json name the model the CLI said
+                                        it ran (claude's and grok's output
+                                        do), and what was asked apart, as
+                                        model_requested: an alias like opus is
+                                        never priced as a model.
   ohmyagi ledger show --subject <id> [--since <iso>] [--until <iso>]
                      [--content] [--json]
                                         What this subject's turns were, when,
@@ -379,6 +399,7 @@ Usage:
                                         Print a systemd timer and a cron line
                                         that call tick. Installs nothing.
   ohmyagi web <dir> --subject <id> [--port <n>] [--host <addr>] [--name <host,…>] [--https] [--key-file <path>] [--qr]
+             [--backend a,b] [--model <m> | --model <backend>=<m>,…]
                                         A page for one agent in your browser:
                                         what it may do, what waits for your
                                         yes or no, a chat, and the brake. Every
@@ -393,6 +414,13 @@ Usage:
                                         tailscale serve, on loopback.
                                         --key-file keeps the link across
                                         restarts (made once, 600).
+                                        --backend and --model are what a chat
+                                        message uses until the page picks
+                                        others; --model is read as turn reads
+                                        it. The page offers each backend the
+                                        names its CLI documents and the price
+                                        table lists, and shows a model a CLI
+                                        was only asked for as "asked for".
   ohmyagi a2a peers --subject <id>        Who this agent may talk to, both ways.
   ohmyagi a2a allow <name> --endpoint <url> --subject <id> [--send-token-file <path>]
                                         Allow a peer: typed at a terminal, never
@@ -401,12 +429,110 @@ Usage:
                                         Take a peer away.
   ohmyagi a2a serve <dir> --subject <id> [--port <n>] [--host <addr>]
                                         Listen for allowed peers (loopback) and
-                                        serve the agent card. What arrives goes
-                                        to the ledger and the inbox; none is run.
+                                        serve the agent card, with the agent's
+                                        public key if \`ohmyagi key\` made one.
+                                        What arrives goes to the ledger and the
+                                        inbox; none is run.
   ohmyagi a2a send <dir> --subject <id> --to <name> --text <message>
                                         Send one message to a peer, screened
                                         like a turn; kept in means not sent.
   ohmyagi a2a inbox --subject <id>      What peers have sent.
+  ohmyagi key <agent-dir> --subject <id>
+                                        The agent's own ed25519 signing key
+                                        (D-108): made the first time, the same
+                                        public key shown every time after, never
+                                        replaced. The private key stays in a 600
+                                        file in a 700 directory under the data
+                                        root, outside git, and is never printed;
+                                        the public key goes on the agent card.
+                                        A full erase removes it; erase
+                                        --personal keeps it, as it keeps role.md.
+  ohmyagi key prove <agent-dir> --subject <id> --market <origin> --listing <slug> --nonce <nonce> [--json]
+                                        Prove to a market that this agent holds
+                                        its key (D-141): signs the market's
+                                        challenge — {market, listing, nonce,
+                                        at} — with it, for the market to
+                                        register the public key. --market is
+                                        an origin, https://host[:port] (http
+                                        only to 127.0.0.1 or localhost), as a
+                                        browser writes it: no path, no
+                                        trailing /, lower case, punycode.
+                                        --nonce is the 43-character challenge
+                                        (--nonce=<nonce> if it begins with --).
+                                        Anything else is refused, exit 2.
+                                        Use only a nonce from your OWN
+                                        listing's key page: a proof signed
+                                        for someone else's listing puts your
+                                        key on it.
+                                        --json prints the proof alone, on one
+                                        line. Needs \`ohmyagi key\` first;
+                                        makes no key.
+  ohmyagi key verify-proof <file|-> --key <public-key> --market <origin> --listing <slug> --nonce <nonce>
+                                        Check a proof as the market does. Exit
+                                        0 only when it is signed by exactly
+                                        --key's key and names exactly that
+                                        market, listing and nonce; 1 when it
+                                        is not; 2 for a command line it will
+                                        not run. Whether the nonce is still
+                                        unused is the market's to know.
+  ohmyagi usage report <agent-dir> --subject <id> [--since <iso>] [--until <iso>] [--market <origin> --listing <slug> [--job <id>]] [--json]
+                                        What the agent's turns used and cost,
+                                        signed with its key (D-106, D-110): one
+                                        row per model delivery in the ledger —
+                                        ids, time, backend, model, input, output
+                                        and cache read/write tokens, and the
+                                        cost in whole US micro-dollars with the
+                                        rates and price table it came from.
+                                        Never a prompt, an answer, memory or the
+                                        subject id. A count the ledger does not
+                                        have is null, not 0; a turn with a count
+                                        or a price missing is not charged, and
+                                        says why. --market and --listing
+                                        (both, or neither) bind it to one
+                                        listing on one market, and --job to
+                                        a job there (D-141): signed, so it
+                                        counts at that listing and nowhere
+                                        else. Without them it is bound to no
+                                        market, and no market takes it.
+                                        --json prints the signed report alone,
+                                        on one line. Needs \`ohmyagi key\`
+                                        first; makes no key.
+  ohmyagi usage verify <file|-> [--key <public-key>] [--market <origin> --listing <slug>]
+                                        Check a signed report against the key
+                                        on the agent card. Exit 0: a well-formed
+                                        usage report signed by exactly --key's
+                                        key. 1: not valid — changed, another
+                                        key, a weak key, a duplicate field, a
+                                        number not in plain integer digits
+                                        (1.0, 1e3, -0), a string with control
+                                        characters. 2: a command line it will
+                                        not run. 3: signed by the key inside
+                                        it, but no --key was given, so whose
+                                        key it is is unknown.
+                                        A cost that does not follow from its
+                                        own row's counts and rates is not valid,
+                                        and nor is one that claims a shipped
+                                        table at rates that table does not have.
+                                        Costs are shown grouped by the price
+                                        each row claims; rates the owner set,
+                                        or a shipped table this build does not
+                                        carry, are said to be not checked, and
+                                        the total is split the same way. With
+                                        --market and --listing, a report bound
+                                        anywhere else, or to nothing, is not
+                                        valid; without them its binding is
+                                        shown and said to be not checked.
+                                        Takes no other option.
+  ohmyagi usage prices [--json]         The prices a turn is charged at now, per
+                                        million tokens (D-139): the dated table
+                                        shipped with om-agi, and yours in
+                                        $XDG_STATE_HOME/om-agi/prices.json — the
+                                        only place a model on this machine gets
+                                        a price. Yours replaces a shipped entry
+                                        for the same backend and model. A model
+                                        in neither has no price, never 0. Exit 1
+                                        when yours cannot be used: until it is
+                                        fixed, nothing is charged.
   ohmyagi persona extract <dir> --subject <id> --from <path,…> [--model <m>] [--max-chunks <n>]
                                         Draft a soul from real artifacts with a
                                         model on this machine. Every claim must
@@ -444,10 +570,13 @@ Usage:
   ohmyagi chat remove <platform> <user-id> --subject <id>
                                         Stop answering them.
   ohmyagi chat serve <dir> --subject <id> --token-file <path> [--platform telegram] [--once]
+             [--backend <b>] [--model <m> | --model <backend>=<m>,…]
                                         Answer allowed people on Telegram. Each
                                         answer is a level-1 turn, screened by the
                                         filter and the local judge; it says it is
                                         an AI first; anyone else gets nothing.
+                                        --backend and --model go to each turn,
+                                        read as turn reads them.
   ohmyagi update [--check] [--yes]       Is there a newer release? --check only
                                         asks; without --yes it says what it would
                                         replace; --yes installs this machine's

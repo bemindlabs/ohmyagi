@@ -16,7 +16,7 @@ const STATE: ViewState = {
   triggers: [],
   recent: [],
   canTriage: false, version: { current: "0.6.1", latest: "0.7.0" },
-  engine: { chain: ["claude", "codex", "ollama"], localModel: "qwen3.8:27b", judge: "qwen3.8:27b", last: { backend: "claude", model: null, when: "just now" } },
+  engine: { chain: ["claude", "codex", "ollama"], localModel: "qwen3.8:27b", judge: "qwen3.8:27b", last: { backend: "claude", model: null, modelRequested: null, when: "just now" } },
 };
 
 const SETTINGS: SettingsState = {
@@ -63,7 +63,7 @@ function fakeDeps() {
       return { code: 0, stdout: "written", stderr: "" };
     },
     privacy: async () => ({ capture: { on: true, lines: ["capture: on since x"] }, keptIn: [{ when: "now", at: "t", backend: "claude", why: "personal needle #1" }], keptInTotal: 1, needles: 9, judge: "qwen", basis: [{ id: "d858fe8c", basis: "owner", uses: ["memory"], approvedBy: "me", at: "2026-09-25", expires: null, state: "active", note: "" }] }),
-    turnDetail: async (tid) => (tid === "11111111-2222-3333-4444-555555555555" ? { asked: "q", answer: "a", backend: "claude", model: null, when: "just now", content: "full" } : undefined),
+    turnDetail: async (tid) => (tid === "11111111-2222-3333-4444-555555555555" ? { asked: "q", answer: "a", backend: "claude", model: null, modelRequested: null, when: "just now", content: "full" } : undefined),
     profile: async () => ({ ok: true, profile: PROFILE }),
     editProfile: async (profile, write) => {
       runs.push(["soul", "edit", write ? "--yes" : "(dry)", profile.name]);
@@ -547,6 +547,35 @@ describe("Memories CRUD (D-081)", () => {
     for (const id of ["memImp", "memImport", "memFiles", "memUrl", "memImpGo", "memQueue"]) expect(PAGE_HTML).toContain(`id="${id}"`);
   });
 
+  test("an answer's line names the model the backend ran, and a requested one only as asked (S15.9, PR #3 R1, D-142)", () => {
+    // `turn --json` sends model null for a vendor CLI whose output named no model. The line used to fall back to
+    // the picker, so "claude · opus" still read as answered by claude on opus. Since D-142 the model does reach
+    // claude, and what it asked for travels apart (`model_requested`) and is labelled as asked, never as the model.
+    const source = /function turnLine\(r, pick\) \{[\s\S]*?\n  \}\n/.exec(PAGE_HTML)?.[0];
+    const label = /const modelLabel = [^\n]*\n/.exec(PAGE_HTML)?.[0];
+    expect(source).toBeDefined();
+    expect(label).toBeDefined();
+    const turnLine = new Function(
+      "engine",
+      `const isLocalId = (id) => id === "ollama" || id.endsWith("-local"); ${label} ${source}; return turnLine;`,
+    )({ localModel: "qwen3:8b" }) as (r: Record<string, unknown>, pick: { model?: string }) => string;
+    const claude = { route: "answered by claude · 1.2s", backend: "claude", held: 0, heldMessages: 0 };
+    expect(turnLine({ ...claude, model: null }, { model: "opus" })).toBe("answered by claude · cloud · 1.2s");
+    expect(turnLine({ ...claude, model: "claude-opus-5" }, { model: "opus" })).toBe("answered by claude · cloud · claude-opus-5 · 1.2s");
+    // Asked for an alias, and the output named what it resolved to: both, and which is which.
+    expect(turnLine({ ...claude, model: "claude-opus-5-5", modelRequested: "opus" }, { model: "opus" })).toBe(
+      "answered by claude · cloud · claude-opus-5-5 (asked for opus) · 1.2s",
+    );
+    // Asked, and the output named nothing: the request is shown as a request, not as the model it ran.
+    expect(turnLine({ ...claude, model: null, modelRequested: "opus" }, { model: "opus" })).toBe("answered by claude · cloud · asked for opus · 1.2s");
+    // The same name asked and reported is said once.
+    expect(turnLine({ ...claude, model: "claude-opus-5", modelRequested: "claude-opus-5" }, {})).toBe("answered by claude · cloud · claude-opus-5 · 1.2s");
+    // A local backend still falls back to what the page knows it runs, then to the pick.
+    const ollama = { route: "answered by ollama · 0.4s", backend: "ollama", held: 0, heldMessages: 0 };
+    expect(turnLine({ ...ollama, model: null }, {})).toBe("answered by ollama · on this machine · qwen3:8b · 0.4s");
+    expect(turnLine({ ...ollama, model: "stub" }, {})).toBe("answered by ollama · on this machine · stub · 0.4s");
+  });
+
   test("the page's script parses — one bad quote in the template stops every button", () => {
     const scripts = [...PAGE_HTML.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]!);
     expect(scripts.length).toBeGreaterThan(0);
@@ -572,6 +601,10 @@ describe("Memories CRUD (D-081)", () => {
     await turn({ prompt: "c", model: "typhoon-4b" });
     await turn({ prompt: "d", backend: "claude" });
     await turn({ prompt: "e", backend: "claude; rm -rf /", model: "--yes" });
+    // D-142: the page names what the engine would hand a CLI — its own rule, so `opus[1m]` is a name, and
+    // anything `turn` would refuse is not sent at all.
+    await turn({ prompt: "f", backend: "claude", model: "opus[1m]" });
+    await turn({ prompt: "g", backend: "claude", model: "opus --tools Bash" });
     const flags = runs.filter((r) => r[0] === "turn").map((r) => r.slice(r.indexOf("--json") + 1).join(" "));
     expect(flags).toEqual([
       "--backend ollama --model qwen3.8:27b",
@@ -579,6 +612,8 @@ describe("Memories CRUD (D-081)", () => {
       "--backend ollama --model typhoon-4b",
       "--backend claude",
       "--backend ollama --model qwen3.8:27b",
+      "--backend claude --model opus[1m]",
+      "--backend claude",
     ]);
     for (const id of ["chatPick", "pickRow", "chatBackend", "chatModel", "chatModelList"]) expect(PAGE_HTML).toContain(`id="${id}"`);
   });
@@ -721,7 +756,8 @@ describe("who handled each turn (S12.4)", () => {
       route: "answered by claude · identity arrived as system · 1.2s",
       backend: "claude",
       local: false,
-      model: "sonnet",
+      model: "claude-sonnet-5",
+      model_requested: "sonnet",
       held: 2,
       heldMessages: 1,
       changed: { added: ["made-by-the-turn.txt"], changed: [], removed: ["old-note.txt"] },
@@ -733,7 +769,9 @@ describe("who handled each turn (S12.4)", () => {
       ok: true,
       backend: "claude",
       local: false,
-      model: "sonnet",
+      // D-142: what claude said it ran, and apart from it what it was asked for.
+      model: "claude-sonnet-5",
+      modelRequested: "sonnet",
       held: 2,
       heldMessages: 1,
       changed: { added: ["made-by-the-turn.txt"], changed: [], removed: ["old-note.txt"] },
@@ -761,7 +799,7 @@ describe("who handled each turn (S12.4)", () => {
     // A child from before the field existed names no backend at all: nothing is invented.
     const legacy: WebDeps = { ...fakeDeps().deps, run: async () => ({ code: 0, stdout: JSON.stringify({ text: "hi", route: "answered by ollama" }), stderr: "" }) };
     const old = await (await handler(legacy, "tok", HOSTS)(req("/api/turn", { method: "POST", body: JSON.stringify({ prompt: "hi" }) }))).json();
-    expect(old).toMatchObject({ ok: true, text: "hi", backend: "", local: false, model: null, held: 0, heldMessages: 0, changed: null });
+    expect(old).toMatchObject({ ok: true, text: "hi", backend: "", local: false, model: null, modelRequested: null, held: 0, heldMessages: 0, changed: null });
   });
 
   test("the badge rides on the one local rule, and the change report stays collapsed until asked", () => {

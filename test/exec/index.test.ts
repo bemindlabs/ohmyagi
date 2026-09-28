@@ -101,10 +101,24 @@ describe("backend()", () => {
     }
   });
 
-  test("a vendor id ignores the model option — the model rides on the turn there", () => {
-    // Not a gap: for a CLI the model is a flag `headlessArgv` adds per request,
-    // so a default held on the object would be a second place it could differ.
-    expect(backend("claude", { model: "some-model" }).id).toBe("claude");
+  test("a vendor id keeps the model it was handed — the model belongs to the backend, not the turn (D-142)", () => {
+    // It used to be dropped here: the model was meant to ride on the turn request, and `turn` never put it there,
+    // because one request goes to every step of a chain. So `--backend claude --model opus` ran claude's default.
+    const claude = backend("claude", { model: "opus" });
+    expect(claude).toBeInstanceOf(CliExec);
+    expect((claude as CliExec).model).toBe("opus");
+    expect((backend("claude") as CliExec).model).toBeUndefined();
+    expect((backend("claude", { model: "" }) as CliExec).model).toBeUndefined();
+    for (const spec of VENDORS) expect((backend(spec.id, { model: "some-model" }) as CliExec).model).toBe("some-model");
+  });
+
+  test("a model a backend cannot take throws instead of building it without one (D-142)", () => {
+    // The commands refuse these first (`routeModels`), so reaching here is a programmer error — and building the
+    // backend on its default would run a model nobody asked for.
+    for (const id of LOCAL_BACKENDS) expect(() => backend(id, { model: "opus" })).toThrow("takes no other model");
+    expect(() => backend("claude", { model: "--dangerously-skip-permissions" })).toThrow("starts with '-'");
+    expect(() => backend("ollama", { model: "qwen3:8b; rm -rf /" })).toThrow("a character a model name does not have");
+    expect(backend("claude-local")).toBeInstanceOf(LocalCliExec);
   });
 });
 

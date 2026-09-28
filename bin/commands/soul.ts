@@ -11,7 +11,9 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { DEFAULT_A2A_URL, agentCard } from "../../src/a2a/index.ts";
 import { enclosingGitRepo } from "../../src/agent/index.ts";
-import { PHASE_A_BACKENDS, backend as buildBackend, expandPath } from "../../src/exec/index.ts";
+import { identityDirFor } from "../../src/identity/dir.ts";
+import { readAgentKey } from "../../src/identity/key.ts";
+import { PHASE_A_BACKENDS, backend as buildBackend, expandPath, routeModels } from "../../src/exec/index.ts";
 import {
   DEFAULT_RUNS,
   LEVEL_LEGEND,
@@ -474,7 +476,7 @@ async function cmdSoulVerify(argv: readonly string[]): Promise<number> {
   if (dir === undefined || subject === undefined || subject === "") {
     return usageError(
       "usage: ohmyagi soul verify <dir> --subject <id> [--backend a,b] [--home <dir>] " +
-        "[--model <m>] [--runs N] [--json]",
+        "[--model <m> | --model <backend>=<m>,…] [--runs N] [--json]",
     );
   }
 
@@ -505,9 +507,13 @@ async function cmdSoulVerify(argv: readonly string[]): Promise<number> {
   const loaded = await loadSoul(dir, id);
   if (!loaded.ok) return report(loaded.issues);
 
+  // D-142: each backend its own model, or none — the same routing `turn` uses. A bare name in a chain of
+  // several is ollama's; a vendor gets one only as `--model <vendor>=<name>` or as the only backend named.
+  const routed = routeModels(options.get("model"), backendIds);
+  if (!routed.ok) return usageError(routed.reason);
+
   const asked = options.get("home");
   const home = asked === undefined || asked === "" ? homedir() : resolve(asked);
-  const model = options.get("model");
   const json = options.has("json");
 
   // The env a probe runs under, and the env target paths are resolved against,
@@ -526,9 +532,10 @@ async function cmdSoulVerify(argv: readonly string[]): Promise<number> {
       env: { ...process.env, ...probeEnv },
       which: whichOnPath,
     });
-    const backends = mapNonEmpty(backendIds, (backendId) =>
-      buildBackend(backendId, model === undefined || model === "" ? {} : { model }),
-    );
+    const backends = mapNonEmpty(backendIds, (backendId) => {
+      const own = routed.models.get(backendId);
+      return buildBackend(backendId, own === undefined ? {} : { model: own });
+    });
 
     const result = await verifySoul(loaded.soul, backends, {
       targets,
@@ -651,7 +658,10 @@ async function cmdSoulCard(argv: readonly string[]): Promise<number> {
   }
   const loaded = await loadSoul(dir, id);
   if (!loaded.ok) return report(loaded.issues);
-  console.log(JSON.stringify(agentCard(loaded.soul, options.get("url") ?? DEFAULT_A2A_URL), null, 2));
+  // S15.8: the key as it is, read and never made — printing a card creates nothing.
+  const key = await readAgentKey(identityDirFor({ home: homedir(), env: process.env }, id));
+  if (key.state === "refused") console.error(`ohmyagi: the card says there is no usable key — ${key.reason}`);
+  console.log(JSON.stringify(agentCard(loaded.soul, options.get("url") ?? DEFAULT_A2A_URL, key.state === "present" ? key.key : null), null, 2));
   return 0;
 }
 

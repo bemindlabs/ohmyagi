@@ -248,7 +248,8 @@ describe("the document", () => {
       null,
     );
 
-    expect(cert.schema).toBe("om-agi/erase-certificate@4");
+    // `@5` since S15.8, which added the `kept` scope kind; `no-git` is `@4`'s and still means what it did.
+    expect(cert.schema).toBe("om-agi/erase-certificate@5");
     expect(cert.agent.history).toBe("no-git");
     expect(cert.agent.commits).toBeNull();
     expect(cert.agent.remotes).toEqual([]);

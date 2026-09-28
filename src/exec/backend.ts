@@ -113,20 +113,20 @@ export interface TurnRequest {
  *
  * S2.1 AC1 asks this interface for `(output, exit_code, duration, cost)`. The
  * first three are `text`, `evidence.exitCode` and `evidence.durationMs`. The
- * fourth is `evidence.usage`, and it is counted in **tokens rather than
+ * fourth is `evidence.usage`, and a backend reports it in **tokens, never in
  * money** — a decision, not a gap left for later.
  *
- * Money was measurable and was rejected. claude prints `total_cost_usd` and it
- * came back at $0.81 for a two-character answer, nearly all of it the list
- * price of writing 81,000 tokens into a cache that a subscription holder is
- * not billed for. codex quotes API rates the same way. A local model has no
- * bill at all, and writing `0` there would claim that electricity and a
- * GPU-hour are free. Each of those numbers is true for some readers and false
- * for others, with nothing in the line to say which — so none of them is
- * recorded, and the ledger's `cost` field stays null by decision.
+ * The vendor's money was measurable and was rejected. claude prints
+ * `total_cost_usd` and it came back at $0.81 for a two-character answer, nearly
+ * all of it the list price of writing 81,000 tokens into a cache that a
+ * subscription holder is not billed for. codex quotes API rates the same way. A
+ * local model has no bill at all, and writing `0` there would claim that
+ * electricity and a GPU-hour are free. None of those figures is read.
  *
  * Tokens survive that test because they are read rather than priced: they are
- * what the backend itself printed about its own turn.
+ * what the backend itself printed about its own turn. Pricing them is a
+ * separate step with its own claim — the ledger line does it (S15.9, D-139),
+ * against a price table it names, and says so when it cannot.
  */
 export interface TurnResult {
   readonly backend: string;

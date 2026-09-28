@@ -96,14 +96,16 @@ describe("a ledger line", () => {
     }
   });
 
-  test("cost is null rather than zero — and null by decision, not by debt", () => {
-    // The survey that used to be missing has happened. Its answer was that no
-    // figure in a currency belongs here: a vendor's own is an API list price
-    // its subscription holders do not pay, and a local model's would be a `0`
-    // claiming electricity is free. Tokens carry the part that was measured.
+  test("a line from before S15.9 — cost null, no reason — still parses, and is not read as charged", () => {
+    // Every line written before turns were priced. D-023 kept money off the
+    // line; D-110 put om-agi's own arithmetic on it, with the table it came
+    // from. The old lines stay readable, or `forget` could not delete them.
     const parsed = parseLine(formatLine(entry()));
     expect(parsed.ok).toBe(true);
-    if (parsed.ok) expect(parsed.entry.cost).toBeNull();
+    if (parsed.ok) {
+      expect(parsed.entry.cost).toBeNull();
+      expect(parsed.entry.not_charged).toBeUndefined();
+    }
   });
 
   test.each([
@@ -172,6 +174,85 @@ describe("a line's account of what the turn used", () => {
     ["a usage that is not an object", "reported", "not an object"],
     ["a usage that is an array", [15, 24], "not an object"],
   ])("refuses %s, and says why", (_name, usageValue, reason) => {
+    const parsed = parseLine(JSON.stringify({ ...entry(), usage: usageValue }));
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) expect(parsed.reason).toContain(reason);
+  });
+});
+
+describe("a line's cost (S15.9, D-110, D-139)", () => {
+  const cost = {
+    usd_micros: 1_234,
+    table: "2026-09-28",
+    table_digest: "0123456789abcdef",
+    source: "default",
+    usd_micros_per_mtok: { input: 3_000_000, output: 15_000_000, cache_read: 300_000, cache_write: 3_750_000 },
+  } as const;
+
+  test("a charge round-trips, with its table and every rate it applied", () => {
+    const parsed = parseLine(formatLine(entry({ cost, not_charged: null })));
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) expect(parsed.entry.cost).toEqual(cost);
+  });
+
+  test("not charged is null and a reason — each reason round-trips", () => {
+    for (const reason of ["usage-missing", "usage-unsplit", "model-unknown", "table-unusable", "price-unknown"] as const) {
+      const parsed = parseLine(formatLine(entry({ cost: null, not_charged: reason })));
+      expect(parsed.ok, reason).toBe(true);
+    }
+  });
+
+  test("the cache counts and what a backend never prints round-trip", () => {
+    const usage = { status: "reported", input: 90, output: 4, total: null, cache_read: 80, cache_write: 0, not_printed: ["cache_write"] } as const;
+    const parsed = parseLine(formatLine(entry({ usage })));
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) expect(parsed.entry.usage).toEqual(usage);
+  });
+
+  test("D-143: the split of a cache write and the 1-hour rate round-trip; a line from before them still reads", () => {
+    const usage = { status: "reported", input: 310, output: 4, total: null, cache_read: 0, cache_write: 300, cache_write_5m: 100, cache_write_1h: 200, not_printed: [] } as const;
+    const unknown = { ...usage, cache_write_5m: null, cache_write_1h: null } as const;
+    const never = { ...unknown, not_printed: ["cache_write_5m", "cache_write_1h"] } as const;
+    const oneHour = { ...cost, usd_micros_per_mtok: { ...cost.usd_micros_per_mtok, cache_write_1h: 6_000_000 } };
+    for (const line of [entry({ usage, cost: oneHour, not_charged: null }), entry({ usage: unknown }), entry({ usage: never }), entry({ cost, not_charged: null })]) {
+      const parsed = parseLine(formatLine(line));
+      expect(parsed.ok, JSON.stringify(line.usage)).toBe(true);
+      if (parsed.ok) expect(parsed.entry).toEqual(line);
+    }
+  });
+
+  test.each([
+    ["a cost in dollars as a number", 0.81, undefined, "cost is not null or"],
+    ["a cost and a reason not to charge it", cost, "usage-missing", "not_charged must be null"],
+    ["a cost with no reason field at all", cost, "absent", "not_charged must be null"],
+    ["a null cost and a null reason", null, null, "gives no reason"],
+    ["a reason nobody defined", null, "too-expensive", "unknown not_charged"],
+    ["a fractional micro-dollar", { ...cost, usd_micros: 1.5 }, null, "usd_micros"],
+    ["a table version with a newline", { ...cost, table: "a\nb" }, null, "cost.table"],
+    ["a source nobody defined", { ...cost, source: "vendor" }, null, "cost.source"],
+    ["a cost with no table digest", (({ table_digest: _d, ...rest }) => rest)(cost), null, "cost is not null or"],
+    ["a table digest that is not 16 hex", { ...cost, table_digest: "ABCDEF0123456789" }, null, "cost.table_digest"],
+    ["a rate missing", { ...cost, usd_micros_per_mtok: { input: 1, output: 1, cache_read: 1 } }, null, "usd_micros_per_mtok is not"],
+    ["a negative rate", { ...cost, usd_micros_per_mtok: { ...cost.usd_micros_per_mtok, output: -1 } }, null, "usd_micros_per_mtok.output"],
+    ["an extra field", { ...cost, vendor_quoted_usd: 0.81 }, null, "cost is not null or"],
+    ["a rate nobody defined", { ...cost, usd_micros_per_mtok: { ...cost.usd_micros_per_mtok, cache_write_2h: 1 } }, null, "usd_micros_per_mtok is not"],
+    ["a fractional 1-hour rate", { ...cost, usd_micros_per_mtok: { ...cost.usd_micros_per_mtok, cache_write_1h: 1.5 } }, null, "usd_micros_per_mtok.cache_write_1h"],
+  ])("refuses %s, and says why", (_name, costValue, notCharged, reason) => {
+    const base = { ...entry(), cost: costValue } as Record<string, unknown>;
+    if (notCharged !== "absent") base["not_charged"] = notCharged;
+    const parsed = parseLine(JSON.stringify(base));
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) expect(parsed.reason).toContain(reason);
+  });
+
+  test.each([
+    ["a quoted cache count", { status: "reported", input: 1, output: 1, total: null, cache_read: "1" }, "usage.cache_read"],
+    ["a negative cache write", { status: "reported", input: 1, output: 1, total: null, cache_write: -1 }, "usage.cache_write"],
+    ["a quoted 1-hour write", { status: "reported", input: 1, output: 1, total: null, cache_write: 1, cache_write_1h: "1" }, "usage.cache_write_1h"],
+    ["a fractional 5-minute write", { status: "reported", input: 1, output: 1, total: null, cache_write: 1, cache_write_5m: 0.5 }, "usage.cache_write_5m"],
+    ["a field nobody prints", { status: "reported", input: 1, output: 1, total: null, not_printed: ["dollars"] }, "not_printed"],
+    ["not_printed that is not a list", { status: "reported", input: 1, output: 1, total: null, not_printed: "cache_read" }, "not_printed"],
+  ])("refuses usage with %s", (_name, usageValue, reason) => {
     const parsed = parseLine(JSON.stringify({ ...entry(), usage: usageValue }));
     expect(parsed.ok).toBe(false);
     if (!parsed.ok) expect(parsed.reason).toContain(reason);

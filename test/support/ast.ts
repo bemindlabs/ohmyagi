@@ -637,6 +637,29 @@ export function caseLabels(
   return seen ? found : ["absent"];
 }
 
+/**
+ * Whether a `switch` over one of `discriminants` has a `default:` that runs a command of its own rather than
+ * refusing — the shape of a verb that is both a command and a dispatcher (`key <agent-dir>` beside `key prove`,
+ * D-141). A default arm that calls `usageError` anywhere in it is a refusal, which is every other dispatcher's
+ * default, so they keep contributing their subcommands and not themselves.
+ */
+export function defaultRunsCommand(path: string, source: string, discriminants: readonly string[]): boolean {
+  const file = parse(path, source);
+  let runs = false;
+  const callsUsageError = (node: ts.Node): boolean =>
+    (ts.isCallExpression(node) && node.expression.getText(file) === "usageError") || (ts.forEachChild(node, callsUsageError) ?? false);
+  const visit = (node: ts.Node): void => {
+    if (ts.isSwitchStatement(node) && discriminants.includes(node.expression.getText(file))) {
+      for (const clause of node.caseBlock.clauses) {
+        if (ts.isDefaultClause(clause) && !clause.statements.some(callsUsageError)) runs = true;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(file, visit);
+  return runs;
+}
+
 /** Every file reachable from `entries` by following relative imports. */
 export async function reachable(entries: readonly string[]): Promise<Set<string>> {
   const seen = new Set<string>();

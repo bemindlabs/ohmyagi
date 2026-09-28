@@ -309,7 +309,14 @@ describe("UNREPORTED_USAGE", () => {
       input: null,
       output: null,
       total: null,
+      cache_read: null,
+      cache_write: null,
+      cache_write_5m: null,
+      cache_write_1h: null,
     });
+    // No `not_printed`: nobody has surveyed what such a backend prints, which is
+    // not the same as knowing it prints nothing (S15.9).
+    expect("not_printed" in UNREPORTED_USAGE).toBe(false);
   });
 
   test("is frozen, because it is shared by every line that has no counts", () => {

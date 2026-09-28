@@ -1,5 +1,246 @@
 # Changelog
 
+## 0.9.0 — 2026-09-28
+
+The agent's own signing key, and the first thing it signs: a usage report (S15.8, D-108, D-106, D-138). Then
+what each turn really cost, priced from the tokens apart and a dated table, and signed in the same report
+(S15.9, D-110, D-139). Then the engine's half of the protocol with the marketplace: proof that an agent holds
+the key it registers, and reports bound to the market, listing and job they are for (S15.4 step one, D-141).
+And a model chosen for a vendor CLI now reaches it, and the ledger records the model it says it ran (D-142).
+And claude's 1-hour cache writes are priced at their own rate, from a new shipped table `2026-09-29` (D-143).
+
+### Fixed — claude's 1-hour cache writes are priced at their own rate; shipped table 2026-09-29 (D-143)
+- **The under-charge D-139 warned of, and D-142 measured.** Anthropic prices a write to the 5-minute prompt cache
+  at 1.25× input and one to the 1-hour cache at 2×; table `2026-09-28` priced every claude cache write at the
+  5-minute rate. A turn measured on claude 2.1.283 wrote all 11,856 of its cache tokens to the 1-hour cache and
+  was 8,892 µ$ short.
+- **The split is read apart.** claude's JSON output says which cache it wrote, in
+  `usage.cache_creation.{ephemeral_5m_input_tokens, ephemeral_1h_input_tokens}` (measured with one real
+  `--model haiku` turn on 2.1.283; `modelUsage` carries no split). A usage gains `cache_write_5m` and
+  `cache_write_1h`, parts of `cache_write` — kept only when both are printed and add up to it. A backend that
+  never splits its writes (grok, ollama, codex) lists both in `not_printed`, and its writes stay one part at
+  the `cache_write` rate. Lines written before still parse.
+- **Shipped table `2026-09-29`, now the default.** Every entry gains `cache_write_1h`: claude's 1-hour write
+  rates read off Anthropic's pricing page on 2026-09-28 (Fable 5.1 and 5 $20, Opus 5.5 $8, Opus 5 and 4.5–4.8
+  $10, Sonnet 5 $4, Sonnet 4.5–4.6 $6, Haiku 4.5 $2 per million tokens — 2× input throughout); grok unchanged
+  from xAI's page read the same day, `null` (no 1-hour cache). Every other rate is `2026-09-28`'s. `2026-09-28`
+  is not edited: it keeps its digest and still checks the reports it priced.
+- **`cache_write_1h` is optional in a price file**, so an owner's file from before stays usable. Left out it is
+  no price: a turn that wrote to the 1-hour cache is not charged (`price-unknown`), never charged at the
+  5-minute rate. A table that does not write it keeps the digest it had.
+- **A write whose cache is unknown is not charged.** claude prints the split; a turn whose output lacked it and
+  that wrote to the cache is `usage-unsplit` — D-110's rule that a missing count is billed at nothing, not at a
+  guess, even a guess that can only fall low.
+- **Usage report v2: `cache_write_1h_tokens` on a row, and the rate `cache_write_1h` in its cost — only on a row
+  whose turn wrote to the 1-hour cache.** Every other row keeps exactly the shape the deployed marketplace
+  (migration 0006) reads, so those reports are still taken; a row with a 1-hour write is new money arithmetic,
+  and a marketplace that cannot do it refuses the report rather than recomputing it wrong. `usage verify`
+  recomputes with the split, holds a shipped row's 1-hour rate to its table, and refuses a `0`, a part larger
+  than the write, or a 1-hour rate on a row without 1-hour tokens.
+- **Test vectors:** `test/fixtures/usage-report-v2.json` and `-job.json` are unchanged, byte for byte. New:
+  `usage-report-v2-split.json`, six rows priced from `2026-09-29` and an owner's table, covering the split.
+- **`usage prices`** shows a `cache_write_1h` column (and `--json` a `cache_write_1h` per price); `usage report`
+  and `verify` show a row's 1-hour part and a group's 1-hour rate.
+
+### Fixed — a model chosen for a vendor CLI reaches it, and the ledger records the model it ran (D-142)
+- **`--backend claude --model opus` hands claude `--model opus`.** `backend()` gave the model to ollama alone,
+  so a vendor CLI always ran its own default — the web page's "claude · opus" (D-085) never sent `opus`
+  anywhere. A model now belongs to the backend it was chosen for: it is bound to that backend when it is
+  built, and put on the CLI's command line behind the CLI's own flag, as one argument, never through a shell.
+- **Each vendor's model flag, read off its `--help` on 2026-09-28**: claude `--model` (2.1.283), codex
+  `--model` (`-m`, 0.155.1), grok `--model` (`-m`, 1.0.40), gemini `-m` (0.38.2), copilot `--model` with its
+  fixed list (0.0.367), kimi `-m` (2.0.2). `claude-local` and `grok-local` run `local-coder` and take no model.
+  A backend with no declared flag, and the local variants, **refuse** a model instead of running their
+  default; a name that is empty, over 128 characters, starts with `-`, or holds anything but letters, digits
+  and `._:@+/[]-` is refused too (exit 2 from `turn`, before anything is sent).
+- **A model never leaks along a fallback chain.** With one `--backend` the model is that backend's. In a chain
+  of several a bare `--model` stays the ollama step's, as it always was, and `--model claude=opus,ollama=qwen3:8b`
+  gives each named step its own; every other step runs its own default, and `turn` says which step got which.
+  A bare name in a chain of several without ollama is refused — which step was meant cannot be known. The
+  chain itself refuses a request that carries a model. `soul verify`, `web` and `chat serve` read `--model` the
+  same way, and `web` and `chat serve` refuse at start a `--model` no turn would take.
+- **The ledger records the model the CLI ran, and what was asked for apart.** claude's and grok's JSON output
+  name the model each turn called (`modelUsage`; claude also gives its canonical name, measured with one real
+  `--model haiku` turn: key `claude-haiku-4-5-20251001`, `canonicalModel: "claude-haiku-4-5"`). That name is the
+  line's `model`. The new `model_requested` holds what om-agi asked for (`opus`), or `null` for the vendor's
+  default; lines from before still parse. When the output names no model the line's `model` is `null`, and when
+  it names two, neither is picked.
+- **Pricing uses only a model the CLI reported, or a requested name that is exactly a price-table entry for that
+  backend** — and the second only when the output named no model at all. An alias (`opus`) is in no table and
+  is never priced as the model it may resolve to; a line whose output named a different model is priced by that
+  one; a line whose output named two is not charged. A usage report row names the model its price was looked up
+  by, so a row charged by an exact requested name still checks against the shipped table.
+- **`turn --json`** adds `model_requested` beside `model`, and the web page shows a model a CLI was only asked
+  for as "asked for opus", never as the model it ran; a resolved alias reads "claude-opus-5-5 (asked for opus)".
+- **The web picker suggests each backend's names from the vendor's own list and the price table**, never from
+  ledger history, whose old lines carry wrong names; a backend that takes no model is offered none. The page
+  accepts exactly the model names `turn` would hand a CLI (`opus[1m]` now among them).
+
+### Added — proof of key possession, and reports bound to where they go (S15.4 step one, D-141)
+- **`ohmyagi key prove <agent-dir> --subject <id> --market <origin> --listing <slug> --nonce <nonce> [--json]`**
+  signs a market's challenge with the agent's key, so the market can register the public key knowing the agent
+  holds its private half — not a key copied off somebody else's card. The proof is the same signed envelope as a
+  usage report, over `{kind: "ohmyagi.key-proof", v: 1, market, listing, nonce, at}`. `--json` prints it alone,
+  on one line. It never makes a key: without one it says to run `ohmyagi key`, exit 1.
+  - `--market` is an origin as a browser writes it: `https://host[:port]` — http only to `127.0.0.1` or
+    `localhost`, for a local test — with no path, no trailing `/`, no query, fragment, user name or password, the
+    host in lower case and an international name in punycode. Anything else is refused (exit 2), and the refusal
+    says the one spelling when there is one. `--listing` is the platform's slug rule; `--nonce` is 32 bytes of
+    base64url, 43 characters, in its one spelling (`--nonce=<nonce>` when it begins with `--`).
+- **`ohmyagi key verify-proof <file|-> --key <public-key> --market <origin> --listing <slug> --nonce <nonce>`**
+  checks a proof as the market does: exit 0 only when it is signed by exactly that key and names exactly that
+  market, listing and nonce; 1 when it does not; 2 for a command line it will not run.
+- **`usage report --market <origin> --listing <slug> [--job <id>]`** binds the report to one listing on one
+  market, and to one job there: the payload gains `binding: {market, listing, job}` (job `null` when not given),
+  signed with the rows, so one report counts at one listing and nowhere else. Without both flags `binding` is
+  `null` — a report for this machine, which no market takes. One without the other, or `--job` without both, is
+  exit 2. The report stays `v: 2` (never released), and the field is required: a v2 report without it is refused.
+- **`usage verify --market <origin> --listing <slug>`** holds a report to that market and listing: bound anywhere
+  else, or to nothing, it is not valid (exit 1). Without them the binding is printed, escaped, and said to be not
+  checked; the exit codes are as before.
+- **Test vectors the platform ports:** `test/fixtures/key-proof-v1.json` (+ `.key`), a proof signed with RFC 8032's
+  test-1 key for `https://market.example`, listing `ts-reviewer`, nonce bytes 0–31, at a fixed instant; and
+  `usage-report-v2.json` regenerated with `binding` (`job: null`), beside a new `usage-report-v2-job.json` (job
+  `job_01`). Tests rebuild each byte for byte; each was checked independently with Python's
+  `json.dumps(sort_keys=True, separators=(",", ":"))` and `openssl pkeyutl -verify`, and re-signed with OpenSSL to
+  the same signature.
+
+### Changed — S15.4 step one
+- **A signed number has one spelling** (D-141 §4). The strict reader every verifier uses refuses a number in
+  anything but plain integer digits — `1.0`, `151250.0`, `1e3`, `1E3`, `-0`, a leading zero, a `+`, and an integer
+  beyond 2^53 − 1. Before, `"usd_micros":151250.0` or `1.5125e5` verified, because the value, and so the canonical
+  bytes, were the same. The owner's price file is read by the same reader, so a rate written `3e5` there is
+  refused too (every number in it is a whole rate); nothing that legitimately holds a fraction reads through it.
+- `usage report` and `usage verify` refuse an option they do not take, by name, instead of ignoring it.
+
+### Added — pricing by real cost (S15.9)
+- **Cache tokens are recorded apart.** claude and grok (and `claude-local`, `grok-local`) now record the cache
+  reads and cache writes inside a turn's input as `usage.cache_read` and `usage.cache_write`; `usage.input`
+  stays the whole prompt side, as before. A count a backend never prints is `null` and named in
+  `usage.not_printed` — ollama prints no cache counts, codex prints one total and no parts — never 0.
+  gemini, copilot and kimi are still unsurveyed and stay `unreported`.
+- **A price table.** `src/pricing/shipped/2026-09-28.json`, version `2026-09-28`: per-million-token prices for
+  input, output, cache read and cache write of current Claude models (Anthropic's pricing page) and Grok models
+  (xAI's models page), read that day, in whole US micro-dollars. It prices only backends whose usage splits into
+  those four parts. A shipped table is never edited: new prices ship as a new version beside it, so reports
+  priced by the old one still check.
+- **The owner's own prices**, in `$XDG_STATE_HOME/om-agi/prices.json`, the same shape. It is the only place a
+  model on this machine gets a price (D-106), and where a subscription holder says what their turns really
+  cost. An entry there replaces the shipped one for that backend and model. It must be yours and not writable
+  by group or others; a field it does not know, a part left out or a price in dollars instead of micro-dollars
+  is refused. A symlink whose target has gone is refused too — never read as "no file", which would price at
+  list prices.
+- **Cost in the ledger.** Every model turn's line carries `cost`: `{usd_micros, table, table_digest, source,
+  usd_micros_per_mtok}` — the price, the table's version, `default` or `owner`, and every rate applied — or
+  `null` with `not_charged` saying why: `usage-missing`, `usage-unsplit`, `model-unknown`, `table-unusable` or
+  `price-unknown`. A turn with a count or a price missing is not charged; it is never estimated (D-110). Lines
+  from before are not priced after the fact.
+- **Cost in the signed usage report** (report `v: 2`). Each row adds `cache_read_tokens`, `cache_write_tokens`,
+  `cost` and `not_charged`; money is integer micro-dollars (`usd_micros`, 1 = $0.000001), because signed JSON
+  holds integers only. `usage report` prints the cost of each row and the total over charged rows, and counts
+  the rest by reason.
+- **`usage verify` re-checks every cost** from its own row's counts and rates, with the formula written in
+  `src/identity/report.ts`. A row whose cost does not follow is not valid, however it is signed. A row that says
+  its rates are a shipped table this build carries is held to that table — its rates, its model and its
+  digest — and is not valid otherwise. Exit codes are unchanged.
+- **Costs are shown by the price each row claims**: source, table, digest, backend and model, with the rates,
+  and whether a reader can check them — rates the owner set, or a shipped table this build does not carry, are
+  printed as not checked. The total says how much of it was checked against a shipped table and how much was
+  not, and is summed exactly (BigInt) however many rows there are.
+- **A row carrying a shipped table's digest is held to that table** whatever version or source it names, and
+  rows that price one model two ways from one table (one digest) are refused. The report leaves such ledger
+  lines out and says why, instead of counting them as bad ids.
+- **`usage report --json` prints one compact line** (about 0.5 KiB a row, down from 0.8), and `usage verify`
+  refuses any option but `--key` — a stray `--json` used to be ignored.
+- **Each cost carries its table's digest** (`table_digest`, 16 hex characters of SHA-256 over the canonical
+  table), so a version name cannot hide a changed price.
+- **A signed v2 report pinned for the platform's verifier**: `test/fixtures/usage-report-v2.json` and its
+  public key, rebuilt byte for byte by a test.
+- **`ohmyagi usage prices [--json]`** shows the tables in force: the shipped one with its sources and date, and
+  yours. Exit 1 when yours is there and cannot be used — then every turn is recorded as not charged
+  (`table-unusable`) rather than priced at a list price you meant to replace. `turn` says so too.
+- `ledger show` has a cost column.
+
+### Fixed — S15.9
+- **A ledger line names the model its backend really ran.** `--model` goes to ollama only, but every line of the
+  chain recorded it, so a claude line could say `qwen3:8b` or `opus` for a turn claude ran on its own default.
+  A vendor CLI's line now says `null`; ollama's says `--model` or its `OM_AGI_OLLAMA_MODEL` default. Such claude
+  turns are therefore not charged (`model-unknown`) until the model reaches the vendor (D-142, above, does that). `turn --json` says the
+  same, and the web page shows a cloud backend's model only as the turn reported it — no longer the model picked
+  in the browser, which claude was never given.
+- `turn` escapes what it prints from an unusable price file.
+
+### Added
+- **`ohmyagi key <agent-dir> --subject <id>` — the agent's own ed25519 keypair.** The first run makes it and
+  prints the public key and a short fingerprint; every later run prints the same key and changes nothing. It is
+  never replaced: a new key is a different signer to everyone who knew the old one.
+  - The private key is PKCS#8 PEM at `$XDG_DATA_HOME/om-agi/<subject>/identity/ed25519.pem`, mode 600 in a 700
+    directory, outside every git repository. It is never printed, logged, passed on a command line or written into
+    the agent's repository.
+  - It is written through a new file (`wx`) and linked into place, so two runs at once end with one key and a crash
+    leaves no half key.
+  - A key file group or others can read is refused, with the `chmod` that fixes it. So is a directory that is not
+    700, a symlink, a key that is not ed25519, and a key directory inside a checkout.
+- **The agent card carries the public key.** `soul card` and `a2a serve` add an A2A extension,
+  `urn:ohmyagi:agent-key:v1`, in `capabilities.extensions`, with the algorithm, the public key and the fingerprint.
+  With no usable key the extension is still there, with nulls, and says nothing the agent reports is signed.
+  Printing or serving a card never makes a key.
+- **`ohmyagi usage report <agent-dir> --subject <id> [--since] [--until] [--json]` — what the turns used, signed.**
+  - One row per model delivery in the ledger: line and turn ids, time, duration, backend, model, and input and
+    output tokens.
+  - Never the prompt, the answer, their sizes, memory, the soul, the subject id or a path. The row is built by
+    naming the fields that go, not by removing the ones that do not.
+  - A2A and chat messages are not model turns and are left out.
+  - A count the ledger does not have is `null`, marked `not-recorded`, `unreported` or `missing`, and never 0
+    (D-110). The totals line says how many rows had none, and from which backends.
+  - `--json` prints the signed envelope alone. The report makes no key; without one it says to run `ohmyagi key`.
+- **`ohmyagi usage verify <file|-> [--key <public-key>]`** checks a report against the key on the agent card.
+  - **Exit 0** only for a usage report that is well formed in every field and signed by exactly `--key`'s key.
+  - **1** when it is not valid: a changed payload, another key, an unknown algorithm, a weak key, a duplicate
+    field, or a string with control characters.
+  - **2** for a command line it will not run.
+  - **3** when the report is signed by the key inside it but no `--key` was given, so whose key it is is unknown.
+    `usage verify r.json && accept` no longer accepts anyone's report.
+- **Hardened after an independent security review of this work (D-138):**
+  - **Weak keys are refused**, both in an envelope and as `--key`: the eight points of small order, non-canonical
+    encodings (y ≥ p), a small-order `R` and an `S` that is not below the group order, as libsodium does. Under
+    plain Ed25519 the identity point verifies every payload; a test shows that forgery working against the library
+    underneath and refused here.
+  - **Duplicate field names are refused.** Signed text is read with a strict parser; `JSON.parse` keeps the last
+    of two, so a second `rows` could be shown to one reader and not another.
+  - **No terminal escapes.** Every string in a report has a shape (ids, ISO-8601 times, a plain backend id, a
+    model's name). A report with any other string is refused, and everything printed from one is escaped.
+  - **A model that is a path is sent as null.** A model value that is not `name` or `org/name` is withheld, and the
+    report says how many rows that happened to. A fractional `duration_ms` in the ledger is rounded instead of
+    crashing the signer.
+  - **The key is read through one open file.** `O_NOFOLLOW` and `fstat` on the handle, at most 4 KiB, and parent
+    directories checked StrictModes-style. The git-checkout check now follows symlinks, for the personal directory
+    too. A temporary file a crashed `key` left behind is removed at the next run.
+- **What is signed** is Ed25519 (RFC 8032) over the UTF-8 of the payload in RFC 8785 canonical JSON, with numbers
+  restricted to integers. For ASCII field names that is exactly Python's
+  `json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)`, checked against OpenSSL. A
+  fixed test vector is pinned in `test/identity/sign.test.ts` for the marketplace's verifier (S16.4).
+
+### Fixed
+- **A relative `XDG_STATE_HOME` or `XDG_DATA_HOME` is ignored, as the XDG spec says.** It used to be honoured, so
+  state landed under whatever directory a command was run from, and `erase` run from anywhere else never found it.
+  An empty or relative value now falls back to `~/.local/state` or `~/.local/share` (found by S15.8's security
+  review).
+
+### Changed
+- **A full `erase` removes the key; `erase --personal` keeps it and says so, as it keeps `role.md`.** The key is the
+  agent's identity, not the person's data. The data map has a new entry, `identity`, under the `soul` place.
+  - Erase now plans 13 trees (11 with `--personal`, 11 with `--no-agent`).
+  - Under `--personal` the search reports the key's path, which names the subject, under a new scope kind, `kept`,
+    rather than as a deletion that failed. The certificate is now `om-agi/erase-certificate@5`, with
+    `verification.keptHits`.
+  - `kept` is narrow and read off the disk. It covers only the key file, and a directory that holds nothing but
+    the key. The note that the key is kept is printed only when a key file is really there. Anything else beside
+    it, under `<subject>/` or in `identity/`, is still a deletable remainder, with or without a key (found by the
+    second security review).
+  - Deploy copies the key onto the encrypted volume, because the agent there is the same agent.
+  - The `soul` place now also says that what the key signed stays signed wherever it went.
+
 ## 0.8.3 — 2026-09-28
 
 A Memory map that stays usable at hundreds of memories, a search that says when it could not run, and what the

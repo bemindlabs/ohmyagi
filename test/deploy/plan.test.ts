@@ -71,7 +71,7 @@ describe("what goes, what is made there, what stays", () => {
     const made = await agent();
     const result = await plan(made);
 
-    expect(keysOf(result.goes)).toEqual(["binary", "repo", "repo-history", "soul", "a2a", "chat", "push", "basis", "personal", "ledger"]);
+    expect(keysOf(result.goes)).toEqual(["binary", "repo", "repo-history", "soul", "a2a", "chat", "push", "basis", "personal", "identity", "ledger"]);
     expect(keysOf(result.rebuilt)).toEqual(["dagi", "rag-marker", "collection"]);
     expect(keysOf(result.stays)).toEqual(["backups", "confirmations", "runs", "triggers", "blocks"]);
 

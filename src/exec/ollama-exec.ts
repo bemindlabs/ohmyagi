@@ -42,6 +42,16 @@ interface OllamaChatResponse {
   readonly error?: string;
 }
 
+/** What every ollama usage says about the counts the daemon never prints. */
+const OLLAMA_SHAPE = {
+  total: null,
+  cache_read: null,
+  cache_write: null,
+  cache_write_5m: null,
+  cache_write_1h: null,
+  not_printed: ["cache_read", "cache_write", "cache_write_5m", "cache_write_1h"] as const,
+} satisfies Partial<Usage>;
+
 /**
  * Read ollama's own token counts out of a chat response body.
  *
@@ -53,14 +63,21 @@ interface OllamaChatResponse {
  * No `total`, and no money. The daemon prints neither, and both would be
  * om-agi inventing a figure: adding the two counts is arithmetic over a
  * tokenizer nobody named, and a `0` in a currency would be a claim that a
- * GPU-hour is free. What a local turn cost in time is already in `durationMs`.
+ * GPU-hour is free. What a local turn cost in time is already in `durationMs`;
+ * what it cost in money is its owner's to say, in their price file (D-106,
+ * D-139) — until they do, its turns are not charged.
  *
  * Anything that is not a parseable object with both counts in it — an error
  * body, an HTML page from a proxy, a turn that never left — is `missing`,
  * which is the same answer a vendor changing its shape would get.
+ *
+ * No cache counts either (S15.9): the measured response has no field for one,
+ * so both are null on every turn and listed in `not_printed` — a statement
+ * about the daemon, not about this turn, and never a 0. The split of a cache
+ * write (D-143) likewise.
  */
 export function extractOllamaUsage(raw: string): Usage {
-  const missing: Usage = { status: "missing", input: null, output: null, total: null };
+  const missing: Usage = { ...OLLAMA_SHAPE, status: "missing", input: null, output: null };
 
   let body: unknown;
   try {
@@ -73,13 +90,9 @@ export function extractOllamaUsage(raw: string): Usage {
   const record = body as Record<string, unknown>;
   const input = tokenCount(record["prompt_eval_count"]);
   const output = tokenCount(record["eval_count"]);
-  return {
-    status: input !== null && output !== null ? "reported" : "missing",
-    input,
-    output,
-    total: null,
-  };
+  return { ...OLLAMA_SHAPE, status: input !== null && output !== null ? "reported" : "missing", input, output };
 }
+
 
 /** A model served over HTTP by a local ollama. */
 export class OllamaExec implements ExecBackend {
@@ -99,7 +112,11 @@ export class OllamaExec implements ExecBackend {
    * the check.
    */
   readonly host: string;
-  private readonly defaultModel: string | undefined;
+  /**
+   * The model a turn that names none runs: the one it was built with, else OM_AGI_OLLAMA_MODEL. Readable
+   * since S15.9, because a turn's ledger line records the model that ran and is priced by it.
+   */
+  readonly defaultModel: string | undefined;
 
   constructor(options: OllamaOptions = {}) {
     this.host = (options.host ?? process.env["OLLAMA_HOST"] ?? DEFAULT_HOST).replace(/\/$/, "");

@@ -29,6 +29,7 @@ import {
 import { AUTONOMY_MAX_ENV } from "../../src/decide/effective.ts";
 import { triggeredCeiling } from "../../src/decide/triggers.ts";
 import { announceEgress } from "../../src/exec/egress.ts";
+import { PHASE_A_BACKENDS, routeModels } from "../../src/exec/index.ts";
 import { describeFindings, judgeConfig, judgeEgress, JUDGE_ENV, loadLexicon, recordBlocked, screen, verdictFindings } from "../../src/egress/index.ts";
 import { engineCommand } from "../../src/guard/hooks.ts";
 import { append } from "../../src/ledger/store.ts";
@@ -42,7 +43,7 @@ const USAGE =
   "usage: ohmyagi chat users --subject <id>\n" +
   "       ohmyagi chat allow <platform> <user-id> --subject <id> [--label <name>]\n" +
   "       ohmyagi chat remove <platform> <user-id> --subject <id>\n" +
-  "       ohmyagi chat serve <dir> --subject <id> --platform telegram --token-file <path> [--once] [--backend <b>] [--model <m>]";
+  "       ohmyagi chat serve <dir> --subject <id> --platform telegram --token-file <path> [--once] [--backend <b>] [--model <m> | --model <backend>=<m>,…]";
 
 /** Where a test points the connector instead of api.telegram.org — https or loopback only. */
 const TELEGRAM_URL_ENV = "OM_AGI_TELEGRAM_URL";
@@ -140,6 +141,11 @@ async function cmdServe(argv: readonly string[]): Promise<number> {
   const tokenFile = options.get("token-file");
   if (dir === undefined || tokenFile === undefined) return usageError(USAGE);
   if (platform !== "telegram") return usageError(`the platforms are telegram — not ${JSON.stringify(platform)}`);
+  // D-142: a --model every answer's turn would refuse is refused once, here. A backend `turn` does not know is
+  // left for `turn` to name.
+  const chain = (options.get("backend") ?? "").split(",").map((b) => b.trim()).filter((b) => b !== "");
+  const models = routeModels(options.get("model"), chain.length > 0 ? chain : [...PHASE_A_BACKENDS]);
+  if (!models.ok) return usageError(`${USAGE}\n${models.reason}`);
   const loaded = await loadSoul(dir, s.id);
   if (!loaded.ok) return report(loaded.issues);
 

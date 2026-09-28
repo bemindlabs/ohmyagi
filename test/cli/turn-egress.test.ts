@@ -218,7 +218,9 @@ describe("S8.3 — personal data does not leave through a turn", () => {
     // stayed on this machine — one recalled piece and one earlier message.
     expect(parsed.backend).toBe("claude");
     expect(parsed.local).toBe(false);
-    expect(parsed.model).toBe("stub");
+    // `--model stub` went to ollama, which did not answer; claude ran its own default and does not name it
+    // (S15.9, PR #3 review L2 — this used to say "stub", a model claude was never given).
+    expect(parsed.model).toBeNull();
     expect(parsed.held).toBe(1);
     expect(parsed.heldMessages).toBe(1);
     // Level 1 takes no snapshot, so there is no change report.

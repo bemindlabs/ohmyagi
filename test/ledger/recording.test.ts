@@ -19,7 +19,8 @@ import { join } from "node:path";
 import type { Availability, ExecBackend, TurnRequest, TurnResult } from "../../src/exec/backend.ts";
 import { FallbackExec } from "../../src/exec/fallback.ts";
 import { query, RecordingExec, type LedgerEnv, type RecordingOptions } from "../../src/ledger/index.ts";
-import { subjectId } from "../../src/types.ts";
+import { DEFAULT_PRICES, validatePriceTable, type PricesInForce, type PriceTable } from "../../src/pricing/table.ts";
+import { subjectId, type Usage } from "../../src/types.ts";
 import { RESTRAINED } from "../support/restraint.ts";
 
 const SUBJECT = subjectId("example");
@@ -77,6 +78,35 @@ class Fake implements ExecBackend {
   }
 }
 
+/** The shipped table and no owner file — what a turn on a fresh machine is priced against. */
+const SHIPPED: PricesInForce = { default: DEFAULT_PRICES, owner: { state: "absent" }, ownerPath: "/nowhere/prices.json" };
+
+/** An owner's table pricing the local model `stub` on ollama: $0.10 in, $0.40 out per million tokens. */
+const OWN: PriceTable = (() => {
+  const read = validatePriceTable({
+    kind: "ohmyagi.price-table",
+    v: 1,
+    version: "home-1",
+    currency: "usd",
+    unit: "micros-per-million-tokens",
+    prices: [{ backend: "ollama", model: "stub", input: 100_000, output: 400_000, cache_read: null, cache_write: null }],
+  });
+  if (!read.ok) throw new Error(read.reason);
+  return read.table;
+})();
+const OWNED: PricesInForce = { ...SHIPPED, owner: { state: "ok", table: OWN } };
+
+/** Usage as ollama writes it since S15.9: two counts, and no cache count, said so. */
+const ollamaUsage = (input: number, output: number): Usage => ({
+  status: "reported",
+  input,
+  output,
+  total: null,
+  cache_read: null,
+  cache_write: null,
+  not_printed: ["cache_read", "cache_write"],
+});
+
 let nextId = 0;
 function options(ledger: LedgerEnv, overrides: Partial<RecordingOptions> = {}): RecordingOptions {
   return {
@@ -85,6 +115,7 @@ function options(ledger: LedgerEnv, overrides: Partial<RecordingOptions> = {}): 
     newId: () => `line-${++nextId}`,
     content: "full",
     model: "stub",
+    prices: SHIPPED,
     soulSha: "b".repeat(64),
     onWriteFailure: (error) => {
       throw error;
@@ -128,10 +159,12 @@ describe("RecordingExec", () => {
     expect(line.exit).toBe(0);
     expect(line.model).toBe("stub");
     expect(line.soul_sha).toBe("b".repeat(64));
-    expect(line.cost).toBeNull();
     // The backend reported nothing, so the line says so in the state that
-    // means "nobody has surveyed this one" — never a zero.
-    expect(line.usage).toEqual({ status: "unreported", input: null, output: null, total: null });
+    // means "nobody has surveyed this one" — never a zero — and a turn with no
+    // count is not charged (D-110).
+    expect(line.usage).toEqual({ status: "unreported", input: null, output: null, total: null, cache_read: null, cache_write: null, cache_write_5m: null, cache_write_1h: null });
+    expect(line.cost).toBeNull();
+    expect(line.not_charged).toBe("usage-missing");
     // The soul text itself is in git; only its hash is out here.
     expect(JSON.stringify(line)).not.toContain("soul text");
     // The vendor's raw output is not copied: it duplicates `text` and can
@@ -201,10 +234,160 @@ describe("RecordingExec", () => {
 
     const line = (await query(env, SUBJECT)).entries[0]!;
     expect(line.usage).toEqual(usage);
-    // Tokens, and still no money — the field exists and stays null by
-    // decision, because every figure in a currency available here is true for
-    // some owners and false for others.
+    // A usage from before S15.9's shape says nothing about the cache: its null
+    // cache counts are not declared as never printed, so it is not priced.
     expect(line.cost).toBeNull();
+    expect(line.not_charged).toBe("usage-missing");
+  });
+
+  test("S15.9: a turn with its counts and a price is charged, and the line says by which table and at which rates", async () => {
+    const env = await makeEnv();
+    const wrapped = new RecordingExec(
+      new Fake("ollama", { evidence: { source: "ollama", raw: "raw", usage: ollamaUsage(1_000_000, 250_000) } }),
+      options(env, { prices: OWNED }),
+    );
+    await wrapped.run({ restraint: RESTRAINED, subject: SUBJECT, prompt: "canary-7f3a", system: "soul" });
+
+    const line = (await query(env, SUBJECT)).entries[0]!;
+    // 1M × $0.10 + 0.25M × $0.40 = $0.20 = 200000 micro-dollars.
+    expect(line.cost).toEqual({
+      usd_micros: 200_000,
+      table: "home-1",
+      table_digest: OWN.digest,
+      source: "owner",
+      usd_micros_per_mtok: { input: 100_000, output: 400_000, cache_read: null, cache_write: null },
+    });
+    expect(line.not_charged).toBeNull();
+    // Not the vendor's money: no field of it names a vendor price.
+    expect(JSON.stringify(line)).not.toMatch(/total_cost|vendor/);
+  });
+
+  test("S15.9: a model nobody priced is not charged — never 0, never a neighbour's price", async () => {
+    const env = await makeEnv();
+    const usage = ollamaUsage(10, 5);
+    const run = async (overrides: Partial<RecordingOptions>, request: Partial<TurnRequest> = {}) => {
+      await new RecordingExec(new Fake("ollama", { evidence: { source: "ollama", raw: "raw", usage } }), options(env, overrides)).run({
+        restraint: RESTRAINED,
+        subject: SUBJECT,
+        prompt: "p",
+        ...request,
+      });
+      return (await query(env, SUBJECT)).entries.at(-1)!;
+    };
+    // The shipped table prices no local model.
+    expect((await run({})).not_charged).toBe("price-unknown");
+    // The backend's own default, which it does not name.
+    expect((await run({ model: null, prices: OWNED })).not_charged).toBe("model-unknown");
+    // The owner's file is there and broken: nothing is priced, the default is not used instead.
+    expect((await run({ prices: { ...OWNED, owner: { state: "unusable", reason: "x" } } })).not_charged).toBe("table-unusable");
+    // A model named in the request is the one the backend received, and the one priced.
+    const named = await run({ model: null, prices: OWNED }, { model: "stub" });
+    expect(named.model).toBe("stub");
+    // 10 × 100000 + 5 × 400000 µ$ per million tokens = 3 µ$.
+    expect(named.cost?.usd_micros).toBe(3);
+    expect(named.not_charged).toBeNull();
+  });
+
+  test("D-143: a claude turn's 1-hour cache write is priced at its own rate on the line; an unknown split is not charged", async () => {
+    const env = await makeEnv();
+    const record = async (usage: Usage) => {
+      await new RecordingExec(
+        new Fake("claude", { evidence: { source: "claude", raw: "raw", usage, model: { requested: "haiku", reported: ["claude-haiku-4-5"] } } }),
+        options(env, { model: null }),
+      ).run({ restraint: RESTRAINED, subject: SUBJECT, prompt: "p" });
+      return (await query(env, SUBJECT)).entries.at(-1)!;
+    };
+    // D-142's measured turn: 10 fresh, 11,856 written to the 1-hour cache, 65 out.
+    const measured: Usage = { status: "reported", input: 11_866, output: 65, total: null, cache_read: 0, cache_write: 11_856, cache_write_5m: 0, cache_write_1h: 11_856, not_printed: [] };
+    const oneHour = await record(measured);
+    // 10×$1 + 11,856×$2 + 65×$5 per million tokens = 24,047 µ$ — not the 15,155 of the 5-minute rate.
+    expect(oneHour.cost?.usd_micros).toBe(24_047);
+    expect(oneHour.cost?.usd_micros_per_mtok).toEqual({ input: 1_000_000, output: 5_000_000, cache_read: 100_000, cache_write: 1_250_000, cache_write_1h: 2_000_000 });
+    // The split is kept on the line as the backend printed it.
+    expect([oneHour.usage?.cache_write_5m, oneHour.usage?.cache_write_1h]).toEqual([0, 11_856]);
+    // The same write to the 5-minute cache: the four rates, the shape a line had before D-143.
+    const fiveMinute = await record({ ...measured, cache_write_5m: 11_856, cache_write_1h: 0 });
+    expect(fiveMinute.cost?.usd_micros).toBe(15_155);
+    expect(Object.keys(fiveMinute.cost!.usd_micros_per_mtok)).toEqual(["input", "output", "cache_read", "cache_write"]);
+    // claude prints the split; a turn that wrote and did not say which is not charged, never priced as 5-minute.
+    const unsplit = await record({ ...measured, cache_write_5m: null, cache_write_1h: null });
+    expect(unsplit.cost).toBeNull();
+    expect(unsplit.not_charged).toBe("usage-unsplit");
+  });
+
+  test("D-142: a vendor CLI's line names the model its output reported, and the one asked for apart", async () => {
+    const env = await makeEnv();
+    // Claude-shaped counts with both cache parts printed: 100 in, 10 out, nothing cached — a turn that can be priced.
+    const usage: Usage = { status: "reported", input: 100, output: 10, total: null, cache_read: 0, cache_write: 0, not_printed: [] };
+    const run = async (backend: string, requested: string | null, reported: readonly (string | null)[]) => {
+      await new RecordingExec(
+        new Fake(backend, { evidence: { source: backend, raw: "raw", usage, model: { requested, reported } } }),
+        // A vendor CLI runs no model by construction: its line is what it says, and what it was asked.
+        options(env, { model: null }),
+      ).run({ restraint: RESTRAINED, subject: SUBJECT, prompt: "p" });
+      return (await query(env, SUBJECT)).entries.at(-1)!;
+    };
+
+    // Asked for an alias, and the output named what it resolved to: that is the model, and the price.
+    const resolved = await run("claude", "opus", ["claude-opus-5-5"]);
+    expect(resolved.model).toBe("claude-opus-5-5");
+    expect(resolved.model_requested).toBe("opus");
+    // 100 × $4.00 + 10 × $20.00 per million tokens = 600 µ$.
+    expect(resolved.cost?.usd_micros).toBe(600);
+
+    // The output named a model other than the one asked for: what it ran wins, for the name and the price.
+    const other = await run("claude", "claude-opus-5", ["claude-sonnet-5"]);
+    expect(other.model).toBe("claude-sonnet-5");
+    expect(other.cost?.usd_micros).toBe(300);
+
+    // Asked for an alias, and the output named nothing: the alias is recorded as asked, never priced as a model.
+    const alias = await run("claude", "opus", []);
+    expect(alias.model).toBeNull();
+    expect(alias.model_requested).toBe("opus");
+    expect(alias.cost).toBeNull();
+    expect(alias.not_charged).toBe("model-unknown");
+
+    // Asked for a full name the table lists for this backend, and the output named nothing: priced by it.
+    const exact = await run("claude", "claude-opus-5", []);
+    expect(exact.model).toBeNull();
+    expect(exact.model_requested).toBe("claude-opus-5");
+    // 100 × $5.00 + 10 × $25.00 per million tokens = 750 µ$.
+    expect(exact.cost?.usd_micros).toBe(750);
+    expect(exact.cost?.source).toBe("default");
+
+    // The same name on a backend the table does not list it for is not a price.
+    const elsewhere = await run("grok", "claude-opus-5", []);
+    expect(elsewhere.not_charged).toBe("model-unknown");
+
+    // The output named two models, or one it could not read: neither, and the request does not stand in for them.
+    for (const reported of [["claude-opus-5-5", "claude-haiku-4-5"], [null]] as const) {
+      const unclear = await run("claude", "claude-opus-5", reported);
+      expect(unclear.model).toBeNull();
+      expect(unclear.model_requested).toBe("claude-opus-5");
+      expect(unclear.not_charged).toBe("model-unknown");
+    }
+
+    // Nothing asked, nothing named: the vendor's own default, unnamed and unpriced.
+    const nothing = await run("claude", null, []);
+    expect(nothing.model).toBeNull();
+    expect(nothing.model_requested).toBeNull();
+    expect(nothing.not_charged).toBe("model-unknown");
+
+    // The request prices only an exact entry of a table in force — an owner's included — and not while the
+    // owner's file cannot be read.
+    const ownerNamed: PricesInForce = { ...SHIPPED, owner: { state: "ok", table: OWN } };
+    await new RecordingExec(
+      new Fake("ollama", { evidence: { source: "ollama", raw: "raw", usage: ollamaUsage(10, 5) } }),
+      options(env, { model: "stub", prices: ownerNamed }),
+    ).run({ restraint: RESTRAINED, subject: SUBJECT, prompt: "p" });
+    const ollama = (await query(env, SUBJECT)).entries.at(-1)!;
+    // ollama runs the model it is handed: it is both the model and the request.
+    expect([ollama.model, ollama.model_requested, ollama.cost?.usd_micros]).toEqual(["stub", "stub", 3]);
+    const broken = await new RecordingExec(
+      new Fake("claude", { evidence: { source: "claude", raw: "raw", usage, model: { requested: "claude-opus-5", reported: [] } } }),
+      options(env, { model: null, prices: { ...SHIPPED, owner: { state: "unusable", reason: "x" } } }),
+    ).run({ restraint: RESTRAINED, subject: SUBJECT, prompt: "p" }).then(async () => (await query(env, SUBJECT)).entries.at(-1)!);
+    expect(broken.not_charged).toBe("table-unusable");
   });
 
   test("--private keeps the counts, because a token total is not the words", async () => {

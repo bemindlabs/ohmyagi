@@ -38,8 +38,12 @@
  * JSON on disk rather than of the program that happens to write it.
  */
 
+import type { NotCharged, TurnCost } from "../pricing/cost.ts";
+import { NOT_CHARGED } from "../pricing/cost.ts";
+import { ALL_RATE_FIELDS, RATE_1H, RATE_FIELDS, MAX_RATE, TABLE_DIGEST } from "../pricing/table.ts";
+import { isSafeId } from "../identity/shapes.ts";
 import type { Confidence, Usage } from "../types.ts";
-import { isSubjectId, tokenCount, type SubjectId } from "../types.ts";
+import { isSubjectId, tokenCount, USAGE_FIELDS, type SubjectId } from "../types.ts";
 
 /** Schema version carried in every line, so a reader never has to guess. */
 export const LEDGER_VERSION = 1;
@@ -80,8 +84,25 @@ export interface LedgerEntry {
   readonly subject: SubjectId;
   /** Which backend received the prompt. */
   readonly backend: string;
-  /** The model named for this turn, or null when the backend used its own default. */
+  /**
+   * The model this turn ran on, as far as it is known — or null (S15.9, D-142).
+   *
+   * For a vendor CLI, the model its own output named (claude's and grok's `modelUsage`), never the name om-agi
+   * asked for: `opus` is an alias, and what it resolved to is the fact. Null when the output named none, or
+   * named more than one. For ollama, the model om-agi handed the daemon, which serves exactly that tag; for a
+   * local CLI, `local-coder`, the only model it is set up to run. This is the name a line is priced by.
+   */
   readonly model: string | null;
+  /**
+   * The model om-agi asked this backend for, or null when it asked for none and the backend ran its own
+   * default (D-142). Marked apart from {@link model} because a request is not a result: a vendor CLI resolves
+   * an alias, and may say nothing about what it resolved it to.
+   *
+   * **Optional on read**, as {@link usage} is: lines from before D-142 lack it and must still parse. Every
+   * model turn written since carries it. It prices a line only when the output named no model at all and the
+   * name is exactly one a price table in force lists for this backend (`src/pricing/cost.ts`).
+   */
+  readonly model_requested?: string | null;
   readonly content: LedgerContent;
   /** Verbatim, or null under `--private`. */
   readonly prompt: string | null;
@@ -95,26 +116,30 @@ export interface LedgerEntry {
   readonly exit: number | null;
   readonly duration_ms: number | null;
   /**
-   * Always null, and null by decision rather than by debt.
+   * What the turn cost, or `null`: **not charged** (S15.9, D-110, D-139).
    *
-   * This field used to be null because nobody had surveyed what the backends
-   * report. The survey happened, and the answer was that **no figure in a
-   * currency belongs in a ledger line**. claude prints `total_cost_usd`; it
-   * quoted $0.81 for a two-character answer, almost entirely the list price of
-   * a cache write that a subscription holder is never billed for. codex quotes
-   * the same kind of rate. A local model has no bill, and a `0` here would
-   * claim a GPU-hour is free. Each figure is true for some owners and false for
-   * others, and the line carries nothing that would let a reader tell which
-   * they are — so none of them is written, and none is kept under another name
-   * either.
+   * This field was null by decision (D-023): the only money on offer was a vendor's own quote — claude's
+   * `total_cost_usd` put $0.81 on a two-character answer, the list price of a cache write a subscription
+   * holder is never billed for — and a line carried nothing that said whose price it was. It is still never
+   * the vendor's figure. It is om-agi's arithmetic over {@link usage} and a price table, and it carries the
+   * table's version and content digest, whether the price was the shipped default or the owner's own, and
+   * every rate it applied — so the claim is checkable, and whose claim it is is written next to it.
    *
-   * What the survey did produce is in {@link usage}, counted in tokens.
-   *
-   * The field itself stays, rather than being dropped in a v2, because every
-   * line written before this task carries it and a reader with `jq` should not
-   * have to handle two shapes to answer one question.
+   * `usd_micros` is an integer count of US micro-dollars (1 = $0.000001), because it goes into a signed
+   * report whose canonical JSON allows integers only (D-138). Null whenever any number the sum needs is
+   * missing, and {@link not_charged} says which — never 0, which would be a claim the turn was free, and
+   * never an estimate. Every line written before S15.9 is null here, and message lines (A2A, chat) always
+   * are: they are not model turns.
    */
-  readonly cost: number | null;
+  readonly cost: TurnCost | null;
+  /**
+   * Why {@link cost} is null — or null when it is not (S15.9).
+   *
+   * **Optional on read**, for the reason {@link usage} is: every line from before S15.9 lacks it and must
+   * still parse, and a reader that finds nothing here is looking at a line written before turns were priced
+   * (the report calls it `not-recorded`). Every model turn written since carries it.
+   */
+  readonly not_charged?: NotCharged | null;
   /**
    * What the turn used, in tokens the backend itself printed.
    *
@@ -191,6 +216,62 @@ function usageProblem(value: unknown): string | undefined {
       return `usage.${field} is not a whole token count or null`;
     }
   }
+  // S15.9's fields and D-143's split: absent on older lines, a count or null on newer ones.
+  for (const field of ["cache_read", "cache_write", "cache_write_5m", "cache_write_1h"]) {
+    if (usage[field] !== undefined && usage[field] !== null && tokenCount(usage[field]) === null) {
+      return `usage.${field} is not a whole token count or null`;
+    }
+  }
+  const notPrinted = usage["not_printed"];
+  if (
+    notPrinted !== undefined &&
+    (!Array.isArray(notPrinted) || !notPrinted.every((field) => (USAGE_FIELDS as readonly unknown[]).includes(field)))
+  ) {
+    return `usage.not_printed is not a list of ${USAGE_FIELDS.join(", ")}`;
+  }
+  return undefined;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const sameKeys = (value: Record<string, unknown>, keys: readonly string[]) =>
+  Object.keys(value).sort().join(",") === [...keys].sort().join(",");
+
+/**
+ * Why this line's `cost` and `not_charged` cannot be read back, or undefined (S15.9).
+ *
+ * A cost is exactly its five fields and its four rates (five on a turn that wrote to the 1-hour cache,
+ * D-143), every figure a whole number — the shape the report copies into a signed row — and exactly one of
+ * `cost` and `not_charged` says something. A line that claims a cost with a reason not to charge it, or a
+ * reason with no cost missing, is not a line anything can bill.
+ */
+function costProblem(cost: unknown, notCharged: unknown): string | undefined {
+  if (notCharged !== undefined && notCharged !== null && !(NOT_CHARGED as readonly unknown[]).includes(notCharged)) {
+    return `unknown not_charged ${JSON.stringify(notCharged)}`;
+  }
+  if (cost === null) {
+    return notCharged === null ? "cost is null and not_charged gives no reason" : undefined;
+  }
+  if (!isRecord(cost) || !sameKeys(cost, ["usd_micros", "table", "table_digest", "source", "usd_micros_per_mtok"])) {
+    return "cost is not null or {usd_micros, table, table_digest, source, usd_micros_per_mtok}";
+  }
+  if (notCharged !== null) return "cost is present, so not_charged must be null";
+  if (tokenCount(cost["usd_micros"]) === null) return "cost.usd_micros is not a whole number of micro-dollars";
+  if (!isSafeId(cost["table"])) return "cost.table is not a price table version";
+  if (typeof cost["table_digest"] !== "string" || !TABLE_DIGEST.test(cost["table_digest"])) return "cost.table_digest is not 16 hex characters";
+  if (cost["source"] !== "default" && cost["source"] !== "owner") return `unknown cost.source ${JSON.stringify(cost["source"])}`;
+  const rates = cost["usd_micros_per_mtok"];
+  // The four, and the 1-hour write rate beside them on a turn that wrote to the 1-hour cache (D-143).
+  if (!isRecord(rates) || !(sameKeys(rates, RATE_FIELDS) || sameKeys(rates, ALL_RATE_FIELDS))) {
+    return `cost.usd_micros_per_mtok is not {${RATE_FIELDS.join(", ")}} or that and ${RATE_1H}`;
+  }
+  for (const field of Object.keys(rates)) {
+    const rate = rates[field];
+    if (rate !== null && (tokenCount(rate) === null || (rate as number) > MAX_RATE)) {
+      return `cost.usd_micros_per_mtok.${field} is not a whole number of micro-dollars or null`;
+    }
+  }
   return undefined;
 }
 
@@ -243,11 +324,17 @@ export function parseLine(line: string): ParsedLine {
   for (const field of ["model", "prompt", "text", "soul_sha"]) {
     if (!isStringOrNull(value[field])) return { ok: false, reason: `${field} is not a string or null` };
   }
-  for (const field of ["exit", "duration_ms", "cost"]) {
+  // D-142's field: absent on older lines, a string or null on newer ones.
+  if (value["model_requested"] !== undefined && !isStringOrNull(value["model_requested"])) {
+    return { ok: false, reason: "model_requested is not a string or null" };
+  }
+  for (const field of ["exit", "duration_ms"]) {
     if (!isFiniteNumberOrNull(value[field])) {
       return { ok: false, reason: `${field} is not a finite number or null` };
     }
   }
+  const costReason = costProblem(value["cost"], value["not_charged"]);
+  if (costReason !== undefined) return { ok: false, reason: costReason };
   for (const field of ["prompt_bytes", "text_bytes"]) {
     if (typeof value[field] !== "number" || !Number.isInteger(value[field])) {
       return { ok: false, reason: `${field} is not a whole number` };

@@ -40,6 +40,7 @@ import {
   type PlaceId,
 } from "../../src/erase/places.ts";
 import { GIT_UNDELETABLE } from "../../src/guard/history.ts";
+import { IDENTITY_UNDELETABLE } from "../../src/identity/dir.ts";
 import { UNDELETABLE } from "../../src/ledger/store.ts";
 import { SUMMARY_PATH } from "../../src/observer/actions.ts";
 import { RAG_UNDELETABLE } from "../../src/memory/store-admin.ts";
@@ -130,6 +131,8 @@ describe("what deletion cannot reach — one copy of the words", () => {
     // `toBe`, not `toEqual`. A second copy of these words would pass an
     // equality check on the day it was written and drift the day after.
     expect(undeletableFor("soul")[0]).toBe(GIT_UNDELETABLE);
+    // S15.8: what the agent's key signed stays signed wherever it went.
+    expect(undeletableFor("soul")[1]).toBe(IDENTITY_UNDELETABLE);
     expect(undeletableFor("observer")[0]).toBe(OBSERVER_UNDELETABLE);
     expect(undeletableFor("ledger")[0]).toBe(UNDELETABLE);
     expect(undeletableFor("lora")[0]).toBe(WEIGHTS_UNDELETABLE);

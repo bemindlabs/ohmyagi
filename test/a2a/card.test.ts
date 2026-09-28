@@ -10,7 +10,9 @@
 
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { A2A_PROTOCOL_VERSION, AI_DISCLOSURE, agentCard, DEFAULT_A2A_URL } from "../../src/a2a/card.ts";
+import { A2A_PROTOCOL_VERSION, AGENT_KEY_EXTENSION, AI_DISCLOSURE, agentCard, DEFAULT_A2A_URL } from "../../src/a2a/card.ts";
+import { generateKeyPairSync } from "node:crypto";
+import { fingerprintOf, publicKeyText } from "../../src/identity/sign.ts";
 import { loadSoul } from "../../src/soul/load.ts";
 import { subjectId } from "../../src/types.ts";
 
@@ -62,5 +64,39 @@ describe("S8.1 — the card", () => {
     for (const word of personal) expect(json, word).not.toContain(word);
     // Nor the role's own body, which is free prose and not a public listing.
     expect(json).not.toContain("Reconcile the bank feed");
+  });
+});
+
+describe("S15.8 — the card announces the agent's public key, and says so when there is none (D-108)", () => {
+  test("no key: the extension is there with nulls, and says nothing it reports is signed", async () => {
+    const card = agentCard(await soul());
+    expect(card.capabilities.extensions).toEqual([
+      {
+        uri: AGENT_KEY_EXTENSION,
+        description: expect.stringContaining("no usable signing key") as unknown as string,
+        required: false,
+        params: { algorithm: null, publicKey: null, fingerprint: null },
+      },
+    ]);
+  });
+
+  test("a key: its algorithm, public key and fingerprint — never the private half, and the version does not move", async () => {
+    const s = await soul();
+    const { privateKey } = generateKeyPairSync("ed25519");
+    const publicKey = publicKeyText(privateKey);
+    const card = agentCard(s, DEFAULT_A2A_URL, { algorithm: "ed25519", publicKey, fingerprint: fingerprintOf(publicKey) });
+    const [extension] = card.capabilities.extensions;
+    expect(extension!.uri).toBe(AGENT_KEY_EXTENSION);
+    expect(extension!.required).toBe(false);
+    expect(extension!.params).toEqual({ algorithm: "ed25519", publicKey, fingerprint: fingerprintOf(publicKey) });
+    const pem = privateKey.export({ format: "pem", type: "pkcs8" }).toString();
+    const json = JSON.stringify(card);
+    for (const line of pem.split("\n").filter((l) => l !== "" && !l.startsWith("-----"))) expect(json).not.toContain(line);
+    expect(json).not.toContain("PRIVATE");
+    // The key is who signs; the version is what the soul says. One does not move the other.
+    expect(card.version).toBe(agentCard(s).version);
+    // Still the A2A fields a client reads, untouched beside it.
+    expect(card.capabilities.streaming).toBe(false);
+    expect(card.protocolVersion).toBe(A2A_PROTOCOL_VERSION);
   });
 });

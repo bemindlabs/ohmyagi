@@ -240,11 +240,12 @@ field that moves turns every line om-agi writes into `missing`, silently.
 
 | CLI | version measured | stream | fields | om-agi reads |
 |---|---|---|---|---|
-| claude | `2.1.278` | stdout (the reply JSON) | `usage.input_tokens`, `usage.cache_creation_input_tokens`, `usage.cache_read_input_tokens`, `usage.output_tokens` — plus `cache_creation`, `inference_geo`, `iterations`, `output_tokens_details`, `server_tool_use`, `service_tier`, `speed` | the three input fields **summed**, and `output_tokens` |
-| codex | `0.153.4` | **stderr** (stdout holds the answer) | a line reading `tokens used`, the figure on the line after it, thousands separated (`2,243`) | that figure, as `total` |
-| ollama | `0.32.13` | HTTP response body | `prompt_eval_count`, `eval_count`, plus `total_duration`, `prompt_eval_duration`, `eval_duration`, `load_duration` | both counts |
-| grok | `1.0.40` | stdout (`--output-format json`) | `usage.input_tokens` (uncached, per the vendor's docs), `usage.cache_read_input_tokens`, `usage.cache_creation_input_tokens`, `usage.output_tokens`, `usage.total_tokens` | the three input fields **summed**, `output_tokens`, `total_tokens` — present on 76 of 76 local-model runs, cache fields always 0 there (S12.6) |
-| gemini · copilot · kimi | — | — | **not surveyed** | nothing — reported as `unreported` |
+| claude | `2.1.278` | stdout (the reply JSON) | `usage.input_tokens`, `usage.cache_creation_input_tokens`, `usage.cache_read_input_tokens`, `usage.output_tokens` — plus `cache_creation`, `inference_geo`, `iterations`, `output_tokens_details`, `server_tool_use`, `service_tier`, `speed` | the three input fields **summed**, and `output_tokens`; since S15.9 also the two cache fields apart, as `cache_read` and `cache_write`; since D-143 (measured on `2.1.283`) also `usage.cache_creation.ephemeral_5m_input_tokens` and `ephemeral_1h_input_tokens`, as `cache_write_5m` and `cache_write_1h` — kept only when they add up to `cache_write` |
+| codex | `0.153.4` | **stderr** (stdout holds the answer) | a line reading `tokens used`, the figure on the line after it, thousands separated (`2,243`) | that figure, as `total`; input, output, both cache counts and the split of a write are null and listed in `not_printed` |
+| ollama | `0.32.13` | HTTP response body | `prompt_eval_count`, `eval_count`, plus `total_duration`, `prompt_eval_duration`, `eval_duration`, `load_duration` | both counts; no cache field exists, so both cache counts and the split of a write are null and listed in `not_printed` |
+| grok | `1.0.40` | stdout (`--output-format json`) | `usage.input_tokens` (uncached, per the vendor's docs), `usage.cache_read_input_tokens`, `usage.cache_creation_input_tokens`, `usage.output_tokens`, `usage.reasoning_tokens`, `usage.total_tokens` | the three input fields **summed**, `output_tokens`, `total_tokens`, and since S15.9 the two cache fields apart — present on 76 of 76 local-model runs, cache fields always 0 there (S12.6). `reasoning_tokens` is not read: `total_tokens` equalled input + output on every run. No split of a write: `cache_write_5m`/`cache_write_1h` are null and listed in `not_printed` |
+| claude-local · grok-local | as claude · grok | as claude · grok | the same JSON, served through LiteLLM from the local model | as claude · grok (S12.1 runs the real CLIs) |
+| gemini · copilot · kimi | — | — | **not surveyed** — om-agi runs them with text output, which carries no counts | nothing — reported as `unreported`, every count null |
 
 Three things the measurement settled, each of which looks like a detail and is not:
 
@@ -258,17 +259,27 @@ Three things the measurement settled, each of which looks like a detail and is n
    that keeps stderr only when stdout came back empty — which is the obvious way
    to keep a failure's reason — throws the count away on exactly the turns that
    used tokens.
-3. **Nothing in a currency is recorded.** The same claude response carried
+3. **No vendor's money is read.** The same claude response carried
    `total_cost_usd: 0.80962` for a two-character answer, nearly all of it the
    list price of a cache write a subscription holder is never billed for. ollama
    has no cost or `usd` field at all, which is the evidence that writing `0`
    there would be om-agi adding something the daemon never said. Both are
-   dropped, and neither is kept under another name.
+   dropped, and neither is kept under another name. What a turn costs is
+   om-agi's own arithmetic over the counts above and a dated price table
+   (`ohmyagi usage prices`, S15.9, D-139); a turn with a count missing is not
+   charged at all (D-110).
+4. **Which cache a claude write went to changes its price** (D-143). Anthropic
+   prices a 5-minute write at 1.25× input and a 1-hour write at 2×, and claude
+   says which in `usage.cache_creation`. A turn measured on 2.1.283 wrote all
+   11,856 of its cache tokens to the 1-hour cache; priced as 5-minute it was
+   8,892 µ$ short. `modelUsage` carries no split, only `cacheCreationInputTokens`.
 
 ### How to re-measure
 
 ```sh
 claude -p "Reply with exactly ok" --output-format json --tools "" | jq '{usage, has_cost: has("total_cost_usd")}'
+# D-143: the split of a cache write, and that it adds up to the write
+claude -p "Reply with exactly ok" --output-format json --tools "" | jq '.usage | {cache_creation_input_tokens, cache_creation}'
 codex exec --skip-git-repo-check --sandbox read-only "Reply with exactly ok" 2>&1 >/dev/null | tail -5
 curl -s localhost:11434/api/chat -d '{"model":"<small model>","stream":false,"messages":[{"role":"user","content":"ok"}]}' | jq 'del(.message)'
 ```
@@ -281,6 +292,47 @@ OM_AGI_REAL_USAGE=1 OM_AGI_REAL_MODEL=<model> bun test test/exec/usage.real.test
 
 That test is opt-in because each case spends a real turn. A `missing` from it
 means the vendor moved and this table is out of date.
+
+## Model: how each CLI takes one, and which one it says it ran (D-142)
+
+**Read 2026-09-28** off each CLI's `--help`, and measured with one real turn where the
+output names a model. `src/exec/registry.ts` encodes the same rows as `VendorSpec.model`,
+and every `headlessArgv` builds the flag from it.
+
+| CLI | version | flag (`--help`) | names it documents | output names the model it ran |
+|---|---|---|---|---|
+| claude | `2.1.283` | `--model <model>` — an alias (`fable`, `opus`, `sonnet`) or a full name | the three aliases, and `haiku` (resolved by the measured turn) | **yes** — `modelUsage`, one key per model called: the dated API id (`claude-haiku-4-5-20251001`), with `canonicalModel` (`claude-haiku-4-5`) inside |
+| grok | `1.0.40` | `-m, --model <MODEL>` — "Model ID to use" | none (`grok models` asks the account) | **yes** — `modelUsage`, keyed by the id the CLI sent (`local-coder` on a `grok-local` turn); no canonical field. Not yet seen against xAI |
+| codex | `0.155.1` | `-m, --model <MODEL>` (`codex exec --help`) | none | no — text output |
+| gemini | `0.38.2` | `-m, --model` | none | no — run with text output |
+| copilot | `0.0.367` | `--model <model>`, a fixed list of choices | the twelve choices it prints | no — `-s` output |
+| kimi | `2.0.2` | `-m, --model <model>` — an alias from the owner's `config.toml` | none (the aliases are the owner's) | no — text output |
+| claude-local · grok-local | as claude · grok | — | — | om-agi runs them on `local-coder` only; they take no model |
+
+What om-agi does with it:
+
+1. **A model is one backend's.** `turn --backend claude --model opus` hands claude
+   `--model opus`, as one argument after the flag. In a chain of several, a bare `--model`
+   is the ollama step's (as it always was) and `--model claude=opus,ollama=qwen3:8b` gives
+   each named step its own; no model reaches a step it was not chosen for.
+2. **A name is checked before it goes on argv**: 1–128 characters, starting with a letter
+   or digit, then letters, digits and `._:@+/[]-` only. A backend that takes no model is
+   refused one; nothing runs on its default instead.
+3. **The ledger's `model` is what the output named**, the canonical name where there is
+   one; `model_requested` is what was asked for. Two names in the output are no single
+   model. A turn is priced by the model it ran, or by the requested name only when the
+   output named none and a price table lists exactly that name for that backend — so an
+   alias is never priced.
+
+### How to re-measure
+
+```sh
+claude -p "Reply with the single word: ok" --output-format json --tools "" \
+  --setting-sources project,local --strict-mcp-config --no-session-persistence \
+  --model haiku | jq '{modelUsage: (.modelUsage | map_values({canonicalModel}))}'
+for cli in claude grok gemini copilot kimi; do $cli --help | grep -i -A2 -- '--model'; done
+codex exec --help | grep -i -A1 -- '--model'
+```
 
 ## Hooks: what a capture actually receives
 

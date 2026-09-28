@@ -56,6 +56,8 @@ import { rmdir, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { historyFacts, historySentence, type HistoryFacts } from "../guard/history.ts";
 import { personalDir } from "../guard/personal.ts";
+import { identityDirFor, keyPath } from "../identity/dir.ts";
+import { readAgentKey } from "../identity/key.ts";
 import {
   commitForget,
   planForget,
@@ -181,8 +183,8 @@ export interface ErasePlan {
   /**
    * Directories left holding nothing but the subject's name.
    *
-   * `$XDG_DATA_HOME/om-agi/<subject>/` is the case: its only child is
-   * `personal/`, which goes whole, and what would be left is an empty directory
+   * `$XDG_DATA_HOME/om-agi/<subject>/` is the case: its only children are
+   * `personal/` and `identity/` (S15.8), which both go whole, and what would be left is an empty directory
    * whose *name* is the identifier AC3 says must be findable nowhere. Removed
    * with a plain `rmdir`, which fails harmlessly if anything else is in there —
    * om-agi has then miscounted and leaving the evidence is the right move.
@@ -219,6 +221,7 @@ export interface ErasePlan {
   /** Things a reader is entitled to know that are not refusals. */
   readonly notes: readonly string[];
 }
+
 
 /** A subject id is not a word; the needle is, and this is how it is labelled. */
 const SUBJECT_NEEDLE = "subject id";
@@ -261,6 +264,19 @@ export async function planErase(
     notes.push(
       "--personal keeps role.md, memory/ and consent/. The soul will not load again until a " +
         "new person.md is written: a soul is two files and the loader requires both.",
+    );
+  }
+  // Only a key that is really there is kept, and only then is it said: with no key, nothing under
+  // `<subject>/` is anybody's reason to stay, and a hit there is a leftover (S15.8 re-review).
+  const keyFile = keyPath(identityDirFor(env, subject));
+  // A key, read the way `key` reads it (it creates nothing): any other file at that path — text, a link, a key
+  // someone else could read — is not the agent's identity and is not kept (S15.8 third review).
+  const keyKept = scope === "personal" && (await readAgentKey(identityDirFor(env, subject))).state === "present";
+  if (keyKept) {
+    notes.push(
+      `--personal keeps the agent's signing key (${keyFile}), as it keeps role.md: the key is the agent's ` +
+        "identity, not the person's data (D-138). Its path names the subject; the search below reports that as " +
+        "kept only while nothing else is left beside it. A full erase, without --personal, removes it.",
     );
   }
 
@@ -364,7 +380,12 @@ export async function planErase(
 
   const scopes: Scope[] = [
     { label: "state root", kind: "deletable", tree: state },
-    { label: "data root", kind: "deletable", tree: data },
+    {
+      label: "data root",
+      kind: "deletable",
+      tree: data,
+      ...(keyKept ? { kept: [keyFile] } : {}),
+    },
     {
       label: "vendor instruction files",
       kind: "deletable",
@@ -773,7 +794,7 @@ export async function verifyErase(
       plan.agentDir,
       plan.personalNeedles,
     );
-    personal = { scopes: [{ ...kept, kind: "git" }], deletableHits: 0, gitHits: kept.hits.length };
+    personal = { scopes: [{ ...kept, kind: "git" }], deletableHits: 0, gitHits: kept.hits.length, keptHits: 0 };
   }
 
   // Counted from disk rather than from `result`: a commit that subtracted its
@@ -810,6 +831,7 @@ export async function verifyErase(
     failures === 0 &&
     search.deletableHits === 0 &&
     search.gitHits === 0 &&
+    search.keptHits === 0 &&
     unreadableScopes.length === 0 &&
     (personal === null || personal.gitHits === 0);
 

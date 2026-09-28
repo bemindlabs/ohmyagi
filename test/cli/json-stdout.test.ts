@@ -346,6 +346,59 @@ const ROWS: readonly Row[] = [
     build: async () => ["deploy", "plan", "--json"],
   },
   {
+    file: "usage.ts",
+    id: "usage report --json",
+    code: 0,
+    stdout: "document",
+    // The signed envelope alone; what a person reads — the totals, what was left out — is on stderr.
+    build: async (box) => {
+      await setup(box, ["key", SOUL, "--subject", SUBJECT]);
+      return ["usage", "report", SOUL, "--subject", SUBJECT, "--json"];
+    },
+  },
+  {
+    file: "usage.ts",
+    id: "usage prices --json",
+    code: 0,
+    stdout: "document",
+    // The tables in force — the shipped one, and where the owner's would be (S15.9).
+    build: async () => ["usage", "prices", "--json"],
+  },
+  {
+    file: "usage.ts",
+    id: "usage report --json with no key to sign with",
+    // Nothing on stdout: an unsigned report is not a report, and half of one would be worse.
+    code: 1,
+    stdout: "empty",
+    build: async () => ["usage", "report", SOUL, "--subject", SUBJECT, "--json"],
+  },
+  {
+    file: "key.ts",
+    id: "key prove --json",
+    code: 0,
+    stdout: "document",
+    // The signed proof alone (D-141); what a person reads — the market, listing and nonce it names — is on stderr.
+    build: async (box) => {
+      await setup(box, ["key", SOUL, "--subject", SUBJECT]);
+      return ["key", "prove", SOUL, "--subject", SUBJECT, "--market", "https://market.example", "--listing", "ts-reviewer", "--nonce", "A".repeat(43), "--json"];
+    },
+  },
+  {
+    file: "key.ts",
+    id: "key prove --json with no key to sign with",
+    // Nothing on stdout: a proof is never made with a key made for it, and there is none.
+    code: 1,
+    stdout: "empty",
+    build: async () => ["key", "prove", SOUL, "--subject", SUBJECT, "--market", "https://market.example", "--listing", "ts-reviewer", "--nonce", "A".repeat(43), "--json"],
+  },
+  {
+    file: "key.ts",
+    id: "key prove --json with a market that is not an origin",
+    code: 2,
+    stdout: "empty",
+    build: async () => ["key", "prove", SOUL, "--subject", SUBJECT, "--market", "https://market.example/", "--listing", "ts-reviewer", "--nonce", "A".repeat(43), "--json"],
+  },
+  {
     file: "erase.ts",
     id: "erase --json with a command line the CLI will not run",
     // Nothing on stdout at all: a usage error has no document to give, and
@@ -398,9 +451,13 @@ describe("every command that takes --json is asked about it here", () => {
   });
 
   test("the help text advertises the flag exactly as often as the tree declares it", async () => {
+    // Counted per flag list, not per file: `usage.ts` declares it for two
+    // subcommands (`report` and, since S15.9, `prices`), each with its own
+    // list and its own line in the help.
     const sites = await sitesOnDisk();
+    const declared = [...sites.values()].reduce((sum, hits) => sum + hits.length, 0);
     const advertised = USAGE.split("[--json]").length - 1;
-    expect(advertised, "USAGE and bin/commands/ disagree about who takes --json").toBe(sites.size);
+    expect(advertised, "USAGE and bin/commands/ disagree about who takes --json").toBe(declared);
   });
 });
 

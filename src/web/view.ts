@@ -108,11 +108,12 @@ export interface ViewState {
   readonly engine: {
     /** The chain a turn tries, in order — `--backend` given to `ohmyagi web`, else the default. */
     readonly chain: readonly string[];
-    /** The model the local backend uses: `--model`, else OM_AGI_OLLAMA_MODEL, else none. */
+    /** The model the local backend uses: its `--model` (D-142: a bare one, or `ollama=<m>`), else OM_AGI_OLLAMA_MODEL, else none. */
     readonly localModel: string | null;
     /** The local judge that reads what may leave (D-061), or null when it is off. */
     readonly judge: string | null;
-    readonly last: { readonly backend: string; readonly model: string | null; readonly when: string } | null;
+    /** `model` is what the backend ran as its ledger line says; `modelRequested` what it was asked for (D-142). */
+    readonly last: { readonly backend: string; readonly model: string | null; readonly modelRequested: string | null; readonly when: string } | null;
   };
 }
 

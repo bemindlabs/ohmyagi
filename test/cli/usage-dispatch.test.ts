@@ -48,7 +48,7 @@ import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { USAGE } from "../../bin/usage.ts";
-import { caseLabels } from "../support/ast.ts";
+import { caseLabels, defaultRunsCommand } from "../support/ast.ts";
 
 const ROOT = resolve(import.meta.dir, "..", "..");
 const ENTRY = join(ROOT, "bin", "om-agi.ts");
@@ -150,13 +150,17 @@ function readmeHalves(text: string): { advertised: string[]; planned: string[] }
   return { advertised: [...new Set(advertised)], planned: [...new Set(planned)] };
 }
 
-/** The subcommands `bin/commands/<verb>.ts` dispatches, or `undefined` if it has none. */
-async function subcommandsOf(verb: string): Promise<string[] | undefined> {
+/**
+ * The subcommands `bin/commands/<verb>.ts` dispatches, or `undefined` if it has none — and whether the bare
+ * verb is a command too, which it is when the dispatcher's `default:` runs one instead of refusing.
+ */
+async function subcommandsOf(verb: string): Promise<{ readonly subs: string[]; readonly bare: boolean } | undefined> {
   const path = join(COMMANDS, `${verb}.ts`);
   const source = await Bun.file(path).text().catch(() => undefined);
   if (source === undefined) return undefined;
   const labels = caseLabels(path, source, ["sub"]);
-  return labels.length === 1 && labels[0] === "absent" ? undefined : labels;
+  if (labels.length === 1 && labels[0] === "absent") return undefined;
+  return { subs: labels, bare: defaultRunsCommand(path, source, ["sub"]) };
 }
 
 /**
@@ -164,7 +168,10 @@ async function subcommandsOf(verb: string): Promise<string[] | undefined> {
  *
  * A verb whose own file dispatches subcommands contributes those and not
  * itself: `ohmyagi soul` with nothing after it is an error, so advertising the
- * bare verb would be advertising a command that does not work.
+ * bare verb would be advertising a command that does not work. The exception
+ * is a dispatcher whose `default:` runs a command rather than refusing — `key
+ * <agent-dir>` makes the key, beside `key prove` — and then the bare verb is
+ * one of its commands as well.
  */
 async function dispatched(): Promise<string[]> {
   const entry = caseLabels(ENTRY, await readFile(ENTRY, "utf8"), ["command"]);
@@ -173,9 +180,9 @@ async function dispatched(): Promise<string[]> {
     // `--version`, `-v`, `--help`, `-h`: aliases of a verb that is itself
     // dispatched, and nobody types them as a command.
     if (verb.startsWith("-")) continue;
-    const subs = await subcommandsOf(verb);
-    if (subs === undefined) found.push(verb);
-    else for (const sub of subs) found.push(`${verb} ${sub}`);
+    const dispatcher = await subcommandsOf(verb);
+    if (dispatcher === undefined || dispatcher.bare) found.push(verb);
+    for (const sub of dispatcher?.subs ?? []) found.push(`${verb} ${sub}`);
   }
   return found;
 }
@@ -392,5 +399,30 @@ describe("the parsers themselves, on source they must read and source they must 
     // A discriminant nothing switches on is `absent`, never `[]` — so a rename
     // shows up as a failure instead of as an empty list everything satisfies.
     expect(caseLabels(path, source, ["renamedAwayFromSub"])).toEqual(["absent"]);
+  });
+
+  test("a dispatcher whose default runs a command makes the bare verb a command too — and only that one", async () => {
+    // `key <agent-dir>` makes the key and `key prove` proves it (D-141): both are answered, and both advertised.
+    const key = join(COMMANDS, "key.ts");
+    expect(defaultRunsCommand(key, await readFile(key, "utf8"), ["sub"])).toBe(true);
+    const answers = await dispatched();
+    expect(answers).toContain("key");
+    expect(answers).toContain("key prove");
+    expect(answers).toContain("key verify-proof");
+    // Every other dispatcher's default is a usage error, so `soul` alone is still not a command.
+    const soul = join(COMMANDS, "soul.ts");
+    expect(defaultRunsCommand(soul, await readFile(soul, "utf8"), ["sub"])).toBe(false);
+    expect(answers).not.toContain("soul");
+    const synthetic = [
+      "function f(sub: string) {",
+      "  switch (sub) {",
+      '    case "a": return 1;',
+      "    default: { if (sub) return usageError(`no ${sub}`); return 2; }",
+      "  }",
+      "}",
+    ].join("\n");
+    expect(defaultRunsCommand("synthetic.ts", synthetic, ["sub"])).toBe(false);
+    expect(defaultRunsCommand("synthetic.ts", synthetic.replace("usageError", "runIt"), ["sub"])).toBe(true);
+    expect(defaultRunsCommand("synthetic.ts", synthetic.replace("usageError", "runIt"), ["other"])).toBe(false);
   });
 });

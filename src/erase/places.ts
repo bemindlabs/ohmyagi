@@ -45,6 +45,7 @@
 
 import { DAGI_DIR } from "../agent/template.ts";
 import { GIT_UNDELETABLE } from "../guard/history.ts";
+import { IDENTITY_UNDELETABLE } from "../identity/dir.ts";
 import { UNDELETABLE } from "../ledger/store.ts";
 import { SUMMARY_PATH } from "../observer/actions.ts";
 import { RAG_UNDELETABLE } from "../memory/store-admin.ts";
@@ -122,10 +123,12 @@ export const PLACES = {
     id: "soul",
     what:
       "the identity: soul/ in the agent's git working tree, om-agi's block in every vendor " +
-      "instruction file it was applied to, the backups taken before those writes, and the " +
-      "derived " + DAGI_DIR + "/ beside them",
+      "instruction file it was applied to, the backups taken before those writes, the " +
+      "derived " + DAGI_DIR + "/ beside them, and the agent's own signing key under the data " +
+      "root (S15.8)",
     status: "implemented",
-    undeletable: [GIT_UNDELETABLE],
+    // Git's list, and the key's: what the private key signed stays signed wherever it went.
+    undeletable: [GIT_UNDELETABLE, IDENTITY_UNDELETABLE],
     noticeAt: "ohmyagi new, before the first commit",
   },
   observer: {

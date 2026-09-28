@@ -85,6 +85,23 @@ export type UsageSpec =
       readonly output: string;
       /** A total the vendor computes itself. Absent where it does not. */
       readonly total?: string;
+      /**
+       * The part of `input` the vendor served from its prompt cache, and the
+       * part it wrote into it (S15.9) — each one of the `input` pointers,
+       * because it is a part of the prompt and not something beside it (the
+       * registry test holds that). Absent where the vendor prints no such
+       * count: the count is then `null` and listed in `not_printed`, never 0.
+       */
+      readonly cacheRead?: string;
+      readonly cacheWrite?: string;
+      /**
+       * The parts of the cache write that went to the 5-minute and to the 1-hour cache (D-143) — both or
+       * neither, and only beside {@link cacheWrite}, which they split (the registry test holds that). Absent
+       * where the vendor prints no split: both counts are then `null` and listed in `not_printed`, and the
+       * write is priced as one part.
+       */
+      readonly cacheWrite5m?: string;
+      readonly cacheWrite1h?: string;
     }
   | {
       readonly shape: "text";
@@ -178,6 +195,71 @@ export type ReadOnlySpec =
       readonly evidence: "writes";
     };
 
+/**
+ * How one vendor CLI takes a model, and where it says which model it ran (D-142).
+ *
+ * The flag is read off the CLI's own `--help` on this machine, never inferred
+ * from another vendor's spelling (`docs/cli-matrix.md`). A vendor without this
+ * field takes no model: `CliExec` refuses a turn that names one rather than run
+ * it on the vendor's default and say nothing.
+ */
+export interface ModelSpec {
+  /** The flag. The model always follows it as its own argv element — never `--flag=value`, never through a shell. */
+  readonly flag: string;
+  /**
+   * Names the vendor itself documents for that flag — its `--help`, or a real
+   * turn that resolved them. What the web picker offers for this backend, with
+   * the price table's names for it (`src/web/models.ts`). Not a whitelist: any
+   * name of the right shape still goes to the CLI, which decides.
+   */
+  readonly listed: readonly string[];
+  /** Where the CLI's output names the model it ran, or null when nobody has measured that it does. */
+  readonly reported: ModelReport | null;
+  /** What was read, from which version, and when. */
+  readonly evidence: string;
+}
+
+/**
+ * The model a turn ran on, as the CLI's JSON output names it: the keys of one
+ * object — one per model the turn called — and optionally a field inside each
+ * entry with the vendor's canonical name for it.
+ */
+export interface ModelReport {
+  /** JSON pointer to the object whose keys are the model ids the CLI called. */
+  readonly keysOf: string;
+  /** A string field of each entry naming the vendor's canonical model; used in place of the key when present. */
+  readonly canonical?: string;
+}
+
+/** Longest model name om-agi hands a CLI or records from one. Longer than any vendor's real id, shorter than a paragraph. */
+export const MODEL_MAX = 128;
+
+/**
+ * A model name as om-agi will put it on an argv or read it back out of a CLI's
+ * output: starts with a letter or digit (so never with `-`, which a CLI would
+ * read as a flag), then letters, digits and `._:@+/[]-` — `org/name`, `name:tag`
+ * and claude's `opus[1m]` all fit; a space, a quote, a `$`, `=`, `,`, a control
+ * character or a newline do not. Nothing here is a path check: the name is one
+ * argv element, and no shell ever reads it.
+ */
+const MODEL_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._:@+/[\]-]*$/;
+
+/** Why this string may not be handed to a backend as a model, or undefined when it may. */
+export function modelProblem(model: string): string | undefined {
+  if (model === "") return "is empty";
+  if (model.length > MODEL_MAX) return `is longer than ${MODEL_MAX} characters`;
+  if (model.startsWith("-")) return "starts with '-', which a CLI would read as a flag";
+  if (!MODEL_SHAPE.test(model)) {
+    return "has a character a model name does not have (letters, digits and ._:@+/[]- only, starting with a letter or digit)";
+  }
+  return undefined;
+}
+
+/** The flag and the model, as two argv elements — or nothing when no model is named. Every `headlessArgv` splices this. */
+export function modelArgs(spec: ModelSpec, model: string | undefined): string[] {
+  return model === undefined || model === "" ? [] : [spec.flag, model];
+}
+
 /** One vendor CLI: how to reach it, and what it gets wrong. */
 export interface VendorSpec {
   readonly id: string;
@@ -237,6 +319,13 @@ export interface VendorSpec {
    * which reads exactly like an answer.
    */
   readonly completion?: { readonly pointer: string; readonly value: string };
+  /**
+   * How this CLI takes a model, and whether it says which one it ran (D-142).
+   * Absent: it takes none om-agi may pass, and a turn naming one is refused.
+   * `headlessArgv` builds the flag *from* this value ({@link modelArgs}), so the
+   * declaration and the argv are one fact.
+   */
+  readonly model?: ModelSpec;
   /**
    * Argv after the binary for a single-turn, text-only answer.
    *
@@ -421,6 +510,26 @@ export function claudeIsolation(system: string | undefined): string[] {
   return [...(system === undefined ? [] : ["--setting-sources", "project,local"]), "--strict-mcp-config"];
 }
 
+/**
+ * D-142 — `--model <model>`: "Provide an alias for the latest model (e.g. 'fable', 'opus', or 'sonnet') or a
+ * model's full name (e.g. 'claude-fable-5')" (`--help`, 2.1.283).
+ *
+ * The output names the model it ran. Measured 2026-09-28 against 2.1.283, one turn (`-p "Reply with the single
+ * word: ok" --output-format json --tools "" --model haiku`, no user settings, no MCP): `modelUsage` held one
+ * entry, keyed `claude-haiku-4-5-20251001` — the dated API id the alias resolved to — with `canonicalModel:
+ * "claude-haiku-4-5"` inside it, the name the vendor's price list uses. The canonical name is recorded; the key
+ * is the fallback. A turn that calls more than one model has more than one key, and is never read as one.
+ */
+const CLAUDE_MODEL: ModelSpec = {
+  flag: "--model",
+  // The three aliases `--help` names, and `haiku`, which the measured turn resolved.
+  listed: ["fable", "opus", "sonnet", "haiku"],
+  reported: { keysOf: "/modelUsage", canonical: "canonicalModel" },
+  evidence:
+    "flag: `--help` of 2.1.283 (2026-09-28); report: one turn with `--model haiku` on 2.1.283, " +
+    "modelUsage keyed `claude-haiku-4-5-20251001` with canonicalModel `claude-haiku-4-5`",
+};
+
 const CLAUDE: VendorSpec = {
   id: "claude",
   display: "Claude Code",
@@ -433,6 +542,7 @@ const CLAUDE: VendorSpec = {
   },
   readOnly: CLAUDE_READONLY,
   grant: CLAUDE_GRANT,
+  model: CLAUDE_MODEL,
   headlessArgv: ({ prompt, model, restraint, system }) => [
     "-p",
     prompt,
@@ -441,7 +551,7 @@ const CLAUDE: VendorSpec = {
     ...restraintArgs(CLAUDE_READONLY, restraint),
     ...grantArgs(CLAUDE_GRANT, restraint),
     ...claudeIsolation(system),
-    ...(model ? ["--model", model] : []),
+    ...modelArgs(CLAUDE_MODEL, model),
   ],
   replyPointers: ["/result"],
   // Measured 2026-09-21 against 2.1.278, one turn, `--output-format json`.
@@ -453,6 +563,17 @@ const CLAUDE: VendorSpec = {
   //
   // The same response carried `total_cost_usd: 0.80962` for a two-character
   // answer. It is deliberately not read: see {@link Usage}.
+  //
+  // S15.9 reads the two cache fields apart as well, because D-110 prices them
+  // apart: in that measured turn the 80,951 cache-write tokens were the price.
+  //
+  // D-143 reads which cache the write went to, because Anthropic prices a
+  // 5-minute write at 1.25× input and a 1-hour write at 2×. Measured on 2.1.283:
+  // `usage.cache_creation` is `{ephemeral_5m_input_tokens, ephemeral_1h_input_tokens}`
+  // beside `cache_creation_input_tokens`, on the turn of D-142 (2026-09-28,
+  // `--model haiku`: 1h 11,856, 5m 0, the total 11,856) and on the one D-143 ran
+  // to measure it (the same command later that day: 0 and 0 with a total of 0 —
+  // it read 11,856 from the cache instead). `modelUsage` carries no split.
   usage: {
     shape: "json",
     stream: "stdout",
@@ -462,6 +583,10 @@ const CLAUDE: VendorSpec = {
       "/usage/cache_read_input_tokens",
     ],
     output: "/usage/output_tokens",
+    cacheRead: "/usage/cache_read_input_tokens",
+    cacheWrite: "/usage/cache_creation_input_tokens",
+    cacheWrite5m: "/usage/cache_creation/ephemeral_5m_input_tokens",
+    cacheWrite1h: "/usage/cache_creation/ephemeral_1h_input_tokens",
   },
   traps: [
     "`usage.input_tokens` is only the part of the prompt that missed the " +
@@ -545,6 +670,18 @@ const CODEX_HARDENING = {
     "under a ChatGPT sign-in)",
 } as const;
 
+/**
+ * D-142 — `-m, --model <MODEL>`: "Model the agent should use" (`codex exec --help`, 0.155.1, 2026-09-28). The
+ * help lists no names. `codex exec` answers in plain text with its count on stderr, so its output names no model
+ * and a turn records only the one asked for.
+ */
+const CODEX_MODEL: ModelSpec = {
+  flag: "--model",
+  listed: [],
+  reported: null,
+  evidence: "flag: `codex exec --help` of 0.155.1 (2026-09-28); the text output names no model",
+};
+
 const CODEX: VendorSpec = {
   id: "codex",
   display: "Codex CLI",
@@ -561,6 +698,7 @@ const CODEX: VendorSpec = {
   readOnly: CODEX_READONLY,
   grant: CODEX_GRANT,
   hardening: CODEX_HARDENING,
+  model: CODEX_MODEL,
   headlessArgv: ({ prompt, model, restraint }) => [
     "exec",
     "--skip-git-repo-check",
@@ -568,7 +706,7 @@ const CODEX: VendorSpec = {
     ...grantArgs(CODEX_GRANT, restraint),
     // After `--sandbox`, the order that was measured.
     ...CODEX_HARDENING.args,
-    ...(model ? ["--model", model] : []),
+    ...modelArgs(CODEX_MODEL, model),
     prompt,
   ],
   replyPointers: [],
@@ -730,10 +868,30 @@ const GROK_HARDENING = {
     "telemetry, trace upload and feedback xAI's remote config turns on after login",
 } as const;
 
+/**
+ * D-142 — `-m, --model <MODEL>`: "Model ID to use" (`--help`, 1.0.40, 2026-09-28). The help lists no names
+ * (`grok models` does, against the account, and is not run here).
+ *
+ * The output names the model it called. Measured 2026-09-28 against 1.0.40 through om-agi's own `grok-local` —
+ * a local model behind LiteLLM, so nothing reached xAI — one turn, `-p "Reply with the single word: ok"`:
+ * `modelUsage` held one entry keyed `local-coder`, the id the CLI sent, with no canonical name inside it. So the
+ * key is the id the CLI asked the API for; an alias xAI resolves on its own side would not show here. Not yet
+ * seen against xAI itself.
+ */
+const GROK_MODEL: ModelSpec = {
+  flag: "--model",
+  listed: [],
+  reported: { keysOf: "/modelUsage" },
+  evidence:
+    "flag: `--help` of 1.0.40 (2026-09-28); report: one grok-local turn on 1.0.40 (2026-09-28), " +
+    "modelUsage keyed by the model id the CLI sent (`local-coder`), no canonical field",
+};
+
 const GROK: VendorSpec = {
   id: "grok",
   display: "Grok CLI",
   binary: "grok",
+  model: GROK_MODEL,
   identity: {
     strength: "system",
     // This vendor reads Anthropic's file on purpose — it documents the
@@ -768,7 +926,7 @@ const GROK: VendorSpec = {
     ...restraintArgs(GROK_READONLY, restraint),
     ...grantArgs(GROK_GRANT, restraint),
     ...GROK_HARDENING.args,
-    ...(model ? ["--model", model] : []),
+    ...modelArgs(GROK_MODEL, model),
   ],
   // `/text` is where `--output-format json` puts the reply on 1.0.40; `/result`
   // never appeared in 76 turns and is kept as a harmless second try.
@@ -789,6 +947,12 @@ const GROK: VendorSpec = {
     ],
     output: "/usage/output_tokens",
     total: "/usage/total_tokens",
+    // Read apart since S15.9 (D-110). Both were 0 on every measured run, and
+    // `total_tokens` equalled input + output there — so `reasoning_tokens`,
+    // printed beside them, is inside `output_tokens` or outside the bill; it
+    // is not read.
+    cacheRead: "/usage/cache_read_input_tokens",
+    cacheWrite: "/usage/cache_creation_input_tokens",
   },
   traps: [
     "In headless a tool call that needs approval is cancelled, not refused: the whole turn " +
@@ -847,6 +1011,14 @@ const GEMINI_READONLY: ReadOnlySpec = {
   evidence: "documented",
 };
 
+/** D-142 — `-m, --model`: "Model [string]" (`--help`, 0.38.2, 2026-09-28). No names listed; text output names none. */
+const GEMINI_MODEL: ModelSpec = {
+  flag: "-m",
+  listed: [],
+  reported: null,
+  evidence: "flag: `--help` of 0.38.2 (2026-09-28); run with text output, which names no model",
+};
+
 const GEMINI: VendorSpec = {
   id: "gemini",
   display: "Gemini CLI",
@@ -856,13 +1028,14 @@ const GEMINI: VendorSpec = {
     instructionFiles: ["~/.gemini/GEMINI.md"],
   },
   readOnly: GEMINI_READONLY,
+  model: GEMINI_MODEL,
   headlessArgv: ({ prompt, model, restraint }) => [
     "-p",
     prompt,
     "-o",
     "text",
     ...restraintArgs(GEMINI_READONLY, restraint),
-    ...(model ? ["-m", model] : []),
+    ...modelArgs(GEMINI_MODEL, model),
   ],
   replyPointers: [],
   // Not surveyed. This vendor very likely reports something, but nobody has
@@ -896,6 +1069,31 @@ const COPILOT_READONLY: ReadOnlySpec = {
   evidence: "probed",
 };
 
+/**
+ * D-142 — `--model <model>`: "Set the AI model to use", with a fixed list of choices (`--help`, 0.0.367,
+ * 2026-09-28). The list is copied here as the vendor printed it; a name outside it is still handed over, and the
+ * CLI refuses it itself. `-s` output names no model.
+ */
+const COPILOT_MODEL: ModelSpec = {
+  flag: "--model",
+  listed: [
+    "claude-sonnet-4.5",
+    "claude-haiku-4.5",
+    "claude-opus-4.5",
+    "claude-sonnet-4",
+    "gpt-5",
+    "gpt-5.1",
+    "gpt-5.1-codex-mini",
+    "gpt-5.1-codex-max",
+    "gpt-5.1-codex",
+    "gpt-5-mini",
+    "gpt-4.1",
+    "gemini-3-pro-preview",
+  ],
+  reported: null,
+  evidence: "flag and choices: `--help` of 0.0.367 (2026-09-28); `-s` output names no model",
+};
+
 const COPILOT: VendorSpec = {
   id: "copilot",
   display: "GitHub Copilot CLI",
@@ -907,12 +1105,13 @@ const COPILOT: VendorSpec = {
     instructionFiles: ["./AGENTS.md"],
   },
   readOnly: COPILOT_READONLY,
+  model: COPILOT_MODEL,
   headlessArgv: ({ prompt, model, restraint }) => [
     "-p",
     prompt,
     "-s",
     ...restraintArgs(COPILOT_READONLY, restraint),
-    ...(model ? ["--model", model] : []),
+    ...modelArgs(COPILOT_MODEL, model),
   ],
   replyPointers: [],
   // Not surveyed — see the note on gemini.
@@ -987,10 +1186,23 @@ const KIMI_READONLY: ReadOnlySpec = {
   evidence: "probed",
 };
 
+/**
+ * D-142 — `-m, --model <model>`: "LLM model alias to use for this invocation. Defaults to default_model in
+ * config.toml" (`--help`, 2.0.2, 2026-09-28). The names are aliases defined in the owner's own config, so none are
+ * listed here; text output names none.
+ */
+const KIMI_MODEL: ModelSpec = {
+  flag: "-m",
+  listed: [],
+  reported: null,
+  evidence: "flag: `--help` of 2.0.2 (2026-09-28); aliases come from the owner's config.toml; text output names no model",
+};
+
 const KIMI: VendorSpec = {
   id: "kimi",
   display: "Kimi Code CLI",
   binary: "kimi",
+  model: KIMI_MODEL,
   identity: {
     strength: "user",
     // `./AGENTS.md` is where `soul apply` writes (SP-2 measured 9/9 from it). kimi 2.0.2 also reads a home
@@ -1011,7 +1223,7 @@ const KIMI: VendorSpec = {
     "--output-format",
     "text",
     ...restraintArgs(KIMI_READONLY, restraint),
-    ...(model ? ["-m", model] : []),
+    ...modelArgs(KIMI_MODEL, model),
   ],
   replyPointers: [],
   // Not surveyed — see the note on gemini.

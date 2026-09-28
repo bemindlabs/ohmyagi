@@ -24,6 +24,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { validatePriceTable } from "../../src/pricing/table.ts";
 
 const ROOT = join(import.meta.dir, "..", "..");
 const BIN = join(ROOT, "bin", "om-agi.ts");
@@ -92,6 +93,7 @@ interface RunOptions {
   readonly path?: string;
   readonly ollama?: string;
   readonly stdin?: string;
+  readonly env?: Readonly<Record<string, string>>;
 }
 
 async function run(harness: Harness, args: readonly string[], options: RunOptions = {}) {
@@ -103,6 +105,7 @@ async function run(harness: Harness, args: readonly string[], options: RunOption
       XDG_STATE_HOME: harness.state,
       CODEX_HOME: join(harness.home, ".codex"),
       ...(options.ollama === undefined ? {} : { OLLAMA_HOST: options.ollama }),
+      ...options.env,
     },
     stdin: options.stdin === undefined ? "ignore" : new TextEncoder().encode(options.stdin),
     stdout: "pipe",
@@ -233,19 +236,28 @@ describe("ohmyagi ledger", () => {
       expect(turn.code).toBe(0);
 
       const shown = await run(harness, ["ledger", "show", "--subject", "example", "--json"]);
-      const entries = (JSON.parse(shown.stdout) as { entries: { backend: string; turn: string; confidence: string }[] })
-        .entries;
+      const entries = (
+        JSON.parse(shown.stdout) as { entries: { backend: string; turn: string; confidence: string; model: string | null; not_charged: string | null }[] }
+      ).entries;
       // Two lines, one turn id. `claude` exited 0 having printed nothing — it
       // still received the prompt, which is the fact I-6 turns on.
       expect(entries.map((e) => e.backend).sort()).toEqual(["claude", "ollama"]);
       expect(new Set(entries.map((e) => e.turn)).size).toBe(1);
       expect(entries.find((e) => e.backend === "claude")!.confidence).toBe("silent");
+      // S15.9: each line names the model its backend ran. `--model` goes to
+      // ollama only; claude ran a default of its own that it does not name, so
+      // its line says null — not `stub`, which it was never handed and which a
+      // price would otherwise be looked up by.
+      expect(entries.find((e) => e.backend === "claude")!.model).toBeNull();
+      expect(entries.find((e) => e.backend === "ollama")!.model).toBe("stub");
+      // The silent claude printed no counts: not charged, for that reason first.
+      expect(entries.find((e) => e.backend === "claude")!.not_charged).toBe("usage-missing");
     } finally {
       await ollama.server.stop(true);
     }
   });
 
-  test("a line says what the turn used, and never what it cost", async () => {
+  test("a line says what the turn used, and what it cost — never a vendor's figure, and never a guess", async () => {
     const harness = await makeHarness();
     const ollama = serveOllama();
     const value = canary();
@@ -260,24 +272,114 @@ describe("ohmyagi ledger", () => {
       const entry = (
         JSON.parse(json.stdout) as {
           entries: {
-            cost: number | null;
-            usage: { status: string; input: number | null; output: number | null; total: number | null };
+            cost: unknown;
+            not_charged: string | null;
+            model: string | null;
+            usage: Record<string, unknown>;
           }[];
         }
       ).entries[0]!;
 
       // S2.1 AC1's fourth value, closed in tokens: read off the daemon's own
-      // response, not derived, and with no total because ollama prints none.
-      expect(entry.usage).toEqual({ status: "reported", input: 15, output: 24, total: null });
-      // And the money column is still empty — by decision now, not by debt.
+      // response, not derived, and with no total because ollama prints none —
+      // and no cache count either, said so rather than written as 0 (S15.9).
+      expect(entry.usage).toEqual({
+        status: "reported",
+        input: 15,
+        output: 24,
+        total: null,
+        cache_read: null,
+        cache_write: null,
+        cache_write_5m: null,
+        cache_write_1h: null,
+        not_printed: ["cache_read", "cache_write", "cache_write_5m", "cache_write_1h"],
+      });
+      // A model on this machine has no price until its owner writes one (D-106):
+      // not charged, and never 0.
+      expect(entry.model).toBe("stub");
       expect(entry.cost).toBeNull();
+      expect(entry.not_charged).toBe("price-unknown");
 
       const shown = await run(harness, ["ledger", "show", "--subject", "example"]);
       expect(shown.stdout).toContain("15/24/-");
       expect(shown.stdout).toContain("reported");
-      expect(shown.stdout).toContain("money is never recorded");
+      expect(shown.stdout).toContain("price-unknown");
+      expect(shown.stdout).toContain("never a vendor's own figure");
+
+      // The owner prices it: $0.10 in, $0.40 out per million tokens. The next turn is charged, from their table.
+      const own = {
+        kind: "ohmyagi.price-table",
+        v: 1,
+        version: "home-1",
+        currency: "usd",
+        unit: "micros-per-million-tokens",
+        prices: [{ backend: "ollama", model: "stub", input: 100_000, output: 400_000, cache_read: null, cache_write: null }],
+      };
+      await writeFile(join(harness.state, "om-agi", "prices.json"), JSON.stringify(own), { mode: 0o600 });
+      const digest = (validatePriceTable(own) as { table: { digest: string } }).table.digest;
+      await run(
+        harness,
+        ["turn", SOUL, "--subject", "example", "--prompt", value, "--backend", "ollama", "--model", "stub"],
+        { ollama: ollama.url },
+      );
+      const again = JSON.parse((await run(harness, ["ledger", "show", "--subject", "example", "--json"])).stdout) as {
+        entries: { cost: unknown; not_charged: string | null }[];
+      };
+      // 15 × 100000 + 24 × 400000 = 11,100,000 → 11 µ$.
+      expect(again.entries.at(-1)!.cost).toEqual({
+        usd_micros: 11,
+        table: "home-1",
+        // The content the price came from, bound: another file under the same version would say otherwise.
+        table_digest: digest,
+        source: "owner",
+        usd_micros_per_mtok: { input: 100_000, output: 400_000, cache_read: null, cache_write: null },
+      });
+      expect(again.entries.at(-1)!.not_charged).toBeNull();
+      expect((await run(harness, ["ledger", "show", "--subject", "example"])).stdout).toContain("$0.000011");
       // I-6 unchanged: the counts are metadata and the words still are not here.
       expect(shown.stdout).not.toContain(value);
+    } finally {
+      await ollama.server.stop(true);
+    }
+  });
+
+  test("S15.9: ollama's line names the model it ran when --model named none — its OM_AGI_OLLAMA_MODEL", async () => {
+    const harness = await makeHarness();
+    const ollama = serveOllama();
+    try {
+      await run(harness, ["turn", SOUL, "--subject", "example", "--prompt", canary(), "--backend", "ollama"], {
+        ollama: ollama.url,
+        env: { OM_AGI_OLLAMA_MODEL: "stub" },
+      });
+      const entries = (JSON.parse((await run(harness, ["ledger", "show", "--subject", "example", "--json"])).stdout) as { entries: { model: string | null }[] }).entries;
+      expect(entries.map((e) => e.model)).toEqual(["stub"]);
+    } finally {
+      await ollama.server.stop(true);
+    }
+  });
+
+  test("S15.9: an owner's price file that cannot be used is said on the turn, and nothing is charged", async () => {
+    const harness = await makeHarness();
+    const ollama = serveOllama();
+    try {
+      await mkdir(join(harness.state, "om-agi"), { recursive: true });
+      // A field name with a right-to-left override in it: the refusal quotes the name, and it must reach
+      // the terminal escaped (PR #3 review, L1 — the S15.8 M2 rule for anything a file says).
+      await writeFile(
+        join(harness.state, "om-agi", "prices.json"),
+        JSON.stringify({ kind: "ohmyagi.price-table", v: 1, version: "x", currency: "usd", unit: "micros-per-million-tokens", prices: [], "x\u202egnp.exe": 1 }),
+        { mode: 0o600 },
+      );
+      const turn = await run(harness, ["turn", SOUL, "--subject", "example", "--prompt", canary(), "--backend", "ollama", "--model", "stub"], {
+        ollama: ollama.url,
+      });
+      expect(turn.code, turn.stderr).toBe(0);
+      expect(turn.stderr).toContain("cannot be used");
+      expect(turn.stderr).toContain("table-unusable");
+      expect(turn.stderr).not.toContain("\u202e");
+      expect(turn.stderr).toContain("x\\u{202e}gnp.exe");
+      const entries = (JSON.parse((await run(harness, ["ledger", "show", "--subject", "example", "--json"])).stdout) as { entries: { not_charged: string | null }[] }).entries;
+      expect(entries.map((e) => e.not_charged)).toEqual(["table-unusable"]);
     } finally {
       await ollama.server.stop(true);
     }

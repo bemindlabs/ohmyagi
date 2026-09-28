@@ -19,7 +19,7 @@
  * did — the same reason `ApplyEnv` exists.
  */
 
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 /** Mode for directories under the state root. Nobody else's business. */
 export const STATE_DIR_MODE = 0o700;
@@ -29,18 +29,27 @@ export const STATE_FILE_MODE = 0o600;
 /**
  * `$XDG_STATE_HOME/om-agi`, or `~/.local/state/om-agi` when it is unset.
  *
- * An empty `XDG_STATE_HOME` counts as unset. The spec says a relative value is
- * to be ignored, and empty is the shape an unset variable takes when it has
- * been exported by a shell script that meant to set it.
+ * An empty or relative `XDG_STATE_HOME` counts as unset ({@link xdgBase}).
  *
  * @param home Absolute path to the home directory to resolve against.
  * @param env Environment to read `XDG_STATE_HOME` from.
  */
 export function stateRoot(home: string, env: Readonly<Record<string, string | undefined>>): string {
-  const configured = env["XDG_STATE_HOME"];
-  const base =
-    configured !== undefined && configured !== "" ? configured : join(home, ".local", "state");
-  return join(base, "om-agi");
+  return join(xdgBase(env["XDG_STATE_HOME"], join(home, ".local", "state")), "om-agi");
+}
+
+/**
+ * An XDG base directory, or the default when the variable may not be used.
+ *
+ * The spec: *"All paths set in these environment variables must be absolute. If an implementation
+ * encounters a relative path in any of these variables it should consider the path invalid and ignore
+ * it."* Until S15.8's review this file honoured a relative value, so `XDG_DATA_HOME=data ohmyagi key …`
+ * wrote a private key under whatever directory the command ran in — and `erase`, run from anywhere
+ * else, resolved a different tree and never found it. Empty counts as unset too: it is the shape an
+ * unset variable takes when a shell script that meant to set it exported it anyway.
+ */
+export function xdgBase(configured: string | undefined, fallback: string): string {
+  return configured !== undefined && configured !== "" && isAbsolute(configured) ? configured : fallback;
 }
 
 /**
@@ -53,16 +62,10 @@ export function stateRoot(home: string, env: Readonly<Record<string, string | un
  * even ignored (D-014). `.gitignore` is a request; a different filesystem tree
  * is a fact, and `git clean -fdx` and `cp -r .` both prove the difference.
  *
- * Same empty-is-unset rule as {@link stateRoot}, and for the same reason: an
- * exported-but-empty variable is what a shell script that meant to set one
- * leaves behind, and treating that as "put it at the filesystem root" would be
- * the worst available reading.
+ * Same rule as {@link stateRoot}: empty or relative is unset ({@link xdgBase}).
  */
 export function dataRoot(home: string, env: Readonly<Record<string, string | undefined>>): string {
-  const configured = env["XDG_DATA_HOME"];
-  const base =
-    configured !== undefined && configured !== "" ? configured : join(home, ".local", "share");
-  return join(base, "om-agi");
+  return join(xdgBase(env["XDG_DATA_HOME"], join(home, ".local", "share")), "om-agi");
 }
 
 /**

@@ -21,6 +21,8 @@ import { startA2A } from "../../src/a2a/server.ts";
 import { announceEgress } from "../../src/exec/egress.ts";
 import { describeFindings, judgeConfig, judgeEgress, loadLexicon, recordBlocked, screen, verdictFindings } from "../../src/egress/index.ts";
 import { personalDir } from "../../src/guard/personal.ts";
+import { identityDirFor } from "../../src/identity/dir.ts";
+import { readAgentKey } from "../../src/identity/key.ts";
 import { append } from "../../src/ledger/store.ts";
 import { loadSoul } from "../../src/soul/load.ts";
 import { subjectId, type SubjectId } from "../../src/types.ts";
@@ -131,13 +133,17 @@ async function cmdServe(argv: readonly string[]): Promise<number> {
   const inbox = await inboxPath(s.id);
   if (inbox === undefined) return usageError("the personal directory cannot be resolved");
   const a2aDir = a2aDirFor(dialEnv(), s.id);
+  // S15.8: the card announces the key as it is now; serving it never makes one.
+  const key = await readAgentKey(identityDirFor(dialEnv(), s.id));
+  if (key.state === "refused") console.error(`ohmyagi: the card says there is no usable key — ${key.reason}`);
+  const cardKey = key.state === "present" ? key.key : null;
   const server = startA2A(
     {
       agentName: loaded.soul.role.name,
       // The card asks for a bearer, the A2A way — so a peer (bwoc's client
       // included) presents the token it was given, and only to a card that asks.
       card: async () => ({
-        ...agentCard(loaded.soul, `http://${hostname}:${port}/`),
+        ...agentCard(loaded.soul, `http://${hostname}:${port}/`, cardKey),
         securitySchemes: { omagiBearer: { type: "http", scheme: "bearer" } },
         security: [{ omagiBearer: [] }],
       }),

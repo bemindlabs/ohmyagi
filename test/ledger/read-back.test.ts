@@ -133,24 +133,33 @@ const WRITE_SIDE: ReadonlyMap<string, string> = new Map([
       "the ledger's directory with it so erase and `deploy plan` (S13.1) agree on where it is; deploy " +
       "plan stats its size and never opens a line. Reading what is in it is still a READERS verb",
   ],
+  [
+    "modelOfTurn",
+    "write — the model facts of the line about to be written (D-142), computed from the turn that just ran; " +
+      "`turn --json` says the same of the answering backend. Pure over that turn's own result: it opens no " +
+      "file and returns no line",
+  ],
 ]);
 
 /** A file allowed to read the ledger, the verb that allows it, and why. */
 interface Reader {
   /** Repo-relative, so a rename is a red test rather than a silent pass. */
   readonly file: string;
-  readonly verb: "show" | "delete";
+  readonly verb: "show" | "delete" | "report";
   readonly why: string;
   readonly names: readonly string[];
 }
 
 /**
- * The three files allowed to read the ledger back, with the verb each reads for.
+ * The four files allowed to read the ledger back, with the verb each reads for.
  *
  * The verb is the whole allowance. D-022 does not forbid reading the ledger — it
  * forbids reading it *into a decision*. Showing an owner their own record and
  * deleting it on their instruction are the two operations I-4 **requires**, and
- * neither one feeds anything the agent then acts on.
+ * neither one feeds anything the agent then acts on. The third verb, `report`, is
+ * D-106's: a signed usage report is made from the ledger, per turn, and handed to
+ * whoever the owner sends it to — metadata only, and read back by nothing the agent
+ * runs (D-138).
  */
 const READERS: readonly Reader[] = [
   {
@@ -178,6 +187,16 @@ const READERS: readonly Reader[] = [
       "reads to show, as `ledger show` does, in a page instead of a terminal (D-060): the ten latest " +
       "turns under \"Recently\". The list goes to the owner's browser and nowhere else; no button on " +
       "the page and nothing the agent runs reads it back.",
+    names: ["query"],
+  },
+  {
+    file: join("src", "identity", "report.ts"),
+    verb: "report",
+    why:
+      "reads to report, as D-106 decided: the usage report is the owner's own ledger, one row per model " +
+      "delivery, signed with the agent's key (S15.8, D-138). It copies ids, times, backend, model and token " +
+      "counts by name — never a prompt, an answer or their sizes — and nothing the agent runs reads a report " +
+      "back, so deleting the ledger changes what a report lists and not what the agent does.",
     names: ["query"],
   },
 ];
@@ -261,6 +280,35 @@ async function ledgerExports(): Promise<{ values: Set<string>; types: Set<string
     }
   }
   return { values, types };
+}
+
+/** `src/identity/report.ts`, a declared reader, and the names of it that hand ledger content on (review L6). */
+const REPORT = join(ROOT, "src", "identity", "report.ts");
+const CARRIES = ["buildUsageReport", "usagePayload", "usageRow"];
+const CARRIES_TO = [join("bin", "commands", "usage.ts")];
+
+/**
+ * A module path as a resolver would find it, whatever the spelling: no extension (`.ts`, `.js` and their
+ * variants), and no trailing `/index`. `"../identity/report"`, `"../identity/report.js"` and
+ * `"../identity/report.ts"` are one module to a bundler, so they are one module here (S15.8 re-review).
+ */
+function moduleOf(path: string): string {
+  return path.replace(/[?#].*$/, "").replace(/\.(?:[cm]?[jt]sx?)$/, "").replace(/[\\/]index$/, "");
+}
+
+/** Every import of a ledger-carrying name out of the report module, split into allowed and not. */
+function secondHop(absPath: string, source: string): { hits: string[]; allowed: string[] } {
+  const hits: string[] = [];
+  const allowed: string[] = [];
+  if (moduleOf(absPath) === moduleOf(REPORT)) return { hits, allowed };
+  const rel = relative(ROOT, absPath);
+  for (const binding of importedNames(absPath, source)) {
+    if (!binding.specifier.startsWith(".") || moduleOf(resolve(dirname(absPath), binding.specifier)) !== moduleOf(REPORT)) continue;
+    if (!TAKES_EVERYTHING.includes(binding.name) && !CARRIES.includes(binding.name)) continue;
+    if (CARRIES_TO.includes(rel)) allowed.push(`${rel}:${binding.name}`);
+    else hits.push(`${rel}:${binding.line}: \`${binding.name}\` from src/identity/report.ts carries ledger content`);
+  }
+  return { hits, allowed };
 }
 
 describe("nothing reads the ledger back into a decision (S2.2 AC5, D-022)", () => {
@@ -353,15 +401,45 @@ describe("nothing reads the ledger back into a decision (S2.2 AC5, D-022)", () =
     // Pinned as a value on purpose, unlike the name lists above. *How many files
     // may read the ledger* is the decision itself, not an implementation detail,
     // so a new one appearing has to be somebody's deliberate edit here. The third,
-    // `web`, is D-060's: the same `show` as `ledger show`, in a browser.
+    // `web`, is D-060's: the same `show` as `ledger show`, in a browser. The fourth,
+    // the usage report, is D-106's, placed by D-138.
     expect(READERS.map((reader) => `${reader.file} (${reader.verb})`)).toEqual([
       `${join("bin", "commands", "ledger.ts")} (show)`,
       `${join("src", "erase", "plan.ts")} (delete)`,
       `${join("bin", "commands", "web.ts")} (show)`,
+      `${join("src", "identity", "report.ts")} (report)`,
     ]);
     // Every allowance carries its reason, which is the part a later reader needs:
     // seeing that a file is on a list says nothing about why it was allowed.
     for (const reader of READERS) expect(reader.why.length).toBeGreaterThan(80);
+  });
+
+  test("the second hop: what the report reader hands out, only `usage` takes (S15.8 review, L6)", async () => {
+    // Layer A stops at the first import. `src/identity/report.ts` is allowed `query`, and exports functions that
+    // return what it read — so without this, any file could import `buildUsageReport` and have the ledger in
+    // hand without naming `src/ledger/` at all. The names that carry ledger content go to one command.
+    const files = [...(await sourceFiles(join(ROOT, "src"))), ...(await sourceFiles(join(ROOT, "bin")))];
+    const hits: string[] = [];
+    const allowed: string[] = [];
+    for (const path of files) {
+      const found = secondHop(path, await Bun.file(path).text());
+      hits.push(...found.hits);
+      allowed.push(...found.allowed);
+    }
+    expect(hits, RED).toEqual([]);
+    // Control: the allowance is in use — `usage report` does build a report — so the walk found the edge.
+    expect(allowed).toContain(`${join("bin", "commands", "usage.ts")}:buildUsageReport`);
+    // And the rule fires: the same import from anywhere else, or the whole module, is caught.
+    const elsewhere = join(ROOT, "src", "soul", "render.ts");
+    expect(secondHop(elsewhere, `import { buildUsageReport } from "../identity/report.ts";\n`).hits.length).toBe(1);
+    expect(secondHop(elsewhere, `import * as report from "../identity/report.ts";\n`).hits.length).toBe(1);
+    expect(secondHop(elsewhere, `import { printable, verifyUsageReport } from "../identity/report.ts";\n`).hits).toEqual([]);
+    // Every spelling of the same module is the same module: extensionless, `.js`, and a directory index.
+    for (const spelling of ["../identity/report", "../identity/report.js", "../identity/report.mts", "../identity/report.ts?x", "../identity/report#frag"]) {
+      expect(secondHop(elsewhere, `import { buildUsageReport } from "${spelling}";\n`).hits.length, spelling).toBe(1);
+    }
+    expect(moduleOf(join(ROOT, "src", "identity", "report", "index.ts"))).toBe(moduleOf(join(ROOT, "src", "identity", "report.ts")));
+    expect(secondHop(elsewhere, `import { buildUsageReport } from "../identity/reports";\n`).hits).toEqual([]);
   });
 
   test("nothing outside src/ledger/ builds a path with `ledger` in it, or parses a line", async () => {

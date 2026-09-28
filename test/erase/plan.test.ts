@@ -25,7 +25,7 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { templateFiles } from "../../src/agent/template.ts";
@@ -36,6 +36,8 @@ import { splice } from "../../src/soul/block.ts";
 import type { LedgerEntry } from "../../src/ledger/entry.ts";
 import { append, ledgerDir } from "../../src/ledger/store.ts";
 import { UNREPORTED_USAGE, subjectId, type SubjectId } from "../../src/types.ts";
+import { identityDirFor, keyPath } from "../../src/identity/dir.ts";
+import { ensureAgentKey } from "../../src/identity/key.ts";
 
 const SUBJECT = subjectId("example");
 const OTHER = subjectId("somebody-else");
@@ -188,11 +190,12 @@ describe("a full erase", () => {
     const env = envFor(home);
     const plan = await planErase(env, request(mine.agent, [mine.instruction]));
     expect(plan.refusals).toEqual([]);
-    // Twelve trees: the soul, the derived directory, the backups, the level-3
+    // Thirteen trees: the soul, the derived directory, the backups, the level-3
     // confirmations (D-042), the rag marker (D-038), the run records (S5.4),
     // the trigger fire times (S5.3), the A2A peers (D-063), the chat
-    // allowlist (D-066), the push handles (D-130), the basis records (D-077) and the personal directory. The block and the ledger lines are counted separately.
-    expect(plan.trees.length).toBe(12);
+    // allowlist (D-066), the push handles (D-130), the basis records (D-077), the personal directory and the
+    // agent's signing key (S15.8). The block and the ledger lines are counted separately.
+    expect(plan.trees.length).toBe(13);
     expect(plan.blocks.filter((block) => block.outcome === "strip").length).toBe(1);
     expect(plan.ledger.matched.length).toBe(1);
 
@@ -293,7 +296,7 @@ describe("a full erase", () => {
 
     const plan = await planErase(envFor(home), request(mine.agent, [mine.instruction]));
     // No new tree: the store is a subtree of a tree that was already planned.
-    expect(plan.trees.length).toBe(12);
+    expect(plan.trees.length).toBe(13);
     const observed = plan.trees.find((tree) => tree.plan.dir === personal);
     expect(observed).toBeDefined();
     expect(observed!.plan.before.paths.some((path) => path.includes("proposals"))).toBe(true);
@@ -329,7 +332,7 @@ describe("a full erase", () => {
 
     const before = await snapshot();
     const plan = await planErase(envFor(home), request(mine.agent, [mine.instruction]));
-    expect(plan.trees.length).toBe(12);
+    expect(plan.trees.length).toBe(13);
     const after = await snapshot();
 
     expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
@@ -453,8 +456,12 @@ describe("--personal", () => {
       }),
     );
     expect(plan.files).toEqual([join(mine.agent, "soul", "person.md")]);
-    // Eleven trees, not twelve: `soul/` stays, because `role.md` is in it.
+    // Eleven trees, not thirteen: `soul/` stays, because `role.md` is in it, and so does the agent's signing
+    // key — the agent's identity, not the person's data (S15.8 review; D-138).
     expect(plan.trees.length).toBe(11);
+    expect(plan.trees.some((tree) => tree.label.includes("signing key"))).toBe(false);
+    // No key was made in this fixture, so none is said to be kept (S15.8 re-review; the cases with one are below).
+    expect(plan.notes.some((note) => note.includes("keeps the agent's signing key"))).toBe(false);
 
     const result = await commitErase(plan);
     expect(result.files).toEqual([{ path: join(mine.agent, "soul", "person.md"), removed: true }]);
@@ -464,6 +471,89 @@ describe("--personal", () => {
     expect(await Bun.file(join(mine.agent, "memory", "README.md")).exists()).toBe(true);
     expect(await Bun.file(ledgerDir(env, SUBJECT)).exists()).toBe(false);
   }, 30_000);
+
+  /**
+   * S15.8 re-review: under `--personal`, `kept` is only the key file and a directory holding nothing but it —
+   * checked on disk. The name hit on `$DATA/om-agi/<subject>` is often the only sign of a place nobody knows
+   * about, so it may not be filed as the key's unless the key is really all that is there.
+   */
+  describe("what --personal keeps is the key file, and only while it is really there and alone", () => {
+    const KEPT_NOTE = "keeps the agent's signing key";
+
+    async function personalRun(home: string, arrange: (env: EraseEnv, subjectData: string) => Promise<void>) {
+      const env = envFor(home);
+      const mine = await fixture(home, SUBJECT);
+      await arrange(env, join(home, "data", "om-agi", SUBJECT));
+      const plan = await planErase(env, request(mine.agent, [mine.instruction], { scope: "personal" }));
+      const verification = await verifyErase(plan, await commitErase(plan));
+      const hits = (kind: string) =>
+        verification.search.scopes.filter((scope) => scope.kind === kind).flatMap((scope) => scope.hits.map((hit) => hit.path));
+      return { plan, verification, hits };
+    }
+
+    const leftover = async (_env: EraseEnv, subjectData: string) => {
+      // No subject id in its name or its bytes: the directory it sits in is the only thing that says whose it is.
+      await Bun.write(join(subjectData, "forgotten", "blob.bin"), "nothing to find in here\n");
+    };
+    const withKey = async (env: EraseEnv) => {
+      expect((await ensureAgentKey(identityDirFor(env, SUBJECT))).state).toBe("present");
+    };
+
+    test("a leftover and no key: the subject's directory is a deletable remainder, and nothing is said about a key", async () => {
+      const { plan, verification, hits } = await personalRun(await sandbox(), leftover);
+      expect(verification.search.deletableHits).toBe(1);
+      expect(verification.search.keptHits).toBe(0);
+      expect(hits("deletable")).toEqual([join(plan.dataRoot, SUBJECT)]);
+      expect(plan.notes.some((note) => note.includes(KEPT_NOTE))).toBe(false);
+      expect(verification.verdict).toBe("erased-with-remainder");
+    });
+
+    test("a leftover beside the key: the leftover is deletable, the key stays and is said to", async () => {
+      const home = await sandbox();
+      const { plan, verification, hits } = await personalRun(home, async (env, subjectData) => {
+        await withKey(env);
+        await leftover(env, subjectData);
+      });
+      expect(verification.search.deletableHits).toBe(1);
+      expect(verification.search.keptHits).toBe(0);
+      expect(hits("deletable")).toEqual([join(plan.dataRoot, SUBJECT)]);
+      expect(await Bun.file(keyPath(identityDirFor(envFor(home), SUBJECT))).exists()).toBe(true);
+      expect(plan.notes.some((note) => note.includes(KEPT_NOTE))).toBe(true);
+    });
+
+    test("the key alone: kept 1, deletable 0", async () => {
+      const home = await sandbox();
+      const { plan, verification, hits } = await personalRun(home, withKey);
+      expect(verification.search.keptHits).toBe(1);
+      expect(verification.search.deletableHits).toBe(0);
+      expect(hits("kept")).toEqual([join(plan.dataRoot, SUBJECT)]);
+      expect(await Bun.file(keyPath(identityDirFor(envFor(home), SUBJECT))).exists()).toBe(true);
+    });
+
+    test("a file at the key's path that is not a key is not kept, and nothing is said about a key", async () => {
+      const home = await sandbox();
+      const { plan, verification } = await personalRun(home, async (env) => {
+        const dir = identityDirFor(env, SUBJECT);
+        await mkdir(dir, { recursive: true, mode: 0o700 });
+        await Bun.write(keyPath(dir), `${SUBJECT}'s diary\n`);
+        await chmod(keyPath(dir), 0o600);
+      });
+      expect(verification.search.keptHits).toBe(0);
+      expect(verification.search.deletableHits).toBeGreaterThanOrEqual(1);
+      expect(plan.notes.some((note) => note.includes(KEPT_NOTE))).toBe(false);
+      expect(verification.verdict).toBe("erased-with-remainder");
+    });
+
+    test("a stray file in identity/ is not the key: it, and the directory holding it, are deletable", async () => {
+      const home = await sandbox();
+      const { plan, verification, hits } = await personalRun(home, async (env) => {
+        await withKey(env);
+        await Bun.write(join(identityDirFor(env, SUBJECT), "stray.txt"), `left by hand for ${SUBJECT}\n`);
+      });
+      expect(verification.search.keptHits).toBe(0);
+      expect(hits("deletable").sort()).toEqual([join(plan.dataRoot, SUBJECT), join(identityDirFor(envFor(home), SUBJECT), "stray.txt")].sort());
+    });
+  });
 
   test("the ledger note says it goes whole because it cannot be split", async () => {
     const home = await sandbox();
@@ -676,9 +766,9 @@ describe("--no-agent", () => {
     const plan = await planErase(envFor(home), request(null, [mine.instruction]));
 
     // Backups, confirmations, run records, trigger fire times, A2A peers, the
-    // chat allowlist, the push handles, the basis records, the rag marker and the
-    // personal directory need no repository; soul/ and .dagi/ are not visited at all.
-    expect(plan.trees.length).toBe(10);
+    // chat allowlist, the push handles, the basis records, the rag marker, the
+    // personal directory and the signing key need no repository; soul/ and .dagi/ are not visited at all.
+    expect(plan.trees.length).toBe(11);
     expect(plan.git).toBeNull();
     expect(plan.notes.join("\n")).toContain("--no-agent");
     // The reserved addresses cannot be probed either, and that is said.

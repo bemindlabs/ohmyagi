@@ -189,6 +189,9 @@ describe("claude-local", () => {
     ]);
     expect(argv).toContain("--strict-mcp-config");
     expect(argv).not.toContain("synthetic-key-value");
+    // D-142: the variant takes no model of its own — it runs local-coder, behind the base vendor's flag.
+    expect(spec.model).toBeUndefined();
+    expect(argv.slice(argv.indexOf("--model"), argv.indexOf("--model") + 2)).toEqual(["--model", LOCAL_MODEL]);
     expect(request.env).toEqual({});
     expect(request.cwd).toBe(box.work);
     expect(request.fence?.tcpPorts).toEqual([10400]);

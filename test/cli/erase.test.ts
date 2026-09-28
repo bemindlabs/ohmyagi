@@ -172,7 +172,10 @@ describe("ohmyagi erase", () => {
     // bump is for the reader that switches on the four it knew and meets one it
     // does not, which is the state that says *there may be history nobody
     // counted*.
-    expect(cert.schema).toBe("om-agi/erase-certificate@4");
+    // `@5` since S15.8: a scope may be of kind `kept` — what `--personal` keeps on purpose outside git, the
+    // agent's signing key — and `verification.keptHits` counts it. A third kind a reader has no arm for.
+    expect(cert.schema).toBe("om-agi/erase-certificate@5");
+    expect(cert.verification.keptHits).toBe(0);
     expect(cert.verdict).toBe("erased-and-verified");
     expect(cert.by.claimed).toBe("a reviewer");
     expect(cert.by.observed).toBe("the-test");
@@ -317,6 +320,26 @@ describe("ohmyagi erase", () => {
     expect(await Bun.file(join(agent, "memory", "README.md")).exists()).toBe(true);
     expect(erased.stdout).toContain("keeps role.md, memory/ and consent/");
     expect(erased.stdout).toContain("will not load again until a new person.md is written");
+  }, 60_000);
+
+  test("--personal keeps the agent's signing key and says so; a full erase takes it (S15.8, D-138)", async () => {
+    const { home, agent } = await makeAgent();
+    const keyFile = join(home, "data", "om-agi", SUBJECT, "identity", "ed25519.pem");
+    expect((await run(home, ["key", agent, "--subject", SUBJECT])).code).toBe(0);
+    const pem = await readFile(keyFile, "utf8");
+
+    const personal = await run(home, ["erase", SUBJECT, "--agent", agent, "--by", "a reviewer", "--personal", "--yes", "--json"]);
+    const cert = JSON.parse(personal.stdout);
+    expect(await readFile(keyFile, "utf8")).toBe(pem);
+    expect(cert.notes.join("\n")).toContain("--personal keeps the agent's signing key");
+    // The key's path names the subject: reported as kept, never as a deletion that failed.
+    expect(cert.verification.keptHits).toBeGreaterThan(0);
+    expect(cert.verification.deletableHits).toBe(0);
+    expect(cert.verification.where.some((line: string) => line.includes(join(home, "data", "om-agi", SUBJECT)) && line.endsWith("[kept]"))).toBe(true);
+
+    const full = await run(home, ["erase", SUBJECT, "--agent", agent, "--by", "a reviewer", "--yes", "--json"]);
+    expect(full.code, full.stderr).toBe(0);
+    expect(await Bun.file(keyFile).exists()).toBe(false);
   }, 60_000);
 });
 

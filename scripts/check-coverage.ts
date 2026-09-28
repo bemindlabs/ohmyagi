@@ -315,7 +315,8 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // public commands and excluded from the automatic update check, just like
   // the existing fence helper. Its process behaviour is covered by fence tests.
   // 136 since S13.1: one `case` label and one import, for `deploy`.
-  ["bin/om-agi.ts", { lines: 136, why: "entry point — dispatch and process.exit" }],
+  // 142 since S15.8: two `case` labels and two imports, for `key` and `usage`.
+  ["bin/om-agi.ts", { lines: 142, why: "entry point — dispatch and process.exit" }],
   // One `export const USAGE = \`…\`` around 240 lines of help text. A test could
   // import it and the floor would read 100% off a single declaration while the
   // text said anything at all; the size is the only honest number here.
@@ -332,7 +333,19 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // before the usual one; this is user-facing contract text, not hidden logic.
   // 588 since S13.1: `deploy plan`'s entry, and the four deploy subcommands
   // listed under "Not built yet" with the stories that owe them.
-  ["bin/usage.ts", { lines: 593, why: "help text — one declaration, 593 lines of prose" }],
+  // 619 since S15.8: the `key`, `usage report` and `usage verify` entries, and `soul card` and `a2a serve`
+  // saying the card carries the agent's public key when there is one.
+  // 626 since S15.8's security review: `usage verify`'s exit codes (3 when no --key was given) and that
+  // `erase --personal` keeps the key.
+  // 643 since S15.9: `usage report` says what a row costs and why a turn is not charged, `usage verify`
+  // re-checks every cost, and the `usage prices` entry says where the owner's table lives (D-139).
+  // 649 since the PR #3 review: verify holds a `default` row to the shipped table and shows costs by claim.
+  // 651 since its re-review: `report --json` is one line, and verify takes --key and nothing else.
+  // 688 since S15.4 step one (D-141): the `key prove` and `key verify-proof` entries, `usage report`'s
+  // --market/--listing/--job binding, `usage verify`'s pins, and that a number must be plain integer digits.
+  // 722 since D-142: `turn` says whose model `--model` is (one backend's, `backend=model` per step, refused
+  // before anything is sent), and `web` and `chat serve` list their `--backend`/`--model` and how they are read.
+  ["bin/usage.ts", { lines: 722, why: "help text — one declaration, 722 lines of prose" }],
   // The commands. Each is `cmdX(rest)` returning an exit code, and each reads
   // `process.env`, `homedir()` or `cwd` on its way. Calling them in-process
   // would mean swapping `HOME` inside the test runner; the tests spawn instead.
@@ -353,7 +366,7 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // names.
   ["bin/commands/deploy.ts", { lines: 83, why: "command — run by spawning the CLI; its parts are tested in src/deploy, and test/cli/deploy.test.ts runs it" }],
   ["bin/commands/guard.ts", { lines: 171, why: "command — run by spawning the CLI" }],
-  ["bin/commands/ledger.ts", { lines: 244, why: "command — run by spawning the CLI" }],
+  ["bin/commands/ledger.ts", { lines: 249, why: "command — run by spawning the CLI" }],
   ["bin/commands/new.ts", { lines: 58, why: "command — run by spawning the CLI" }],
   // 677 since odd3: one `import { isatty } from "node:tty"`, which is what
   // replaced the two `process.stdout.isTTY` reads that truncated piped output.
@@ -363,13 +376,33 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   ["bin/commands/egress.ts", { lines: 94, why: "command — run by spawning the CLI" }],
   ["bin/commands/triggers.ts", { lines: 155, why: "command — run by spawning the CLI" }],
   ["bin/commands/setup.ts", { lines: 166, why: "command — run by spawning the CLI" }],
-  ["bin/commands/a2a.ts", { lines: 216, why: "command — serve listens until Ctrl-C; its parts are tested in src/a2a" }],
+  // 221 since S15.8: `serve` reads the agent's key once at start and puts its public half on the card —
+  // read, never made; a key it may not use is said on stderr and the card says there is none.
+  ["bin/commands/a2a.ts", { lines: 221, why: "command — serve listens until Ctrl-C; its parts are tested in src/a2a" }],
   ["bin/commands/basis.ts", { lines: 106, why: "command — asks a person at a terminal; its parts are tested in src/consent/basis, and test/cli/basis.test.ts runs it" }],
+  // S15.8. The key, the signing and the report are `src/identity/` (dir, key, sign, report), on the floor and
+  // tested there; what is here is parsing and printing, run by `test/cli/key.test.ts` in a temporary home.
+  // 149 since S15.4 step one (D-141): `key prove` and `key verify-proof` — the options, their refusals and the
+  // printing; the proof itself (payload, shapes, checks) is `src/identity/proof.ts` and `shapes.ts`.
+  ["bin/commands/key.ts", { lines: 149, why: "command — run by spawning the CLI; its parts are tested in src/identity, and test/cli/key.test.ts runs key, prove and verify-proof" }],
+  // 136 since S15.8's security review: verify exits 3 without --key, prints through `printable`, and report
+  // says how many rows had a model value withheld or ids of no row's shape, and never crashes signing.
+  // 229 since S15.9: the cost columns and totals, and `usage prices` (--json, exit 1 on an unusable owner
+  // file); the table, the formula and the re-check are `src/pricing/` and `src/identity/report.ts`.
+  // 261 since the PR #3 review: costs printed by the price each row claims, and whether it could be checked.
+  // 276 since its re-review: the checked/unchecked split, why a line was left out, compact --json, --key only.
+  // 323 since S15.4 step one (D-141): report's --market/--listing/--job and verify's pins, a stray option
+  // refused by name in both, and the binding printed and said to be checked or not.
+  ["bin/commands/usage.ts", { lines: 330, why: "command — run by spawning the CLI; its parts are tested in src/identity and src/pricing, and test/cli/key.test.ts runs report, verify and prices" }],
   ["bin/commands/eval.ts", { lines: 105, why: "command — runs turns as children; its parts are tested in src/soul/evals, and test/cli/eval.test.ts runs it against a stub model" }],
   ["bin/commands/persona.ts", { lines: 266, why: "command — asks a local model and a person at a terminal; its parts are tested in src/soul/extract, and test/cli/persona.test.ts runs it against a stub model" }],
-  ["bin/commands/chat.ts", { lines: 227, why: "command — serve polls until Ctrl-C; its parts are tested in src/connectors, and test/cli/chat.test.ts runs it against a stub Telegram" }],
+  // 231 since D-142: `serve` refuses a `--model` every answer's turn would refuse, once, at start.
+  ["bin/commands/chat.ts", { lines: 231, why: "command — serve polls until Ctrl-C; its parts are tested in src/connectors, and test/cli/chat.test.ts runs it against a stub Telegram" }],
   ["bin/commands/update.ts", { lines: 77, why: "command — asks GitHub; its parts are tested in src/update" }],
-  ["bin/commands/web.ts", { lines: 400, why: "command — serves until Ctrl-C; its parts are tested in src/web (the --qr print: src/web/qr.ts; the key change: startWeb + replaceKey; the push wiring and 30 s watch, per page key: src/web/push.ts, checked live against a loopback relay 2026-09-27)" }],
+  // 423 since D-142: the picker's names come from the vendors' documented lists and the price table, never the
+  // ledger; the local model is `--model`'s ollama step; a start `--model` no turn would take is refused; the last
+  // turn and a turn's detail carry what was asked apart from what ran.
+  ["bin/commands/web.ts", { lines: 423, why: "command — serves until Ctrl-C; its parts are tested in src/web (the --qr print: src/web/qr.ts; the key change: startWeb + replaceKey; the push wiring and 30 s watch, per page key: src/web/push.ts, checked live against a loopback relay 2026-09-27)" }],
   ["bin/commands/memory.ts", { lines: 629, why: "command — run by spawning the CLI" }],
   ["bin/commands/observe.ts", { lines: 750, why: "command — run by spawning the CLI" }],
   // S5.2. The store itself is `src/decide/proposals.ts`, on the floor and
@@ -378,7 +411,9 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // process, and are exercised by `test/cli/proposal.test.ts`.
   ["bin/commands/proposal.ts", { lines: 388, why: "command — run by spawning the CLI" }],
   ["bin/commands/rebuild.ts", { lines: 38, why: "command — run by spawning the CLI" }],
-  ["bin/commands/soul.ts", { lines: 566, why: "command — run by spawning the CLI" }],
+  // 570 since S15.8: `soul card` reads the agent's key — never makes one — and prints its public half.
+  // 572 since D-142: `soul verify --model` is routed per backend the way `turn` routes it.
+  ["bin/commands/soul.ts", { lines: 572, why: "command — run by spawning the CLI" }],
   // E5. The signalling itself is in `src/decide/runs.ts`, where a test can
   // drive it against processes the test spawned; what is here is the order of
   // the three steps and the report.
@@ -399,7 +434,10 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // exist, the fenced local chain is prepended only when chosen, and each local
   // member receives its per-turn fence before egress and ledger wrappers see it;
   // the D-123 door is now checked against the prepared request at dispatch.
-  ["bin/commands/turn.ts", { lines: 554, why: "command — run by spawning the CLI" }],
+  // 574 since D-142: `--model` is routed to the one step it was chosen for (`routeModels`), checked before
+  // anything is read or sent and routed again on the real chain; each step is built with its own model, a note
+  // says which step got which, and `--json` names what the answering backend ran and what it was asked apart.
+  ["bin/commands/turn.ts", { lines: 574, why: "command — run by spawning the CLI" }],
   ["bin/commands/worn.ts", { lines: 66, why: "command — run by spawning the CLI" }],
 ]);
 
@@ -494,7 +532,7 @@ export const PROOFS = new Map<string, Proof>([
       provedOn: "2026-09-24",
       by: "npm run demo -- --model <a local model>",
       result:
-        "15/15 criteria passed on 2026-09-28 on the tree released as 0.8.3 (run de86a5a6, table kept in notes/2026-09-28_demo-v0.8.3.txt), on 0.8.2 on 2026-09-27 (run c7517aef, table kept in notes/2026-09-27_demo-v0.8.2.txt), on 0.8.1 the same day (run 0a4d532e, table kept in notes/2026-09-27_demo-v0.8.1.txt), on 0.8.0 the same day (run 391c781f, table kept in notes/2026-09-27_demo-v0.8.0.txt), on 0.7.2 on 2026-09-26 (run f28cd0ba, table kept in notes/2026-09-26_demo-v0.7.2.txt), on 0.7.1 the same day (run 0eaea0cf, table kept in notes/2026-09-26_demo-v0.7.1.txt), on 0.7.0 the same day (run 1c88d842, table kept in notes/2026-09-26_demo-v0.7.0.txt), on 0.6.1 the same day (run 3eaea63f, table kept in notes/2026-09-26_demo-v0.6.1.txt), on 0.6.0 the same day (run 1972948d, table kept in notes/2026-09-26_demo-v0.6.0.txt), on 0.5.1 on 2026-09-25 (run caa68c60, table kept in notes/2026-09-25_demo-v0.5.1.txt), on 0.5.0 the same day (run 5e5f6903, table kept in notes/2026-09-25_demo-v0.5.0.txt), on 0.4.2 the same day (run fbad84d0, table kept in notes/2026-09-25_demo-v0.4.2.txt), on 0.4.1 the same day (run 8a52848c, table kept in notes/2026-09-25_demo-v0.4.1.txt), on 0.4.0 the day before (run 065c6900, table kept in notes/2026-09-24_demo-v0.4.0.txt), on 0.3.0 the same day (run cbeda900, " +
+        "15/15 criteria passed on 2026-09-28 on the tree released as 0.9.0 (run b7384f44, table kept in notes/2026-09-28_demo-v0.9.0.txt), on 0.8.3 the same day (run de86a5a6, table kept in notes/2026-09-28_demo-v0.8.3.txt), on 0.8.2 on 2026-09-27 (run c7517aef, table kept in notes/2026-09-27_demo-v0.8.2.txt), on 0.8.1 the same day (run 0a4d532e, table kept in notes/2026-09-27_demo-v0.8.1.txt), on 0.8.0 the same day (run 391c781f, table kept in notes/2026-09-27_demo-v0.8.0.txt), on 0.7.2 on 2026-09-26 (run f28cd0ba, table kept in notes/2026-09-26_demo-v0.7.2.txt), on 0.7.1 the same day (run 0eaea0cf, table kept in notes/2026-09-26_demo-v0.7.1.txt), on 0.7.0 the same day (run 1c88d842, table kept in notes/2026-09-26_demo-v0.7.0.txt), on 0.6.1 the same day (run 3eaea63f, table kept in notes/2026-09-26_demo-v0.6.1.txt), on 0.6.0 the same day (run 1972948d, table kept in notes/2026-09-26_demo-v0.6.0.txt), on 0.5.1 on 2026-09-25 (run caa68c60, table kept in notes/2026-09-25_demo-v0.5.1.txt), on 0.5.0 the same day (run 5e5f6903, table kept in notes/2026-09-25_demo-v0.5.0.txt), on 0.4.2 the same day (run fbad84d0, table kept in notes/2026-09-25_demo-v0.4.2.txt), on 0.4.1 the same day (run 8a52848c, table kept in notes/2026-09-25_demo-v0.4.1.txt), on 0.4.0 the day before (run 065c6900, table kept in notes/2026-09-24_demo-v0.4.0.txt), on 0.3.0 the same day (run cbeda900, " +
         "table kept in notes/2026-09-24_demo-v0.3.0.txt), on 0.2.0 the same day (run fd433912, " +
         "table kept in notes/2026-09-24_demo-v0.2.0.txt), and earlier that day on the tree released as 0.1.0 (run 2ddacb38, " +
         "table kept in notes/2026-09-24_demo-v0.1.0.txt). Before that, " +
@@ -509,13 +547,18 @@ export const PROOFS = new Map<string, Proof>([
   [
     "scripts/cli-parity.ts",
     {
-      sha256: "fef39e519726a66756223e1f729b944235419fe722e36683f6955b71e8e45ee6",
-      provedOn: "2026-09-27",
+      sha256: "d39f7e15aed08e8a1eb5b00b307c11bb4105da92e8049989350ed18625dba027",
+      provedOn: "2026-09-28",
       by: "npm run parity -- --base . --selftest",
       result:
         "exit 0 — control 1 steady, control 2 not blind to a changed character, control 3 not " +
         "blind to an added line, and control 4 refusing a side with no engine in it, over all " +
-        "18 case(s), 199 invocation(s) per side. Re-proved for `deploy` (S13.1), which added the case " +
+        "18 case(s), 202 invocation(s) per side. Re-proved for `key` and `usage` (S15.8), which added " +
+        "bare `key`, bare `usage` and `usage wat` to `02-unknown` — usage errors only, since a real `key` " +
+        "makes a random key and the two sides would differ by it — and which gave the engine " +
+        "`OM_AGI_QDRANT_URL` pointing at the same dead address as `OLLAMA_HOST`, so no run of this " +
+        "harness reaches this machine's Qdrant again (the record below says one did). Before that, " +
+        "18 case(s), 199 invocation(s) per side, proved 2026-09-27. Re-proved for `deploy` (S13.1), which added the case " +
         "`18-deploy` — the not-built subcommands, `plan` refused on a repository with no commit, its " +
         "`--json`, a target with a secret in it and a subject that is not the soul's. The first run was " +
         "not steady, and not because of this: its base side found a collection `omagi__example` (2 " +

@@ -196,12 +196,23 @@ describe("what a local turn used", () => {
         total_duration: 1_000_000,
       }),
     );
-    expect(usage).toEqual({ status: "reported", input: 15, output: 24, total: null });
+    expect(usage).toEqual({ status: "reported", input: 15, output: 24, total: null, cache_read: null, cache_write: null, cache_write_5m: null, cache_write_1h: null, not_printed: ["cache_read", "cache_write", "cache_write_5m", "cache_write_1h"] });
+  });
+
+  test("no cache count is read, and both say the daemon prints none — null, never 0 (S15.9)", () => {
+    // The measured body has no cache field at all. A 0 here would be a claim
+    // that nothing came from a cache; null in `not_printed` is the claim that
+    // the daemon does not say, which is the one that is true.
+    for (const raw of [JSON.stringify({ prompt_eval_count: 15, eval_count: 24 }), "not json"]) {
+      const usage = extractOllamaUsage(raw);
+      expect([usage.cache_read, usage.cache_write]).toEqual([null, null]);
+      expect(usage.not_printed).toEqual(["cache_read", "cache_write", "cache_write_5m", "cache_write_1h"]);
+    }
   });
 
   test("a count of zero from the daemon is zero, not an absent number", () => {
     const usage = extractOllamaUsage(JSON.stringify({ prompt_eval_count: 0, eval_count: 0 }));
-    expect(usage).toEqual({ status: "reported", input: 0, output: 0, total: null });
+    expect(usage).toEqual({ status: "reported", input: 0, output: 0, total: null, cache_read: null, cache_write: null, cache_write_5m: null, cache_write_1h: null, not_printed: ["cache_read", "cache_write", "cache_write_5m", "cache_write_1h"] });
   });
 
   test("one count without the other is missing, and keeps the half it found", () => {
@@ -244,6 +255,7 @@ describe("what a local turn used", () => {
       input: 15,
       output: 24,
       total: null,
+      cache_read: null, cache_write: null, cache_write_5m: null, cache_write_1h: null, not_printed: ["cache_read", "cache_write", "cache_write_5m", "cache_write_1h"],
     });
   });
 
@@ -256,6 +268,7 @@ describe("what a local turn used", () => {
       input: null,
       output: null,
       total: null,
+      cache_read: null, cache_write: null, cache_write_5m: null, cache_write_1h: null, not_printed: ["cache_read", "cache_write", "cache_write_5m", "cache_write_1h"],
     });
   });
 

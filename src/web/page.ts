@@ -720,7 +720,7 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
         if (t.error) { d.append(el("div", "small", t.error)); return; }
         if (t.content !== "full") { d.append(el("div", "small", "Only its size was kept for this one — the words were not recorded.")); return; }
         const q = el("div", "notes"); q.textContent = t.asked || ""; d.append(el("div", "small", "Asked"), q);
-        const a = el("div", "notes"); a.style.whiteSpace = "normal"; a.append(t.answer ? md(t.answer) : document.createTextNode("(no answer)")); d.append(el("div", "small", "Answered by " + t.backend + (t.model ? " · " + t.model : "") + " · " + t.when), a);
+        const a = el("div", "notes"); a.style.whiteSpace = "normal"; a.append(t.answer ? md(t.answer) : document.createTextNode("(no answer)")); const said = modelLabel(t.model || "", t.modelRequested || ""); d.append(el("div", "small", "Answered by " + t.backend + (said ? " · " + said : "") + " · " + t.when), a);
         const again = el("button", "", "Ask again"); again.onclick = () => { $("prompt").value = t.asked || ""; showTab("home"); $("prompt").focus(); };
         const row = el("div", "row"); row.append(again); d.append(row);
       };
@@ -735,20 +735,27 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
   // script cannot import it: a backend runs on this machine when its id is
   // ollama or ends in -local. Kept identical to isLocalBackend by tests of both.
   const isLocalId = (id) => id === "ollama" || id.endsWith("-local");
+  // D-142 — the model a turn ran on, and apart from it the one it was asked for. A requested name is never shown
+  // as the model: claude asked for "opus" and silent about what it ran reads "asked for opus", not "opus".
+  const modelLabel = (ran, asked) => ran ? ran + (asked && asked !== ran ? " (asked for " + asked + ")" : "") : (asked ? "asked for " + asked : "");
   function renderEngine(e) {
     if (e) engine = e;
     if (!engine) return;
     const pick = choice();
     const chain = pick.backend ? pick.backend.split(",") : engine.chain;
+    // D-142 — a model picked here goes to the one backend picked, or, with the default chain, to its ollama step.
+    // A cloud step is only asked for it; a local CLI step runs local-coder whatever is picked.
+    const pickFor = (b) => (pick.backend ? pick.backend === b : b === "ollama") ? pick.model : "";
     const box = $("engChain"); box.replaceChildren();
     chain.forEach((b, i) => {
       if (i) box.append(el("i", "", "→"));
       const local = isLocalId(b);
-      box.append(el("span", "b" + (local ? " local" : ""), local ? b + " · " + (pick.model || engine.localModel || "no model") : b));
+      box.append(el("span", "b" + (local ? " local" : ""), local ? b + " · " + (b === "ollama" ? pickFor(b) || engine.localModel || "no model" : "local-coder") : b + (pickFor(b) ? " · asks for " + pickFor(b) : "")));
     });
-    $("engLocal").textContent = pick.model || engine.localModel || "not set";
+    $("engLocal").textContent = pickFor("ollama") || engine.localModel || "not set";
     $("engJudge").textContent = engine.judge ? engine.judge + " (local)" : "off";
-    $("engLast").textContent = engine.last ? engine.last.backend + " · " + (isLocalId(engine.last.backend) ? "on this machine" : "cloud") + (engine.last.model ? " · " + engine.last.model : "") + " · " + engine.last.when : "—";
+    const lastModel = engine.last ? modelLabel(engine.last.model || "", engine.last.modelRequested || "") : "";
+    $("engLast").textContent = engine.last ? engine.last.backend + " · " + (isLocalId(engine.last.backend) ? "on this machine" : "cloud") + (lastModel ? " · " + lastModel : "") + " · " + engine.last.when : "—";
     $("engineLine").textContent = "answers: " + chain.join(" → ") + (engine.judge ? " · judge " + engine.judge : "") + (pick.backend || pick.model ? " · this browser's choice" : "");
   }
   // Gap 2 (D-079): the conversation survives a reload — in this browser only.
@@ -804,7 +811,10 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
     if (r.backend === undefined || r.backend === null || r.backend === "") return route;
     if (!/^answered by /.test(route)) return route === "" ? "answered by " + r.backend + " · " + (isLocalId(r.backend) ? "on this machine" : "cloud") : route;
     const local = isLocalId(r.backend);
-    const model = r.model || (local && engine && engine.localModel) || pick.model || "";
+    // The model the answering backend ran, as the turn reported it (S15.9, D-142). A cloud backend's is what its
+    // own output named; the model picked here is only what it was asked for, and is labelled so — never shown as
+    // the model. Only a local backend may fall back to what this page knows it runs.
+    const model = local ? r.model || (engine && engine.localModel) || pick.model || "" : modelLabel(r.model || "", r.modelRequested || "");
     let line = route.replace(/^answered by [^ ·]+/, "answered by " + r.backend + " · " + (local ? "on this machine" : "cloud") + (model ? " · " + model : ""));
     if (!local && r.held > 0) line += " · " + r.held + " held back";
     if (!local && r.heldMessages > 0) line += " · " + r.heldMessages + " earlier message(s) held back";
@@ -841,10 +851,13 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
     const who = p.backend || (models ? models.chain.join(" → ") : "default");
     $("chatPick").replaceChildren(document.createTextNode("▾ "), el("b", "", who), document.createTextNode(p.model ? " · " + p.model : ""));
   }
+  // D-142 — which backend a model typed here goes to: the one picked, or with the default chain its ollama step
+  // (a bare --model in a chain of several is ollama's; it never reaches a vendor CLI there).
+  const modelTargets = (backend) => backend ? [backend] : (models && models.chain.includes("ollama") ? ["ollama"] : []);
   function fillModelList() {
     const p = choice(); const list = $("chatModelList"); list.replaceChildren();
     if (!models) return;
-    const ids = p.backend ? [p.backend] : models.chain;
+    const ids = modelTargets(p.backend);
     for (const name of [...new Set(ids.flatMap((b) => models.models[b] || []))]) { const o = el("option"); o.value = name; list.append(o); }
     $("chatModel").placeholder = "Model — blank for " + (p.backend === "ollama" || (!p.backend && models.defaultTurn.model) ? (models.defaultTurn.model || engine && engine.localModel || "its default") : "its default");
   }
@@ -869,7 +882,7 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
     store.set("ohmyagi-backend", backend);
     // A model named for another backend would fail here (qwen on claude): clear it rather than send a turn that cannot work.
     if (model && models) {
-      const mine = (backend ? [backend] : models.chain).some((b) => (models.models[b] || []).includes(model));
+      const mine = modelTargets(backend).some((b) => (models.models[b] || []).includes(model));
       const theirs = Object.keys(models.models).find((b) => (models.models[b] || []).includes(model));
       if (!mine && theirs) { store.set("ohmyagi-model", ""); toast("Model cleared — " + model + " is for " + theirs + "."); }
     }

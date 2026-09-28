@@ -20,8 +20,8 @@
  * answer has to be available to code that is not allowed to spawn one.
  */
 
-import { stat } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { realpath, stat } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 
 /**
  * The nearest ancestor of `target` (inclusive) that is a git working tree.
@@ -34,14 +34,45 @@ import { dirname, join, resolve } from "node:path";
  * `.git` is checked for existence rather than for being a directory: in a
  * worktree or a submodule it is a file, and both of those are still very much
  * inside somebody's history.
+ *
+ * **Both the path as written and where it really is** (S15.8 security review,
+ * L3). The walk used to be lexical only, so `$XDG_DATA_HOME/om-agi/<subject>`
+ * symlinked into a checkout passed as "outside git" while `git status` listed
+ * the private key under it. Now, when the written path is clear, the nearest
+ * ancestor that exists is resolved with `realpath`, the rest of the path is put
+ * back on, and that is walked too. Either one inside a repository is inside.
  */
 export async function enclosingGitRepo(target: string): Promise<string | undefined> {
-  let current = resolve(target);
+  const written = resolve(target);
+  const lexical = await walkUp(written);
+  if (lexical !== undefined) return lexical;
+  const real = await realTarget(written);
+  return real === written ? undefined : walkUp(real);
+}
+
+async function walkUp(start: string): Promise<string | undefined> {
+  let current = start;
   for (;;) {
     if (await exists(join(current, ".git"))) return current;
     const parent = dirname(current);
     if (parent === current) return undefined;
     current = parent;
+  }
+}
+
+/** `path` with its nearest existing ancestor resolved through every symlink, and the missing rest appended. */
+async function realTarget(path: string): Promise<string> {
+  const missing: string[] = [];
+  let current = path;
+  for (;;) {
+    try {
+      return join(await realpath(current), ...missing.reverse());
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) return path;
+      missing.push(basename(current));
+      current = parent;
+    }
   }
 }
 

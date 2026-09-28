@@ -20,12 +20,12 @@ import { classify } from "./backend.ts";
 import { chmod, mkdir, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute } from "node:path";
-import { expandPath, type ReadOnlySpec, type UsageSpec, type VendorSpec } from "./registry.ts";
+import { expandPath, modelProblem, type ReadOnlySpec, type UsageSpec, type VendorSpec } from "./registry.ts";
 import { restraintRefusal } from "./restraint.ts";
 import { fencedArgv, fenceSupport, type FencePolicy, type FenceSupport } from "./fence.ts";
 import { procStat } from "../decide/runs.ts";
 import { spawnGuarded } from "../spawn.ts";
-import { tokenCount, UNREPORTED_USAGE, type Usage } from "../types.ts";
+import { tokenCount, UNREPORTED_USAGE, USAGE_FIELDS, type TurnModel, type Usage, type UsageField } from "../types.ts";
 
 /** Wall-clock ceiling for one turn when the caller names none. */
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -116,6 +116,33 @@ export function unfinished(spec: VendorSpec, stdout: string): string | undefined
 }
 
 /**
+ * The models a CLI's output says the turn ran on (D-142) — every one it names, in the order printed.
+ *
+ * Read only where the registry says the vendor names them ({@link ModelSpec.reported}), and only out of a JSON
+ * document: the keys of one object, one per model the turn called, each replaced by the vendor's canonical name
+ * for it when the entry carries one. A name that is not a model name's shape is kept as a `null` slot rather
+ * than dropped, so a turn that called two models is never read as one — and a vendor's odd string is never
+ * copied into a ledger line. Anything else — no report declared, output that is not JSON, no such object — is
+ * an empty list: the output named nothing.
+ */
+export function reportedModels(spec: VendorSpec, stdout: string): (string | null)[] {
+  const report = spec.model?.reported;
+  if (report === undefined || report === null) return [];
+  const parsed = parseDocument(stdout);
+  if (!parsed.ok) return [];
+  const usage = resolvePointer(parsed.value, report.keysOf);
+  if (typeof usage !== "object" || usage === null || Array.isArray(usage)) return [];
+  return Object.entries(usage as Record<string, unknown>).map(([key, entry]) => {
+    const canonical =
+      report.canonical === undefined || typeof entry !== "object" || entry === null
+        ? undefined
+        : (entry as Record<string, unknown>)[report.canonical];
+    const name = typeof canonical === "string" && canonical !== "" ? canonical : key;
+    return modelProblem(name) === undefined ? name : null;
+  });
+}
+
+/**
  * Write the profile a restrained turn is held by (D-120), and say where.
  *
  * Before every restrained turn, not once: a turn at level 2 has a shell, and
@@ -155,13 +182,25 @@ export async function writeAgentFile(
   return path;
 }
 
-/** A spec that named a channel, with nothing found in it. */
-const MISSING_USAGE: Usage = Object.freeze({
-  status: "missing",
-  input: null,
-  output: null,
-  total: null,
-});
+/**
+ * A spec that named a channel, with nothing found in it: every count null, and
+ * `missing` says why. The counts the spec does not name at all are still named
+ * in `not_printed`, so even a turn that died before its summary says which of
+ * its nulls would have been null anyway.
+ */
+function missingUsage(notPrinted: readonly UsageField[]): Usage {
+  return {
+    status: "missing",
+    input: null,
+    output: null,
+    total: null,
+    cache_read: null,
+    cache_write: null,
+    cache_write_5m: null,
+    cache_write_1h: null,
+    not_printed: notPrinted,
+  };
+}
 
 /** Sum, or null the moment one part is absent — never a partial sum. */
 function sumAll(parts: readonly (number | null)[]): number | null {
@@ -173,27 +212,78 @@ function sumAll(parts: readonly (number | null)[]): number | null {
   return total;
 }
 
+/** The counts a JSON spec names no pointer for — null on every turn, and said so. */
+function jsonNotPrinted(spec: UsageSpec & { shape: "json" }): UsageField[] {
+  return [
+    ...(spec.cacheRead === undefined ? (["cache_read"] as const) : []),
+    ...(spec.cacheWrite === undefined ? (["cache_write"] as const) : []),
+    ...(spec.cacheWrite5m === undefined ? (["cache_write_5m"] as const) : []),
+    ...(spec.cacheWrite1h === undefined ? (["cache_write_1h"] as const) : []),
+  ];
+}
+
+/**
+ * The 5-minute and 1-hour parts of a cache write (D-143), or two nulls: both printed, and adding up to the
+ * write they split, or neither is kept. A split that does not add up is a vendor whose fields moved meaning,
+ * and one of them kept would be a wrong number rather than a missing one.
+ */
+function writeSplit(cacheWrite: number | null, fiveMinute: number | null, oneHour: number | null): readonly [number | null, number | null] {
+  if (cacheWrite === null || fiveMinute === null || oneHour === null || fiveMinute + oneHour !== cacheWrite) return [null, null];
+  return [fiveMinute, oneHour];
+}
+
 /** Counts out of a vendor that prints them as JSON. */
 function jsonUsage(spec: UsageSpec & { shape: "json" }, stream: string): Usage {
+  const notPrinted = jsonNotPrinted(spec);
   let document: unknown;
   try {
     document = JSON.parse(stream.trim());
   } catch {
     // The spec says there are numbers here and there is not even an object.
     // That is the turn that died before its summary, and it is `missing`.
-    return MISSING_USAGE;
+    return missingUsage(notPrinted);
   }
 
+  const read = (pointer: string | undefined) => (pointer === undefined ? null : tokenCount(resolvePointer(document, pointer)));
   const input = sumAll(spec.input.map((pointer) => tokenCount(resolvePointer(document, pointer))));
   const output = tokenCount(resolvePointer(document, spec.output));
-  const total = spec.total === undefined ? null : tokenCount(resolvePointer(document, spec.total));
+  const total = spec.total === undefined ? null : read(spec.total);
+  const cacheRead = read(spec.cacheRead);
+  const cacheWrite = read(spec.cacheWrite);
+  const [write5m, write1h] = writeSplit(cacheWrite, read(spec.cacheWrite5m), read(spec.cacheWrite1h));
 
   // Whatever was found is kept even when the set is incomplete — a half-read
   // line is still worth more to a human than an empty one — but the status
   // says it is incomplete, so nothing downstream can read it as the whole bill.
-  const complete = input !== null && output !== null && (spec.total === undefined || total !== null);
-  return { status: complete ? "reported" : "missing", input, output, total };
+  // The cache pointers are among the input pointers, so a missing cache count
+  // has already made `input` null; they are checked again only so the rule
+  // does not depend on the registry keeping that true.
+  //
+  // The split of a cache write (D-143) does not enter the status: every count
+  // the bill is made of is there without it. Unknown, it is two nulls that
+  // `not_printed` does not explain — and a turn that wrote to the cache with
+  // its split unknown is not charged, which is where the gap is paid for.
+  const complete =
+    input !== null &&
+    output !== null &&
+    (spec.total === undefined || total !== null) &&
+    (spec.cacheRead === undefined || cacheRead !== null) &&
+    (spec.cacheWrite === undefined || cacheWrite !== null);
+  return {
+    status: complete ? "reported" : "missing",
+    input,
+    output,
+    total,
+    cache_read: cacheRead,
+    cache_write: cacheWrite,
+    cache_write_5m: write5m,
+    cache_write_1h: write1h,
+    not_printed: notPrinted,
+  };
 }
+
+/** What a vendor that prints one total never prints: every part of it (S15.9, D-143). */
+const TEXT_NOT_PRINTED: readonly UsageField[] = USAGE_FIELDS;
 
 /** A count printed as prose: a label line, then the figure on the next line. */
 function textUsage(spec: UsageSpec & { shape: "text" }, stream: string): Usage {
@@ -207,18 +297,29 @@ function textUsage(spec: UsageSpec & { shape: "text" }, stream: string): Usage {
       break;
     }
   }
-  if (at === -1 || at + 1 >= lines.length) return MISSING_USAGE;
+  if (at === -1 || at + 1 >= lines.length) return missingUsage(TEXT_NOT_PRINTED);
 
   const figure = lines[at + 1]!.trim();
   // Tested before it is converted, because `Number("")` is 0 and an empty line
   // after the label would otherwise be recorded as a turn that used nothing.
-  if (!/^\d[\d,]*$/.test(figure)) return MISSING_USAGE;
+  if (!/^\d[\d,]*$/.test(figure)) return missingUsage(TEXT_NOT_PRINTED);
   const total = tokenCount(Number(figure.replace(/,/g, "")));
-  if (total === null) return MISSING_USAGE;
+  if (total === null) return missingUsage(TEXT_NOT_PRINTED);
 
   // One number, and the vendor's own: input and output stay null rather than
-  // being split out of a total om-agi has no key to split.
-  return { status: "reported", input: null, output: null, total };
+  // being split out of a total om-agi has no key to split — and so does every
+  // cache count, which is why a turn like this is never priced (S15.9).
+  return {
+    status: "reported",
+    input: null,
+    output: null,
+    total,
+    cache_read: null,
+    cache_write: null,
+    cache_write_5m: null,
+    cache_write_1h: null,
+    not_printed: TEXT_NOT_PRINTED,
+  };
 }
 
 /**
@@ -266,6 +367,16 @@ function endTurn(child: Bun.Subprocess<"ignore", "pipe", "pipe">): void {
 /** A vendor CLI reached as a subprocess. */
 export class CliExec implements ExecBackend {
   readonly kind = "cli" as const;
+  /**
+   * The model this backend hands its CLI (D-142), or undefined for the vendor's own default.
+   *
+   * Bound here, per backend, rather than carried on the turn request: a request is shared by every step of a
+   * fallback chain, and a model on it would reach every vendor in the chain — `claude --model qwen3:8b` is a
+   * turn that fails for the wrong reason, and a model id priced on the wrong backend is a wrong bill.
+   * `FallbackExec` refuses a request that carries one. A request's own model still wins for a caller that
+   * runs this one backend directly, as it does for `OllamaExec`.
+   */
+  readonly model: string | undefined;
 
   constructor(
     private readonly spec: VendorSpec,
@@ -273,7 +384,10 @@ export class CliExec implements ExecBackend {
       readonly support: () => FenceSupport;
       readonly argv: (argv: readonly string[], policy: FencePolicy) => string[];
     } = { support: fenceSupport, argv: fencedArgv },
-  ) {}
+    options: { readonly model?: string } = {},
+  ) {
+    this.model = options.model === "" ? undefined : options.model;
+  }
 
   get id(): string {
     return this.spec.id;
@@ -309,6 +423,10 @@ export class CliExec implements ExecBackend {
 
   async run(request: TurnRequest): Promise<TurnResult> {
     const startedAt = performance.now();
+    // D-142: the model this turn names, and what the CLI's output will be read for. Named before anything can
+    // refuse, so even a turn that never ran says what it was asked to run.
+    const model = request.model === undefined || request.model === "" ? this.model : request.model;
+    const asked: TurnModel = { requested: model ?? null, reported: [] };
 
     // The dial, before the argv rather than inside it. A vendor with no
     // read-only mechanism at an acting level of 1 is refused here and nothing
@@ -328,8 +446,22 @@ export class CliExec implements ExecBackend {
         raw,
         durationMs: Math.round(performance.now() - startedAt),
         usage: extractUsage(this.spec, "", ""),
+        model: asked,
       },
     });
+
+    // D-142. A model this CLI cannot be handed, or one that is not a model's name, stops the turn here: run on
+    // the vendor's default instead, it would answer, and the answer would read as the model that was asked for.
+    if (model !== undefined) {
+      if (this.spec.model === undefined) {
+        return nothingRan(
+          `refused: ${this.spec.id} takes no model om-agi may pass (asked for ${JSON.stringify(model)}), ` +
+            "and a turn run on its default instead would read as the model that was asked for.",
+        );
+      }
+      const bad = modelProblem(model);
+      if (bad !== undefined) return nothingRan(`refused: the model ${JSON.stringify(model)} ${bad}.`);
+    }
 
     const refused = restraintRefusal(this.spec, request.restraint);
     if (refused !== undefined) return nothingRan(`refused by the autonomy dial: ${refused}`);
@@ -372,7 +504,7 @@ export class CliExec implements ExecBackend {
       }
     }
 
-    const argv = [this.spec.binary, ...this.spec.headlessArgv(request)];
+    const argv = [this.spec.binary, ...this.spec.headlessArgv(model === undefined ? request : { ...request, model })];
 
     // Only two vendors accept a system prompt as a flag. For the rest the
     // identity has to already be on disk, and the result says so rather than
@@ -464,6 +596,7 @@ export class CliExec implements ExecBackend {
           // answers the mechanism gives everywhere else, with no special case
           // for "we know why it is empty".
           usage: extractUsage(this.spec, "", ""),
+          model: asked,
         },
       };
     }
@@ -514,6 +647,8 @@ export class CliExec implements ExecBackend {
             : stderr,
         durationMs,
         usage,
+        // Read whatever the exit code: a turn that failed halfway may still say which model it called.
+        model: { requested: asked.requested, reported: reportedModels(this.spec, stdout) },
         ...(exitCode === undefined ? {} : { exitCode }),
       },
     };

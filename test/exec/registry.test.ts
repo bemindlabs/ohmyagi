@@ -50,6 +50,7 @@ import {
   GROK_GRANT,
   claudeIsolation,
   grantArgs,
+  modelProblem,
   readOnlyArgs,
   readOnlySummary,
   VENDORS,
@@ -139,9 +140,10 @@ describe("what every vendor's argv must do", () => {
       const without = argv(spec);
       expect(withModel).toContain("some-model");
       expect(without).not.toContain("some-model");
-      // The flag and its value, adjacent and in that order.
+      // The flag and its value, adjacent and in that order — and the flag is the one the spec declares (D-142).
       const at = withModel.indexOf("some-model");
       expect(withModel[at - 1]).toMatch(/^(-m|--model)$/);
+      expect(withModel[at - 1]).toBe(spec.model?.flag);
       // Naming a model adds exactly the flag and the value, nothing else.
       expect(withModel.length).toBe(without.length + 2);
     }
@@ -640,6 +642,29 @@ describe("where each vendor says it prints what a turn used", () => {
     expect(usage.stream).toBe("stdout");
   });
 
+  test("a cache count is a part of the input, and the split of a write is both parts of it or neither (S15.9, D-143)", () => {
+    for (const spec of VENDORS) {
+      const usage = spec.usage;
+      if (usage === null || usage.shape !== "json") continue;
+      for (const pointer of [usage.cacheRead, usage.cacheWrite]) if (pointer !== undefined) expect(usage.input, spec.id).toContain(pointer);
+      // Both or neither, and only beside the write they split — a half split cannot say what the other half was.
+      expect(usage.cacheWrite5m === undefined, spec.id).toBe(usage.cacheWrite1h === undefined);
+      if (usage.cacheWrite5m !== undefined) {
+        expect(usage.cacheWrite, spec.id).toBeDefined();
+        expect(usage.cacheWrite5m).not.toBe(usage.cacheWrite1h);
+        for (const pointer of [usage.cacheWrite5m, usage.cacheWrite1h!]) expect(pointer).toStartWith("/");
+      }
+    }
+    // Measured on 2.1.283 (D-142's turn and D-143's): claude says which cache it wrote. grok prints no split.
+    const claude = vendor("claude").usage;
+    expect(claude?.shape === "json" && [claude.cacheWrite5m, claude.cacheWrite1h]).toEqual([
+      "/usage/cache_creation/ephemeral_5m_input_tokens",
+      "/usage/cache_creation/ephemeral_1h_input_tokens",
+    ]);
+    const grok = vendor("grok").usage;
+    expect(grok?.shape === "json" && [grok.cacheWrite5m, grok.cacheWrite1h]).toEqual([undefined, undefined]);
+  });
+
   test("nothing in the registry reads a vendor's price", async () => {
     // The same response that carries claude's token counts carries
     // `total_cost_usd`, and it quoted $0.81 for a two-character answer —
@@ -850,5 +875,53 @@ describe("D-047 — grants and isolation", () => {
         expect({ id: spec.id, undeclared }).toEqual({ id: spec.id, undeclared: [] });
       }
     }
+  });
+});
+
+describe("D-142 — how each vendor takes a model, as its own --help says", () => {
+  /**
+   * Read 2026-09-28 off each CLI's `--help` on a machine with all six installed: claude 2.1.283 `--model
+   * <model>`; codex 0.155.1 (`exec --help`) `-m, --model <MODEL>`; grok 1.0.40 `-m, --model <MODEL>`; gemini
+   * 0.38.2 `-m, --model`; copilot 0.0.367 `--model <model>` with a fixed list; kimi 2.0.2 `-m, --model <model>`.
+   * Where the CLI has both spellings, the registry keeps the one it already sent.
+   */
+  const FLAGS: Readonly<Record<string, string>> = {
+    claude: "--model",
+    codex: "--model",
+    grok: "--model",
+    gemini: "-m",
+    copilot: "--model",
+    kimi: "-m",
+  };
+
+  test("every vendor declares its model flag, with the version it was read from", () => {
+    expect(VENDORS.map((spec) => spec.id).sort()).toEqual(Object.keys(FLAGS).sort());
+    for (const spec of VENDORS) {
+      expect(spec.model, spec.id).toBeDefined();
+      expect(spec.model!.flag, spec.id).toBe(FLAGS[spec.id]!);
+      expect(spec.model!.evidence, spec.id).toContain("--help");
+      expect(spec.model!.evidence, spec.id).toMatch(/\d+\.\d+\.\d+/);
+      // What the picker offers must be something a turn would accept.
+      for (const name of spec.model!.listed) expect(modelProblem(name), `${spec.id}: ${name}`).toBeUndefined();
+    }
+  });
+
+  test("the names a vendor lists are its own: claude's aliases, copilot's fixed choices, and none guessed for the rest", () => {
+    expect(vendor("claude").model!.listed).toEqual(["fable", "opus", "sonnet", "haiku"]);
+    expect(vendor("copilot").model!.listed).toContain("gpt-5.1-codex");
+    for (const id of ["codex", "grok", "gemini", "kimi"]) expect(vendor(id).model!.listed, id).toEqual([]);
+  });
+
+  test("only the two vendors measured naming their model read one, and only out of their JSON output", () => {
+    const reading = VENDORS.filter((spec) => spec.model?.reported != null);
+    expect(reading.map((spec) => spec.id)).toEqual(["claude", "grok"]);
+    for (const spec of reading) {
+      // The report is read from the document the reply is read from, so a text-output vendor cannot have one.
+      expect(spec.replyPointers.length, spec.id).toBeGreaterThan(0);
+      expect(spec.usage?.shape, spec.id).toBe("json");
+      expect(spec.model!.reported!.keysOf).toBe("/modelUsage");
+    }
+    expect(vendor("claude").model!.reported!.canonical).toBe("canonicalModel");
+    expect(vendor("grok").model!.reported!.canonical).toBeUndefined();
   });
 });

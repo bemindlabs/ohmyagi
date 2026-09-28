@@ -34,6 +34,7 @@ import { cmdDeploy } from "./commands/deploy.ts";
 import { cmdDoctor } from "./commands/doctor.ts";
 import { cmdErase } from "./commands/erase.ts";
 import { cmdGuard } from "./commands/guard.ts";
+import { cmdKey } from "./commands/key.ts";
 import { cmdLedger } from "./commands/ledger.ts";
 import { cmdNew } from "./commands/new.ts";
 import { cmdEgress } from "./commands/egress.ts";
@@ -46,6 +47,7 @@ import { cmdSoul } from "./commands/soul.ts";
 import { cmdStop } from "./commands/stop.ts";
 import { cmdTriggers } from "./commands/triggers.ts";
 import { cmdTurn } from "./commands/turn.ts";
+import { cmdUsage } from "./commands/usage.ts";
 import { autoCheck, cmdUpdate } from "./commands/update.ts";
 import { cmdWeb } from "./commands/web.ts";
 import { cmdWorn } from "./commands/worn.ts";
@@ -178,6 +180,10 @@ async function main(rawArgv: readonly string[]): Promise<number> {
       return cmdEval(rest);
     case "basis":
       return cmdBasis(rest);
+    case "key":
+      return cmdKey(rest);
+    case "usage":
+      return cmdUsage(rest);
 
     case "update":
       return cmdUpdate(rest);

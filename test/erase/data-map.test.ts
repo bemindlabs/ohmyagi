@@ -19,6 +19,7 @@ import { triggersDirFor } from "../../src/decide/triggers.ts";
 import { a2aDirFor } from "../../src/a2a/peers.ts";
 import { chatDirFor } from "../../src/connectors/users.ts";
 import { pushDirFor } from "../../src/web/push-dir.ts";
+import { identityDirFor } from "../../src/identity/dir.ts";
 import { basisDirFor } from "../../src/consent/basis.ts";
 import { dataMap, subjectTrees } from "../../src/erase/map.ts";
 import { planErase } from "../../src/erase/plan.ts";
@@ -47,6 +48,7 @@ describe("S7.1 — every place om-agi keeps a subject's data is in the erase pla
         "basis records (D-077)": basisDirFor(env, SUBJECT),
         "rag marker (D-038)": ragDirFor(env.home, env.env, SUBJECT),
         "personal directory (capture, proposals, egress)": personal.path,
+        "the agent's signing key (S15.8, D-108)": identityDirFor(env, SUBJECT),
       };
       const plan = await planErase(env, {
         subject: SUBJECT,
@@ -136,9 +138,14 @@ describe("the data map is one list, and erase and deploy read the same one", () 
       push: "copied",
       basis: "copied",
       personal: "copied",
+      identity: "copied",
       ledger: "copied",
     });
     // Pure: the same roots, the same paths — no filesystem asked. `/h` exists nowhere.
     expect(map.trees.find((tree) => tree.key === "personal")!.dir).toBe(join("/h", ".local", "share", "om-agi", SUBJECT, "personal"));
+    // Beside personal/, not inside it (D-138), and counted under the soul place: it is the agent's identity.
+    const identity = map.trees.find((tree) => tree.key === "identity")!;
+    expect(identity.dir).toBe(join("/h", ".local", "share", "om-agi", SUBJECT, "identity"));
+    expect(identity.place).toBe("soul");
   });
 });

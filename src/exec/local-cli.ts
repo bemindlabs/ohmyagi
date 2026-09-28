@@ -286,6 +286,18 @@ function baseEnvironment(
   };
 }
 
+/**
+ * The base vendor without its {@link VendorSpec.model} (D-142): a local variant runs `local-coder` and nothing
+ * else, so it takes no model and names none — `CliExec` refuses a turn that asks it for one, and its ledger line
+ * says `local-coder` because that is what om-agi runs it on. The base's argv builder still puts `local-coder`
+ * behind the base's own model flag.
+ */
+function withoutModel(spec: VendorSpec): VendorSpec {
+  const { model, ...rest } = spec;
+  void model;
+  return rest;
+}
+
 function localSpec(
   id: LocalCliId,
   paths: LocalPaths,
@@ -293,7 +305,7 @@ function localSpec(
   key: string,
   baseUrl: string,
 ): VendorSpec {
-  const base = vendor(localBaseVendor(id));
+  const base = withoutModel(vendor(localBaseVendor(id)));
   const common = baseEnvironment(paths, env);
 
   if (id === "claude-local") {

@@ -5,11 +5,13 @@ import {
   LOCAL_BACKENDS,
   LOCAL_MODEL,
   LocalCliExec,
+  OllamaExec,
   PHASE_A_BACKENDS,
   backend as buildBackend,
   fallbackTrail,
   loosenedNote,
   restrain,
+  routeModels,
   turnChain,
   type TurnResult,
 } from "../../src/exec/index.ts";
@@ -19,7 +21,9 @@ import {
   writeRunRecord,
 } from "../../src/decide/runs.ts";
 import { judgeConfig, judgeEgress, judgeInput, loadLexicon, recordBlocked, screen, verdictFindings } from "../../src/egress/index.ts";
-import { RecordingExec, canAppend, type RecordingOptions } from "../../src/ledger/index.ts";
+import { RecordingExec, canAppend, modelOfTurn, type RecordingOptions } from "../../src/ledger/index.ts";
+import { loadPrices } from "../../src/pricing/table.ts";
+import { printable } from "../../src/identity/shapes.ts";
 import {
   AUTONOMY_FILE,
   PROPOSE_INSTRUCTION,
@@ -112,7 +116,7 @@ async function readPromptFrom(path: string): Promise<string> {
 
 const TURN_USAGE =
   "usage: ohmyagi turn <dir> --subject <id> (--prompt <text> | --prompt-file <path>) " +
-  "[--backend a,b,c] [--route auto|local|cloud] [--model <m>] [--private] [--proposal <id>] [--no-recall] [--no-proposals] " +
+  "[--backend a,b,c] [--route auto|local|cloud] [--model <m> | --model <backend>=<m>,…] [--private] [--proposal <id>] [--no-recall] [--no-proposals] " +
   "[--recall-chars <n>] [--history-json <[{role,text}]>] [--json]";
 
 /**
@@ -268,6 +272,12 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
       return usageError(`unknown backend ${JSON.stringify(name)}`);
     }
   }
+  // D-142 — which step `--model` is for, and whether that step can take it, asked before anything is read or
+  // sent. The default chain is checked as the usual one: every chain `turn` builds by itself has ollama in it,
+  // and the local CLIs it may put first take no model, so no route can make a model valid here and not below.
+  const modelRaw = options.get("model");
+  const modelCheck = routeModels(modelRaw, named.length > 0 ? named : [...PHASE_A_BACKENDS]);
+  if (!modelCheck.ok) return usageError(`${modelCheck.reason}. Nothing was sent.`);
 
   // I-3: the soul has to belong to the subject named on the command line, and
   // `loadSoul` is where that is checked — not here, and not by convention.
@@ -334,10 +344,6 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
     return 1;
   }
 
-  // `--model` names an ollama model. `backend()` hands it only to the local
-  // backend; a vendor CLI keeps its own default, because a local model id
-  // passed to `claude --model` is a turn that fails for the wrong reason.
-  const model = options.get("model");
   const soulText = renderSoul(loaded.soul);
 
   // S4.3 (D-039) — recall is asked after every refusal above and before
@@ -378,6 +384,15 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
       ? [...LOCAL_BACKENDS, ...PHASE_A_BACKENDS]
       : [...PHASE_A_BACKENDS];
   console.error(dimErr(`ohmyagi: route: ${route.reason}`));
+  // D-142 — each step's own model. A model belongs to the backend it was chosen for: `backend()` binds it there,
+  // and no other step of the chain sees it. Checked above against the usual chain; routed here on the real one.
+  const routed = routeModels(modelRaw, backendIds);
+  if (!routed.ok) return usageError(`${routed.reason}. Nothing was sent.`);
+  if (routed.models.size > 0 && backendIds.length > 1) {
+    const own = backendIds.filter((b) => !routed.models.has(b));
+    const given = [...routed.models].map(([b, m]) => `${b} → ${m}`).join(", ");
+    console.error(dimErr(`ohmyagi: model: ${given}${own.length === 0 ? "" : `; ${own.join(", ")} run their own default`}`));
+  }
 
   // D-045 — level 1 is "propose": the vendor is read-only already, and this
   // tells the model where to put what it would have done.
@@ -389,12 +404,25 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
   const cloudSystem = compose(cloudAttachment, conversationBlock(cloudHistory.kept, cloudHistory.held));
   const writeFailures: Error[] = [];
   const turnId = crypto.randomUUID();
+  // S15.9 — the price tables in force as this turn begins. An owner's file that
+  // cannot be used is said here, once, and every line of this turn is recorded
+  // as not charged rather than priced at a default the owner meant to replace.
+  const prices = await loadPrices(ledger.home, ledger.env);
+  if (prices.owner.state === "unusable") {
+    // Escaped: the reason quotes the file (a field name it refused), and a file is somebody's text.
+    console.error(
+      `ohmyagi: the price file ${printable(prices.ownerPath)} cannot be used — ${printable(prices.owner.reason)}. ` +
+        "This turn is recorded as not charged (table-unusable); `ohmyagi usage prices` shows the tables.",
+    );
+  }
   const recording: RecordingOptions = {
     ledger,
     turnId,
     newId: () => crypto.randomUUID(),
     content: options.has("private") ? "withheld" : "full",
-    model: model === undefined || model === "" ? null : model,
+    // Replaced per backend below: the model each one runs by construction (null for a vendor CLI, D-142).
+    model: null,
+    prices,
     // The soul text itself is in git; the hash is enough to say which version
     // was worn without keeping a second copy out here to delete later. Taken
     // from the soul alone: recall changes per turn, and a hash that moved with
@@ -412,15 +440,21 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
   // id it wraps, and a copied id is no evidence of where a turn goes.
   const judge = judgeConfig(process.env);
   const blocked: Promise<void>[] = [];
+  /** Per backend id, the model it runs by construction — null for a vendor CLI, which says what it ran (D-142). */
+  const modelRun = new Map<string, string | null>();
   const workdir = process.cwd();
   const chain = turnChain(
     backendIds.map((backendId) => {
-      const raw = buildBackend(backendId, model === undefined || model === "" ? {} : { model });
+      const own = routed.models.get(backendId);
+      const raw = buildBackend(backendId, own === undefined ? {} : { model: own });
       const localCli = raw instanceof LocalCliExec ? raw : undefined;
-      const announced = new AnnouncedExec(new RecordingExec(raw, {
-        ...recording,
-        model: localCli === undefined ? recording.model : LOCAL_MODEL,
-      }), {
+      // The model this backend runs by construction (S15.9, D-142): a local CLI
+      // runs LiteLLM's `local-coder`; ollama runs its own `--model` or the
+      // OM_AGI_OLLAMA_MODEL default. A vendor CLI is handed its own `--model`,
+      // if any, as a request: its line names the model its output reports.
+      const ran = localCli !== undefined ? LOCAL_MODEL : raw instanceof OllamaExec ? (raw.defaultModel ?? null) : null;
+      modelRun.set(backendId, ran);
+      const announced = new AnnouncedExec(new RecordingExec(raw, { ...recording, model: ran }), {
         origin: raw,
         write: (line) => console.error(dimErr(line)),
         // S8.3 (D-048): prompt and system — the soul and whatever recall
@@ -543,6 +577,9 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
   // what the agent would have asked is still printed, just not filed.
   const filed = verdict.effective.act === 1 && answered && !options.has("no-proposals") ? await fileAgentAsks(id, turnId, result.text, loaded.soul.person.inherits_from) : [];
 
+  // The answering backend's model, told the way its ledger line tells it (D-142).
+  const aboutModel = modelOfTurn(result.evidence.model, null, modelRun.get(result.backend) ?? null);
+
   if (options.has("json")) {
     console.log(
       JSON.stringify(
@@ -554,14 +591,13 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
           // id: ollama or *-local), not `asLocal`'s runtime check — see
           // src/web/turninfo.ts for why the two are deliberately different.
           local: isLocalBackend(result.backend),
-          // The model this turn asked for (`--model`); null means the backend's
-          // own default, which a vendor CLI does not report. For ollama it is
-          // the model that really ran — the flag or OM_AGI_OLLAMA_MODEL.
-          model: result.backend.endsWith("-local")
-            ? LOCAL_MODEL
-            : model === undefined || model === ""
-              ? null
-              : model,
+          // The model the answering backend ran — the same value its ledger
+          // line records (S15.9, D-142): for a vendor CLI the model its own
+          // output named (`opus` asked, `claude-opus-5-5` ran), null when it
+          // named none; for ollama the flag or OM_AGI_OLLAMA_MODEL. What was
+          // asked is `model_requested`, apart, and never presented as the model.
+          model: aboutModel.model,
+          model_requested: aboutModel.requested,
           // D-095 — how much of what this turn carried stayed on this machine
           // because a cloud backend may not see it. Meaningful when `local` is
           // false: a local backend is handed everything, nothing is held.

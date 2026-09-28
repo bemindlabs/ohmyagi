@@ -68,6 +68,24 @@ export class FallbackExec implements ExecBackend {
   }
 
   async run(request: TurnRequest): Promise<TurnResult> {
+    // D-142. One request goes to every step, so a model on it would reach every backend in the chain — a
+    // local model's name handed to a vendor CLI, and a line priced as a model the step never ran. A step's
+    // model is bound to that step when it is built; a chain refuses to carry one, before anything is sent.
+    if (request.model !== undefined) {
+      return {
+        backend: this.id,
+        text: "",
+        confidence: "silent",
+        identityStrength: "none",
+        evidence: {
+          source: this.id,
+          prompt: request.prompt,
+          raw:
+            `[fallback] refused: the request names the model ${JSON.stringify(request.model)}, which would reach ` +
+            `all ${this.chain.length} backend(s) — build each one with its own model instead`,
+        },
+      };
+    }
     const attempts: string[] = [];
     let last: TurnResult | undefined;
 

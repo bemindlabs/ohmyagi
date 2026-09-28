@@ -10,6 +10,7 @@ import {
   type ForgetSelector,
   type LedgerEntry,
 } from "../../src/ledger/index.ts";
+import { formatUsd } from "../../src/pricing/cost.ts";
 import { subjectId } from "../../src/types.ts";
 import { bold, dim, indent, ledgerEnv, parseArgs, usageError } from "../shared.ts";
 
@@ -26,7 +27,13 @@ function parseInstant(flag: string, value: string): Date | string {
 const LEDGER_HEADER =
   `${"when".padEnd(25)} ${"backend".padEnd(9)} ${"outcome".padEnd(10)} ` +
   `${"exit".padEnd(5)} ${"ms".padEnd(8)} ${"bytes".padEnd(10)} ` +
-  `${"tokens in/out/total".padEnd(20)} ${"usage".padEnd(10)} id`;
+  `${"tokens in/out/total".padEnd(20)} ${"usage".padEnd(10)} ${"cost".padEnd(15)} id`;
+
+/** What a line cost, or why it was not charged — `(none)` for a line from before turns were priced. */
+function costCell(entry: LedgerEntry): string {
+  if (entry.cost !== null) return formatUsd(entry.cost.usd_micros);
+  return entry.not_charged ?? "(none)";
+}
 
 /** A number the backend printed, or `-` where it printed none. */
 function count(value: number | null): string {
@@ -44,7 +51,7 @@ function ledgerRow(entry: LedgerEntry): string {
   return (
     `${entry.at.padEnd(25)} ${entry.backend.padEnd(9)} ${entry.confidence.padEnd(10)} ` +
     `${exit.padEnd(5)} ${ms.padEnd(8)} ${`${entry.prompt_bytes}/${entry.text_bytes}`.padEnd(10)} ` +
-    `${tokens.padEnd(20)} ${(usage?.status ?? "(none)").padEnd(10)} ${entry.id}`
+    `${tokens.padEnd(20)} ${(usage?.status ?? "(none)").padEnd(10)} ${costCell(entry).padEnd(15)} ${entry.id}`
   );
 }
 
@@ -139,9 +146,9 @@ async function cmdLedgerShow(argv: readonly string[]): Promise<number> {
   );
   console.log(
     dim(
-      "money is never recorded. A vendor's own figure is an API list price that a subscription " +
-        "holder does not pay, and a local model's would be 0 — a claim that electricity is free. " +
-        "What a turn took in time is the ms column.",
+      "cost is om-agi's price for those tokens, from the price table in force when the turn ran " +
+        "(`ohmyagi usage prices`) — never a vendor's own figure. A reason in its place is a turn not " +
+        "charged: a count or a price was missing, and it is billed at nothing rather than a guess (D-110).",
     ),
   );
 

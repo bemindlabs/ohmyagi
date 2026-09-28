@@ -13,7 +13,7 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensurePersonalDir, personalDir } from "../../src/guard/personal.ts";
@@ -70,6 +70,22 @@ describe("where it resolves to", () => {
 });
 
 describe("when it refuses", () => {
+  test("a subject directory symlinked into a checkout is refused too — the walk follows where it really is (S15.8 review, L3)", async () => {
+    const parent = await sandbox();
+    const checkout = join(parent, "notes");
+    expect((await git(parent, ["init", "-q", checkout])).code).toBe(0);
+    await mkdir(join(parent, "data", "om-agi"), { recursive: true });
+    await mkdir(join(checkout, "hidden"));
+    await symlink(join(checkout, "hidden"), join(parent, "data", "om-agi", SUBJECT));
+
+    const resolved = await personalDir({ home: parent, env: { XDG_DATA_HOME: join(parent, "data") } }, SUBJECT);
+    expect(resolved.ok).toBe(false);
+    if (!resolved.ok) expect(resolved.reason).toContain(checkout);
+    // And a path that is merely missing, with nothing symlinked, is still fine.
+    const clean = await personalDir({ home: parent, env: { XDG_DATA_HOME: join(parent, "elsewhere") } }, SUBJECT);
+    expect(clean.ok).toBe(true);
+  });
+
   test("a data root inside a git repository is refused, and nothing is created", async () => {
     const parent = await sandbox();
     const checkout = join(parent, "notes");

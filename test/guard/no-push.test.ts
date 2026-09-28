@@ -506,6 +506,16 @@ describe("C. behaviour — every command, watched by a git that writes down its 
       // so it is exactly the command that must be seen to run none of them —
       // and it goes before `erase`, while the repository still holds its soul.
       ["deploy", "plan", agent, "--subject", SUBJECT, "--target", deployTarget],
+      // S15.8's. `key` writes the agent's private key under this sandbox's XDG_DATA_HOME and walks for a
+      // `.git` with `stat` to refuse a checkout; `usage report` reads the ledger and signs; `usage verify`
+      // reads a file. None has a reason to start git — and they go before `erase`, which then takes the key.
+      ["key", agent, "--subject", SUBJECT],
+      ["usage", "report", agent, "--subject", SUBJECT],
+      ["usage", "verify", join(workspace, "target.json")],
+      // S15.4 step one's (D-141): a proof signed with that key, one checked, and a report bound to a listing.
+      ["key", "prove", agent, "--subject", SUBJECT, "--market", "https://market.example", "--listing", "ts-reviewer", "--nonce", "A".repeat(43)],
+      ["key", "verify-proof", join(workspace, "target.json"), "--key", "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo", "--market", "https://market.example", "--listing", "ts-reviewer", "--nonce", "A".repeat(43)],
+      ["usage", "report", agent, "--subject", SUBJECT, "--market", "https://market.example", "--listing", "ts-reviewer", "--job", "job_01"],
       ["erase", SUBJECT, "--agent", agent, "--by", "the no-push test"],
       ["erase", SUBJECT, "--agent", agent, "--by", "the no-push test", "--yes"],
       ["new", "second", "--subject", SUBJECT],
@@ -586,6 +596,9 @@ describe("C. behaviour — every command, watched by a git that writes down its 
       "update",
       // S13.1's: the plan only, which names `git bundle` and runs no git.
       "deploy",
+      // S15.8's: the key, and the signed usage report; S15.4's proof of it (D-141).
+      "key",
+      "usage",
       // S5.2's. Run in sequence above rather than in the flat list, because
       // `decide` needs the id `new` printed.
       "proposal",

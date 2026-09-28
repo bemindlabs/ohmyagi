@@ -351,20 +351,38 @@ export type UsageStatus =
   | "unreported";
 
 /**
+ * A count a backend may print about a turn — the four that are priced apart (D-110), and the two a cache
+ * write splits into where the vendor prices a 5-minute and a 1-hour write differently (D-143).
+ */
+export type UsageField = "input" | "output" | "cache_read" | "cache_write" | "cache_write_5m" | "cache_write_1h";
+
+/** The six, in the order a reader meets them. */
+export const USAGE_FIELDS: readonly UsageField[] = ["input", "output", "cache_read", "cache_write", "cache_write_5m", "cache_write_1h"];
+
+/** The two parts of a cache write (D-143) — what a backend that never splits its writes lists in `not_printed`. */
+export const CACHE_WRITE_SPLIT: readonly UsageField[] = ["cache_write_5m", "cache_write_1h"];
+
+/**
  * What one turn used, in tokens the backend itself printed.
  *
- * Tokens, and deliberately not money. Every route to a number in a currency
- * runs through a claim om-agi cannot check: a vendor's own `total_cost_usd` is
- * an API list price that a subscription holder never pays (measured
- * 2026-09-21: a two-character answer was quoted at $0.81, all of it cache), and
- * a local model's `0` would be a claim that electricity and a GPU-hour are
- * free. A field that is true for some readers and false for others, with
- * nothing in the line to say which, is a field that should not exist — so the
- * ledger's `cost` stays null and this carries the part that was measured.
+ * Tokens, never the vendor's money. A vendor's own `total_cost_usd` is an API
+ * list price that a subscription holder never pays (measured 2026-09-21: a
+ * two-character answer was quoted at $0.81, all of it cache), and a local
+ * model's `0` would be a claim that electricity and a GPU-hour are free — so no
+ * figure a vendor prints in a currency is read, here or anywhere (D-023). What
+ * a turn *costs* is om-agi's own arithmetic over these counts and a price table
+ * the ledger line names (S15.9, D-110, D-139): the counts are the measurement,
+ * the table is the claim, and the line keeps them apart.
  *
  * Every number here was *read*, never derived. `total` is set only where the
  * vendor printed a total of its own; om-agi does not add `input` to `output`,
  * because two vendors' tokenizers do not count the same thing.
+ *
+ * The cache counts are **parts of `input`**, not additions to it — `input`
+ * stays the whole prompt side (D-023 §4), so a reader written before S15.9
+ * still reads the same number. What is priced as plain input is what is left:
+ * `input − cache_read − cache_write`, which for the vendors that split them is
+ * exactly the field they print first (claude's and grok's `input_tokens`).
  */
 export interface Usage {
   readonly status: UsageStatus;
@@ -381,14 +399,56 @@ export interface Usage {
   readonly output: number | null;
   /** A total the backend printed itself. Never om-agi's arithmetic. */
   readonly total: number | null;
+  /**
+   * Of `input`, the tokens the vendor served from its prompt cache (S15.9).
+   *
+   * **Optional on read** for the reason `LedgerEntry.usage` is: lines written
+   * before S15.9 do not carry it and must still parse. Every usage written
+   * since carries both cache counts, as a number or as `null` — and a `null`
+   * says why in {@link not_printed} or in `status`, never by being a 0.
+   */
+  readonly cache_read?: number | null;
+  /** Of `input`, the tokens the vendor wrote into its prompt cache (S15.9). */
+  readonly cache_write?: number | null;
+  /**
+   * Of `cache_write`, the tokens written to the vendor's 5-minute cache and to its 1-hour cache (D-143) —
+   * Anthropic prices the two at 1.25× and 2× input, so a write priced as one part is priced wrong whenever
+   * the 1-hour cache was written.
+   *
+   * **Optional on read**, like the cache counts: lines written before D-143 do not carry them. Every usage
+   * written since carries both, as numbers or as `null`, and never one without the other. Numbers only when
+   * the backend printed both and they add up to `cache_write` exactly — a split that does not add up is a
+   * shape that moved, and is kept as unknown rather than as a wrong number. A `null` says why: listed in
+   * {@link not_printed} (a backend that never splits its writes — grok, ollama, codex), or not listed, which
+   * is a backend that prints the split and did not this turn. The second is not a missing count — `status`
+   * does not change for it — but a turn that wrote to the cache with its split unknown is not charged
+   * (`usage-unsplit`), because which rate applies is exactly what is not known.
+   */
+  readonly cache_write_5m?: number | null;
+  readonly cache_write_1h?: number | null;
+  /**
+   * The counts this backend never prints, as surveyed — so their `null` is a
+   * fact about the backend and not about this turn (S15.9).
+   *
+   * The reason a null count carries. A count that *is* printed and was not
+   * there this time is `missing` in `status`; a count in this list is null on
+   * every turn the backend runs, and the status can still be `reported`. Absent
+   * when nobody has surveyed the backend (`unreported`): then nothing is known
+   * about what it prints, which is not the same as knowing it prints nothing.
+   */
+  readonly not_printed?: readonly UsageField[];
 }
 
-/** The usage of a backend om-agi has not surveyed, and of a line from before it did. */
+/** The usage of a backend om-agi has not surveyed. Every count null; the status says why. */
 export const UNREPORTED_USAGE: Usage = Object.freeze({
   status: "unreported",
   input: null,
   output: null,
   total: null,
+  cache_read: null,
+  cache_write: null,
+  cache_write_5m: null,
+  cache_write_1h: null,
 });
 
 /**
@@ -426,4 +486,37 @@ export interface Evidence {
    * says nothing rather than reporting zeros.
    */
   readonly usage?: Usage;
+  /**
+   * What a vendor CLI was asked to run and what it says it ran (D-142).
+   *
+   * Set by `CliExec` on every result, and by nothing else: ollama and the
+   * local CLIs run the model om-agi hands them by construction, so their
+   * ledger line names that model without asking. Absent means "this backend
+   * does not answer the question", never "the default".
+   */
+  readonly model?: TurnModel;
+}
+
+/**
+ * The model of one vendor CLI turn, split into the two facts the ledger keeps
+ * apart (D-142): the name om-agi put on the command line, and the names the
+ * CLI's own output says it ran.
+ *
+ * They are different claims. `opus` on the command line is an alias the vendor
+ * resolves; `claude-opus-5-5` in its output is what it resolved to. Only the
+ * second is the model the turn ran on, and only a name of that kind may price
+ * the turn — except a requested name that exactly names a price-table entry,
+ * and then only when the output named nothing at all (`src/pricing/cost.ts`).
+ */
+export interface TurnModel {
+  /** The model om-agi passed on the CLI's command line, or null when it named none (the vendor's own default). */
+  readonly requested: string | null;
+  /**
+   * Every model the output names, in the order printed: the vendor's canonical
+   * name where it gives one, else the id it called. `null` stands for a name
+   * that is not a model name's shape — kept as a slot, so a turn that named two
+   * models is never read as one. Empty when the output names none: a vendor
+   * nobody measured, or a turn that ended before its summary.
+   */
+  readonly reported: readonly (string | null)[];
 }

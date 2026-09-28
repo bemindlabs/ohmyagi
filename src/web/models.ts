@@ -1,11 +1,17 @@
 /**
- * What the chat's backend and model picker offers (D-085).
+ * What the chat's backend and model picker offers (D-085, D-142).
  *
- * Only names that have a reason to work: models that really answered on that
- * backend (from the ledger, newest first), the local model this page was
- * started with, what the local Ollama lists, and Claude's own aliases. No
- * guessed catalogue — a stale guess is a turn that fails. The box stays free
- * text, so any other name can still be typed.
+ * Only names that have a reason to work, and only from the vendor's side: the
+ * names a vendor CLI documents for its own model flag (`ModelSpec.listed`, read
+ * off its `--help`), the names a price table in force lists for that backend,
+ * the local model this page was started with, and what the local Ollama lists.
+ *
+ * Not the ledger. It used to be: models that had answered on a backend, newest
+ * first. But a line's `model` was not always a model the backend was handed — a
+ * claude line from before S15.9 says `qwen3:8b` — and a stale name offered as a
+ * suggestion is a turn that fails. A backend that takes no model (the local CLI
+ * variants run `local-coder` and nothing else) is offered none. The box stays
+ * free text, so any other name can still be typed.
  */
 
 /** What the composer's picker receives from `/api/models`. */
@@ -19,27 +25,32 @@ export interface ModelsState {
   readonly models: Readonly<Record<string, readonly string[]>>;
 }
 
-/** `claude --model` takes these and resolves them to the current model of each family. */
-export const CLAUDE_ALIASES: readonly string[] = ["opus", "sonnet", "haiku"];
-
-const MAX_PER_BACKEND = 12;
+const MAX_PER_BACKEND = 16;
 /** An embedding model answers no chat turn. */
 const EMBEDDING = /embed|bge-|nomic|minilm|e5-/i;
 
 export function modelChoices(input: {
   readonly backends: readonly string[];
-  readonly entries: readonly { readonly at: string; readonly backend: string; readonly model: string | null; readonly confidence: string }[];
+  /** Per vendor id, the names its own `--help` documents; absent for a backend that takes no model. */
+  readonly listed: Readonly<Record<string, readonly string[]>>;
+  /** The price entries in force (owner's first), as `usage prices` lists them. */
+  readonly priced: readonly { readonly backend: string; readonly model: string }[];
+  /** Backends that take no model at all. */
+  readonly modelless: readonly string[];
   readonly localModel: string | null;
   readonly ollama: readonly string[];
 }): Record<string, string[]> {
   const out: Record<string, string[]> = {};
-  const used = [...input.entries]
-    .filter((e) => e.model !== null && e.model !== "" && (e.confidence === "confirmed" || e.confidence === "partial"))
-    .sort((a, b) => b.at.localeCompare(a.at));
   for (const id of input.backends) {
-    const names = used.filter((e) => e.backend === id).map((e) => e.model!);
-    if (id === "claude") names.push(...CLAUDE_ALIASES);
-    if (id === "ollama") names.unshift(...(input.localModel === null ? [] : [input.localModel])), names.push(...input.ollama.filter((m) => !EMBEDDING.test(m)));
+    if (input.modelless.includes(id)) {
+      out[id] = [];
+      continue;
+    }
+    const names: string[] = [...(input.listed[id] ?? []), ...input.priced.filter((p) => p.backend === id).map((p) => p.model)];
+    if (id === "ollama") {
+      if (input.localModel !== null) names.unshift(input.localModel);
+      names.push(...input.ollama.filter((m) => !EMBEDDING.test(m)));
+    }
     out[id] = [...new Set(names)].slice(0, MAX_PER_BACKEND);
   }
   return out;

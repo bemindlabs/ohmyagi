@@ -10,7 +10,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { dataRoot, stateRoot, STATE_DIR_MODE, STATE_FILE_MODE } from "../src/state.ts";
+import { dataRoot, stateRoot, STATE_DIR_MODE, STATE_FILE_MODE, xdgBase } from "../src/state.ts";
 
 describe("stateRoot", () => {
   test("uses XDG_STATE_HOME when it is set", () => {
@@ -56,3 +56,20 @@ describe("dataRoot", () => {
     expect(dataRoot("/home/example", {})).not.toBe(stateRoot("/home/example", {}));
   });
 });
+
+describe("a relative XDG base is ignored, as the spec says (S15.8 review, L9)", () => {
+  test("state and data fall back to the default rather than landing under the current directory", () => {
+    for (const value of ["data", "./data", "../elsewhere", "~/data"]) {
+      expect(stateRoot("/home/example", { XDG_STATE_HOME: value }), value).toBe(join("/home/example", ".local", "state", "om-agi"));
+      expect(dataRoot("/home/example", { XDG_DATA_HOME: value }), value).toBe(join("/home/example", ".local", "share", "om-agi"));
+    }
+  });
+
+  test("an absolute value is still used, and the rule is one function", () => {
+    expect(xdgBase("/abs", "/fallback")).toBe("/abs");
+    expect(xdgBase(undefined, "/fallback")).toBe("/fallback");
+    expect(xdgBase("", "/fallback")).toBe("/fallback");
+    expect(xdgBase("rel", "/fallback")).toBe("/fallback");
+  });
+});
+

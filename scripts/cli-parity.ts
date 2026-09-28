@@ -1215,6 +1215,10 @@ export const SCENARIOS: readonly Scenario[] = [
       { argv: ["persona"] },
       { argv: ["eval"] },
       { argv: ["basis"] },
+      // S15.8's two, as usage errors only: a real `key` makes a random key, and the two sides would differ by it.
+      { argv: ["key"] },
+      { argv: ["usage"] },
+      { argv: ["usage", "wat"] },
       { argv: ["update", "wat"] },
       { argv: ["ledger", "wat"] },
       { argv: ["ledger"] },
@@ -1771,6 +1775,10 @@ async function runScenario(scenario: Scenario): Promise<string> {
       XDG_CACHE_HOME: CACHE,
       CODEX_HOME: join(home, ".codex"),
       OLLAMA_HOST: DEAD,
+      // And no vector store: without this the engine asks its default, this machine's real Qdrant, and
+      // `13-erase` once dropped a collection there mid-proof (see the record in check-coverage.ts). Both
+      // sides get the same dead address, so what they print still compares.
+      OM_AGI_QDRANT_URL: DEAD,
       BUN_INSTALL_CACHE_DIR: CACHE,
       // git refuses to make a commit without these, and `new` runs `git init`.
       GIT_CONFIG_GLOBAL: "/dev/null",
