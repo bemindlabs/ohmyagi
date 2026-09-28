@@ -241,6 +241,9 @@ Usage:
   ohmyagi memory search <agent-dir> --subject <id> [--limit <n>] [--scope all|memory|knowledge] <query...>
                                         Ask both indexes and merge the answers;
                                         every hit says which index found it.
+                                        Exit 1: no hit. Exit 3: nothing was
+                                        searched (no index yet, and no vector
+                                        store answered).
   ohmyagi egress needles --subject <id>
                                         Where the list of what must not leave
                                         this machine lives (personal, outside

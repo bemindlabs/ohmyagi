@@ -193,6 +193,12 @@ footer{color:var(--muted);font-size:.8rem;margin-top:22px}
 .maptip{position:absolute;pointer-events:none;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px 10px;font-size:.82rem;box-shadow:var(--shadow);max-width:300px;z-index:2}
 .legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:8px;font-size:.8rem;color:var(--muted)}
 .legend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle}
+/* The map shows a part of memory at a time: found, around one memory, the most linked, some kinds. */
+.maptools{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 10px}
+.maptools input[type=text]{flex:1 1 220px;width:auto;min-width:0}.maptools select{width:auto;flex:0 1 auto}
+.legchip{border:1px solid var(--line);background:var(--bg2);border-radius:99px;padding:2px 10px;font-size:.78rem;min-height:26px;color:var(--muted)}
+.mapempty{position:absolute;inset:0;display:grid;place-items:center;padding:24px;text-align:center;color:var(--muted);pointer-events:none}
+.legchip b{font-weight:600;margin-left:4px;color:var(--ink);opacity:.6}.legchip[aria-pressed=false]{opacity:.45;text-decoration:line-through}
 .mem{display:block;width:100%;text-align:left;border:0;border-top:1px solid var(--line);border-radius:0;padding:10px 6px;background:none;min-height:0}
 .mem:first-child{border-top:0}.mem:hover,.mem[aria-current=true]{background:var(--calmbg);border-radius:10px}
 .tag{font-size:.7rem;padding:1px 7px;border-radius:99px;background:var(--minbg);color:var(--mint);margin-left:6px;font-weight:600}
@@ -434,9 +440,16 @@ ${MARKDOWN_CSS}
     <section class="memmap" aria-labelledby="h-map">
       <div class="panelhead"><h2 id="h-map">Memory map <span class="small" id="mapStats"></span></h2><div class="row" style="margin:0"><button id="mapEntities" aria-pressed="false" title="Ports, services, hosts, env names and paths that two or more memories mention">Things</button><button id="mapSpin" aria-pressed="true">Spin</button><button id="mapReset">Reset view</button><button id="mapToggle" aria-expanded="true">Hide map</button></div></div>
       <div id="mapBody">
-        <div class="mapwrap"><canvas id="mapCanvas" role="img" aria-label="Memory map: each memory is a dot, each link between two memories a line. The list below holds the same memories."></canvas><div class="maptip" id="mapTip" hidden></div></div>
-        <div class="legend" id="mapLegend"></div>
-        <p class="hint">Each dot is a memory, sized by how many others it links to; each line is a <code>[[link]]</code> between two of them, with signals running along it. Drag to turn it, scroll to zoom, click a dot to read it. The filter below dims what does not match.</p>
+        <div class="maptools" role="group" aria-label="What the map shows">
+          <input type="text" id="mapFind" placeholder="Find in the map…" aria-label="Find in the map" autocomplete="off" spellcheck="false">
+          <select id="mapLimit" aria-label="How many memories"><option value="60">60 most linked</option><option value="150">150 most linked</option><option value="300">300 most linked</option><option value="0">All</option></select>
+          <select id="mapAround" aria-label="Around which memory"><option value="0">Whole map</option><option value="1">Around the chosen memory</option><option value="2">Two steps around it</option></select>
+          <label class="small"><input type="checkbox" id="mapLoose"> show unlinked</label>
+          <button id="mapClear" class="linkish" hidden>Clear filters</button>
+        </div>
+        <div class="mapwrap"><canvas id="mapCanvas" role="img" aria-label="Memory map: each memory is a dot, each link between two memories a line. The list below holds the same memories."></canvas><div class="maptip" id="mapTip" hidden></div><div class="mapempty" id="mapEmpty" hidden></div></div>
+        <div class="legend" id="mapLegend" role="group" aria-label="Kinds on the map"></div>
+        <p class="hint">Each dot is a memory, sized by how many others it links to; each line is a <code>[[link]]</code> between two of them, with signals running along it. Drag to turn it, scroll to zoom, click a dot to read it. A big memory shows its most linked part: find narrows it to what matches and what that links to, a kind in the legend turns off with a click, and <i>Around the chosen memory</i> shows one memory and its links — click a dot to walk on. The filter below dims what does not match.</p>
       </div>
     </section>
     <section class="memmap" aria-labelledby="h-facts">
@@ -965,7 +978,7 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
       const words = scope === "all" ? a : a.slice(first.length).trim();
       if (!words) return sys("Search " + scope + " for what?");
       const r = await api("/api/memory-search", { query: words, scope });
-      sys("**" + (scope === "knowledge" ? "Knowledge" : scope === "memory" ? "Memory (not knowledge)" : "Memory") + " — " + words + "**\\n\\n" + (r.text || r.message || r.error || "Nothing found."));
+      sys("**" + (scope === "knowledge" ? "Knowledge" : scope === "memory" ? "Memory (not knowledge)" : "Memory") + " — " + words + "**\\n\\n" + searchSaid(r));
     } },
     { name: "remember", args: "<text>", help: "Save a note to memory (as New memory does)", more: "Goes to memory/notes/<date>-<words>.md through ohmyagi memory write: the credential scan and the memory basis apply.", run: async (a) => {
       if (!a) return sys("Remember what? /remember <text>");
@@ -1378,7 +1391,7 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
   function mapColor(type, css) { return type === "reference" ? "#a78bfa" : css(TYPE_VAR[type] || "--muted"); }
   // D-092: the things memories share, drawn as diamonds when "Things" is on.
   const ENTITY_COLOR = { port: "#f472b6", service: "#34d399", host: "#fbbf24", env: "#fb923c", path: "#94a3b8" };
-  let mapThings = store.get("ohmyagi-map-things") === "on", mapRaw = null;
+  let mapThings = store.get("ohmyagi-map-things") === "on", mapFull = null;
   function withThings(g) {
     if (!mapThings || !g.entities || !g.entities.length) return g;
     const base = g.nodes.length;
@@ -1388,34 +1401,129 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
       dangling: g.dangling, entities: g.entities, mentions: g.mentions,
     };
   }
+  // What part of memory the map shows. Hundreds of memories drawn at once are a hairball and a hot laptop, so
+  // the map lays out and draws only its view: the most linked (or all), what a find matches and what that links
+  // to, or the chosen memory and the ones a step or two away — with kinds the legend has turned off left out.
+  const MAP_LIMITS = [60, 150, 300, 0];
+  const mapView = {
+    find: "",
+    limit: MAP_LIMITS.includes(Number(store.get("ohmyagi-map-limit") || 150)) ? Number(store.get("ohmyagi-map-limit") || 150) : 150,
+    around: 0,
+    loose: store.get("ohmyagi-map-loose") !== "off",
+    off: new Set(store.get("ohmyagi-map-off").split(",").filter(Boolean)),
+    centre: "", hits: null,
+  };
+  const legendKey = (m) => m.kind === "entity" ? "thing:" + m.etype : "type:" + (m.type || "");
   async function loadMap() {
-    let g; try { g = mapRaw = await api("/api/memories/graph"); } catch { return; }
+    let g; try { g = await api("/api/memories/graph"); } catch { return; }
     g = withThings(g);
-    const n = g.nodes.length;
+    g.deg = g.nodes.map(() => 0); g.adj = g.nodes.map(() => []); g.index = new Map(g.nodes.map((m, i) => [m.path, i]));
+    g.links = g.nodes.map(() => 0);
+    for (const [a, b] of g.edges) { g.deg[a]++; g.deg[b]++; g.adj[a].push(b); g.adj[b].push(a); if (g.nodes[a].kind !== "entity" && g.nodes[b].kind !== "entity") { g.links[a]++; g.links[b]++; } }
+    mapFull = g;
+    mapLegend(); mapApply();
+  }
+  function mapLegend() {
+    const g = mapFull; if (!g) return;
+    const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+    const leg = $("mapLegend"); leg.replaceChildren();
+    const count = new Map(); for (const m of g.nodes) count.set(legendKey(m), (count.get(legendKey(m)) || 0) + 1);
+    for (const k of [...count.keys()].sort()) {
+      const thing = k.startsWith("thing:"), name = k.slice(k.indexOf(":") + 1);
+      const b = el("button", "legchip"), dot = el("i");
+      dot.style.background = thing ? ENTITY_COLOR[name] : mapColor(name, css); if (thing) dot.style.borderRadius = "2px";
+      b.append(dot, (thing ? "◆ " : "") + (name || "no kind")); b.append(el("b", "", String(count.get(k))));
+      b.setAttribute("aria-pressed", String(!mapView.off.has(k))); b.title = "Show or hide " + (name || "memories with no kind") + " on the map";
+      b.onclick = () => { if (mapView.off.has(k)) mapView.off.delete(k); else mapView.off.add(k); store.set("ohmyagi-map-off", [...mapView.off].join(",")); mapLegend(); mapApply(); };
+      leg.append(b);
+    }
+    leg.append(el("span", "", "● memory · ■ knowledge (" + g.nodes.filter((m) => m.kind === "knowledge").length + ")"));
+  }
+  // Pick the view out of the whole graph, keep every dot that stays where it was, and lay out only that.
+  function mapApply() {
+    const g = mapFull; if (!g) return;
+    const N = g.nodes.length, deg = g.deg, adj = g.adj;
+    const ent = (i) => g.nodes[i].kind === "entity", kindOn = (i) => !mapView.off.has(legendKey(g.nodes[i]));
+    const byDeg = (a, b) => deg[b] - deg[a] || (g.nodes[a].path < g.nodes[b].path ? -1 : 1);
+    const q = mapView.find.trim().toLowerCase();
+    const desc = new Map(mems.map((m) => [m.path, m.description || ""]));
+    const hit = (i) => { const m = g.nodes[i]; return (m.title + " " + m.path + " " + (desc.get(m.path) || "") + " " + (m.tags || []).join(" ")).toLowerCase().includes(q); };
+    const centre = mapView.around && g.index.has(memShown) && !ent(g.index.get(memShown)) ? g.index.get(memShown) : -1;
+    mapView.centre = memShown;
+    const all = [...Array(N).keys()];
+    let pick, hits = null;
+    if (centre >= 0) {
+      // Out from the chosen memory along its links, a step at a time; Things are not a way across.
+      const dist = new Map([[centre, 0]]), queue = [centre];
+      for (let h = 0; h < queue.length; h++) {
+        const i = queue[h]; if (dist.get(i) >= mapView.around) continue;
+        for (const j of adj[i]) if (!dist.has(j) && !ent(j) && kindOn(j)) { dist.set(j, dist.get(i) + 1); queue.push(j); }
+      }
+      pick = [...dist.keys()].sort((a, b) => dist.get(a) - dist.get(b) || byDeg(a, b));
+      if (q) hits = new Set(pick.filter(hit));
+    } else if (q) {
+      // What matches first, then what it links to — so a find shows where a thing sits, not a lone dot.
+      const found = all.filter((i) => kindOn(i) && hit(i)).sort(byDeg), seen = new Set(found);
+      const next = [...new Set(found.flatMap((i) => adj[i]))].filter((j) => !seen.has(j) && !ent(j) && kindOn(j)).sort(byDeg);
+      pick = found.concat(next); hits = seen;
+    } else pick = all.filter((i) => !ent(i) && kindOn(i) && (mapView.loose || g.links[i] > 0)).sort(byDeg);
+    const shown = mapView.limit ? pick.slice(0, mapView.limit) : pick;
+    // Things shared by two or more of the memories in view come along, the most shared first.
+    if (mapThings) {
+      const inView = new Set(shown);
+      const things = all.filter((i) => ent(i) && !inView.has(i) && kindOn(i)).map((i) => [i, adj[i].filter((j) => inView.has(j)).length]).filter(([, c]) => c >= 2);
+      things.sort((a, b) => b[1] - a[1]);
+      for (const [i] of things.slice(0, Math.max(20, Math.round(shown.length / 3)))) shown.push(i);
+    }
+    const keep = new Map(shown.map((i, k) => [i, k])), n = shown.length;
     const old = new Map(map.nodes.map((m, i) => [m.path, [map.x[i], map.y[i], map.z[i]]]));
-    map.nodes = g.nodes; map.edges = g.edges; map.pulses = [];
-    map.deg = g.nodes.map(() => 0); map.adj = g.nodes.map(() => []); map.index = new Map(g.nodes.map((m, i) => [m.path, i]));
-    for (const [a, b] of g.edges) { map.deg[a]++; map.deg[b]++; map.adj[a].push(b); map.adj[b].push(a); }
+    map.nodes = shown.map((i) => g.nodes[i]); map.pulses = []; map.hover = -1;
+    map.edges = []; for (const [a, b, w] of g.edges) if (keep.has(a) && keep.has(b)) map.edges.push([keep.get(a), keep.get(b), w]);
+    map.deg = map.nodes.map(() => 0); map.adj = map.nodes.map(() => []); map.index = new Map(map.nodes.map((m, i) => [m.path, i]));
+    for (const [a, b] of map.edges) { map.deg[a]++; map.deg[b]++; map.adj[a].push(b); map.adj[b].push(a); }
+    map.size = shown.map((i) => deg[i]);
+    map.hubs = [...Array(n).keys()].filter((i) => map.size[i] > 0).sort((a, b) => map.size[b] - map.size[a]).slice(0, 7);
+    mapView.hits = hits ? new Set([...hits].filter((i) => keep.has(i)).map((i) => keep.get(i))) : null;
     const R = 40 * Math.cbrt(n || 1);
     for (const k of ["x", "y", "z", "vx", "vy", "vz"]) map[k] = new Array(n).fill(0);
+    let fresh = 0;
     for (let i = 0; i < n; i++) {
-      const was = old.get(g.nodes[i].path);
+      const was = old.get(map.nodes[i].path);
       if (was) { map.x[i] = was[0]; map.y[i] = was[1]; map.z[i] = was[2]; continue; }
+      fresh++;
+      // A dot new to the view starts beside a neighbour already placed, so the map grows instead of jumping.
+      const by = map.adj[i].find((j) => old.has(map.nodes[j].path));
+      if (by !== undefined) { const o = old.get(map.nodes[by].path); map.x[i] = o[0] + (Math.random() - 0.5) * 30; map.y[i] = o[1] + (Math.random() - 0.5) * 30; map.z[i] = o[2] + (Math.random() - 0.5) * 30; continue; }
       const t = Math.acos(1 - 2 * (i + 0.5) / n), p = Math.PI * (1 + Math.sqrt(5)) * i;
       map.x[i] = R * Math.sin(t) * Math.cos(p); map.y[i] = R * Math.cos(t); map.z[i] = R * Math.sin(t) * Math.sin(p);
     }
-    map.heat = 1;
-    if (still) { for (let i = 0; i < 400 && map.heat > 0.005; i++) mapStep(); }
-    const loose = map.deg.filter((d) => d === 0).length;
-    const things = g.nodes.filter((m) => m.kind === "entity").length, notes = n - things;
-    $("mapStats").textContent = "(" + notes + " neurons · " + (g.edges.length - (things ? g.mentions.length : 0)) + " synapses" + (things ? " · " + things + " shared things" : "") + (loose ? " · " + loose + " unlinked" : "") + (g.dangling ? " · " + g.dangling + " broken link" + (g.dangling === 1 ? "" : "s") : "") + ")";
-    const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
-    const leg = $("mapLegend"); leg.replaceChildren();
-    for (const type of [...new Set(g.nodes.map((m) => m.type || ""))].sort()) { const s = el("span", "", type || "no kind"); const dot = el("i"); dot.style.background = mapColor(type, css); s.prepend(dot); leg.append(s); }
-    leg.append(el("span", "", "● memory · ■ knowledge (" + g.nodes.filter((m) => m.kind === "knowledge").length + ")"));
-    if (things) for (const t of Object.keys(ENTITY_COLOR)) { const s = el("span", "", "◆ " + t); s.style.color = ENTITY_COLOR[t]; leg.append(s); }
+    map.heat = fresh > n * 0.3 ? 1 : Math.max(map.heat, 0.35);
+    if (still) { for (let i = 0; i < 250 && map.heat > 0.005; i++) mapStep(); }
+    // The counts are of the whole memory; "showing" says how much of it is on screen.
+    const things = g.nodes.filter((m) => m.kind === "entity").length, notes = N - things;
+    const loose = g.nodes.filter((m, i) => m.kind !== "entity" && g.links[i] === 0).length;
+    const seenNotes = map.nodes.filter((m) => m.kind !== "entity").length, seenThings = n - seenNotes;
+    $("mapStats").textContent = "(" + (seenNotes < notes ? "showing " + seenNotes + " of " : "") + notes + " neurons · " + (g.edges.length - (things ? g.mentions.length : 0)) + " synapses" + (things ? " · " + (seenThings < things ? seenThings + " of " : "") + things + " shared things" : "") + (loose ? " · " + loose + " unlinked" : "") + (g.dangling ? " · " + g.dangling + " broken link" + (g.dangling === 1 ? "" : "s") : "") + ")";
+    const note = mapView.around && centre < 0 ? "Pick a memory — in the list or on the map — to see around it." : q && !pick.length ? "Nothing in memory matches “" + mapView.find.trim() + "”." : "";
+    $("mapCanvas").setAttribute("aria-label", "Memory map: " + seenNotes + " of " + notes + " memories as dots, the links between them as lines. " + (note || "The list below holds the same memories."));
+    $("mapEmpty").textContent = note; $("mapEmpty").hidden = !note;
+    $("mapClear").hidden = !(q || mapView.around || mapView.off.size || !mapView.loose || mapView.limit !== 150);
     mapStart();
   }
+  const mapFindNow = () => { mapView.find = $("mapFind").value; mapApply(); };
+  let mapFindTimer = 0;
+  $("mapFind").addEventListener("input", () => { clearTimeout(mapFindTimer); mapFindTimer = setTimeout(mapFindNow, 180); });
+  $("mapFind").addEventListener("keydown", (e) => { if (e.key === "Escape" && $("mapFind").value) { e.preventDefault(); $("mapFind").value = ""; mapFindNow(); } });
+  $("mapLimit").value = String(mapView.limit);
+  $("mapLimit").onchange = () => { mapView.limit = Number($("mapLimit").value); store.set("ohmyagi-map-limit", String(mapView.limit)); mapApply(); };
+  $("mapAround").onchange = () => { mapView.around = Number($("mapAround").value); mapApply(); };
+  $("mapLoose").checked = mapView.loose;
+  $("mapLoose").onchange = () => { mapView.loose = $("mapLoose").checked; store.set("ohmyagi-map-loose", mapView.loose ? "" : "off"); mapApply(); };
+  $("mapClear").onclick = () => {
+    $("mapFind").value = ""; mapView.find = ""; mapView.around = 0; $("mapAround").value = "0"; mapView.off.clear(); store.set("ohmyagi-map-off", "");
+    mapView.loose = true; $("mapLoose").checked = true; store.set("ohmyagi-map-loose", ""); mapView.limit = 150; $("mapLimit").value = "150"; store.set("ohmyagi-map-limit", "");
+    mapLegend(); mapApply();
+  };
   function mapStep() {
     const n = map.nodes.length; if (!n || map.heat < 0.005) return;
     const fx = new Float64Array(n), fy = new Float64Array(n), fz = new Float64Array(n);
@@ -1437,6 +1545,16 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
     }
     map.heat *= 0.985;
   }
+  // A soft glow, drawn once per colour and then stamped: a canvas blur on every dot every frame is what made a big map crawl.
+  const glows = new Map();
+  function glowOf(color) {
+    let g = glows.get(color); if (g) return g;
+    g = document.createElement("canvas"); g.width = g.height = 64; const c = g.getContext("2d");
+    c.fillStyle = color; c.fillRect(0, 0, 64, 64);
+    const fade = c.createRadialGradient(32, 32, 0, 32, 32, 32); fade.addColorStop(0, "rgba(0,0,0,1)"); fade.addColorStop(0.35, "rgba(0,0,0,.45)"); fade.addColorStop(1, "rgba(0,0,0,0)");
+    c.globalCompositeOperation = "destination-in"; c.fillStyle = fade; c.fillRect(0, 0, 64, 64);
+    glows.set(color, g); return g;
+  }
   function mapDraw(dt) {
     const c = $("mapCanvas"), w = c.clientWidth, h = c.clientHeight; if (!w || !h) return;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -1445,17 +1563,18 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
     const n = map.nodes.length; if (!n) return;
     const style = getComputedStyle(document.documentElement), css = (v) => style.getPropertyValue(v).trim();
     const ink = css("--ink"), brand = css("--brand");
-    // Fit the bulk, not the farthest stray: the 90th-percentile distance fills the frame.
+    // Fit the bulk, not the farthest stray: the 95th-percentile distance fills the frame, and nothing is drawn
+    // nearer than the front of that — a stray close to the eye would blow up and throw its lines off the edge.
     const radii = map.x.map((x, i) => Math.hypot(x, map.y[i], map.z[i])).sort((a, b) => a - b);
-    const rmax = Math.max(1, radii[Math.floor((n - 1) * 0.9)]);
+    const rmax = Math.max(1, radii[Math.floor((n - 1) * 0.95)]);
     const scale = Math.min(w, h) * 0.46 / rmax * map.zoom;
     const cy = Math.cos(map.ry), sy = Math.sin(map.ry), cx = Math.cos(map.rx), sx = Math.sin(map.rx);
     const P = map.proj = new Array(n);
     for (let i = 0; i < n; i++) {
       const x1 = map.x[i] * cy - map.z[i] * sy, z1 = map.x[i] * sy + map.z[i] * cy;
       const y1 = map.y[i] * cx - z1 * sx, z2 = map.y[i] * sx + z1 * cx;
-      const k = 1 / (1 + z2 / (rmax * 3.2));
-      P[i] = { x: w / 2 + x1 * scale * k, y: h / 2 + y1 * scale * k, z: z2, k, r: (2.6 + Math.sqrt(map.deg[i]) * 1.7) * k * Math.sqrt(map.zoom) };
+      const k = 1 / (1 + Math.max(-rmax * 1.2, z2) / (rmax * 3.2));
+      P[i] = { x: w / 2 + x1 * scale * k, y: h / 2 + y1 * scale * k, z: z2, k, r: (2.6 + Math.sqrt(map.size[i] || 0) * 1.7) * k * Math.sqrt(map.zoom) };
     }
     // What the pointer is on: the nearest dot within reach, front ones first.
     map.hover = -1;
@@ -1468,52 +1587,73 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
     const sel = map.index.has(memShown) ? map.index.get(memShown) : -1;
     const focus = map.hover >= 0 ? map.hover : sel;
     const near = new Set(focus >= 0 ? [focus, ...map.adj[focus]] : []);
-    const lit = (i) => match(map.nodes[i]) && (focus < 0 || near.has(i));
-    // Synapses.
+    // Lit once a frame, not once a line: the list's filter, the map's find, and the focus all have to agree.
+    const on = new Uint8Array(n);
+    for (let i = 0; i < n; i++) on[i] = match(map.nodes[i]) && (!mapView.hits || mapView.hits.has(i) || near.has(i)) && (focus < 0 || near.has(i)) ? 1 : 0;
+    const lit = (i) => on[i] === 1;
+    // Synapses, batched: every line that looks the same goes in one path and one stroke.
     ctx.lineCap = "round";
-    for (const [a, b, wt] of map.edges) {
-      const on = focus >= 0 && (a === focus || b === focus);
-      ctx.globalAlpha = on ? 0.85 : (lit(a) && lit(b) ? 0.1 + 0.2 * Math.min(P[a].k, P[b].k) : 0.04);
-      ctx.strokeStyle = on ? brand : ink; ctx.lineWidth = (on ? 1.4 : 0.7) + Math.min(wt, 4) * 0.25;
-      ctx.setLineDash(map.nodes[b].kind === "entity" ? [3, 4] : []);
+    const batches = new Map(), hot = [];
+    for (let e = 0; e < map.edges.length; e++) {
+      const [a, b, wt] = map.edges[e];
+      if (focus >= 0 && (a === focus || b === focus)) { hot.push(e); continue; }
+      // After a find, what a found memory links to stays traceable even where the far end is dimmed.
+      const alpha = lit(a) && lit(b) ? 0.1 + 0.2 * Math.min(1, P[a].k, P[b].k) : mapView.hits && (mapView.hits.has(a) || mapView.hits.has(b)) && (lit(a) || lit(b)) ? 0.16 : 0.04;
+      const key = Math.round(alpha * 40) + "|" + Math.min(4, Math.round(wt)) + "|" + (map.nodes[b].kind === "entity" ? 1 : 0);
+      const list = batches.get(key); if (list) list.push(e); else batches.set(key, [e]);
+    }
+    ctx.strokeStyle = ink;
+    for (const [key, list] of batches) {
+      const [al, wq, dash] = key.split("|").map(Number);
+      ctx.globalAlpha = al / 40; ctx.lineWidth = 0.7 + wq * 0.25; ctx.setLineDash(dash ? [3, 4] : []);
+      ctx.beginPath(); for (const e of list) { const [a, b] = map.edges[e]; ctx.moveTo(P[a].x, P[a].y); ctx.lineTo(P[b].x, P[b].y); } ctx.stroke();
+    }
+    ctx.strokeStyle = brand; ctx.globalAlpha = 0.85;
+    for (const e of hot) {
+      const [a, b, wt] = map.edges[e];
+      ctx.lineWidth = 1.4 + Math.min(wt, 4) * 0.25; ctx.setLineDash(map.nodes[b].kind === "entity" ? [3, 4] : []);
       ctx.beginPath(); ctx.moveTo(P[a].x, P[a].y); ctx.lineTo(P[b].x, P[b].y); ctx.stroke();
     }
     ctx.setLineDash([]);
     // Signals running along the synapses.
     if (!still && map.edges.length) {
-      const rate = Math.min(8, 1 + map.edges.length / 12) * dt / 1000;
+      const rate = Math.min(6, 1 + map.edges.length / 16) * dt / 1000;
       if (Math.random() < rate) { const e = Math.floor(Math.random() * map.edges.length); map.pulses.push({ e, t: 0, back: Math.random() < 0.5 }); }
       if (focus >= 0 && Math.random() < dt / 180) { const js = map.adj[focus]; if (js.length) { const j = js[Math.floor(Math.random() * js.length)]; const e = map.edges.findIndex(([a, b]) => (a === focus && b === j) || (b === focus && a === j)); if (e >= 0) map.pulses.push({ e, t: 0, back: map.edges[e][0] !== focus }); } }
-      map.pulses = map.pulses.filter((p) => (p.t += dt / 1100) < 1).slice(-120);
+      map.pulses = map.pulses.filter((p) => (p.t += dt / 1100) < 1).slice(-60);
+      ctx.fillStyle = brand;
+      const pr = 1.8 * Math.sqrt(map.zoom);
       for (const p of map.pulses) {
         const [a, b] = map.edges[p.e]; const from = P[p.back ? b : a], to = P[p.back ? a : b];
-        const x = from.x + (to.x - from.x) * p.t, y = from.y + (to.y - from.y) * p.t;
-        ctx.globalAlpha = Math.sin(p.t * Math.PI) * (lit(a) || lit(b) ? 0.95 : 0.2);
-        ctx.fillStyle = brand; ctx.shadowColor = brand; ctx.shadowBlur = 10;
-        ctx.beginPath(); ctx.arc(x, y, 1.8 * Math.sqrt(map.zoom), 0, Math.PI * 2); ctx.fill();
+        const x = from.x + (to.x - from.x) * p.t, y = from.y + (to.y - from.y) * p.t, a0 = Math.sin(p.t * Math.PI) * (lit(a) || lit(b) ? 0.95 : 0.2);
+        ctx.globalAlpha = a0 * 0.8; ctx.drawImage(glowOf(brand), x - pr * 4, y - pr * 4, pr * 8, pr * 8);
+        ctx.globalAlpha = a0; ctx.beginPath(); ctx.arc(x, y, pr, 0, Math.PI * 2); ctx.fill();
       }
-      ctx.shadowBlur = 0;
     }
-    // Neurons, far ones first.
+    // Neurons, far ones first. Only what is in focus gets a real blur; the rest the stamped glow.
     const order = [...P.keys()].sort((a, b) => P[b].z - P[a].z);
     for (const i of order) {
-      const p = P[i], ent = map.nodes[i].kind === "entity", color = ent ? ENTITY_COLOR[map.nodes[i].etype] : mapColor(map.nodes[i].type, css), on = lit(i);
-      ctx.globalAlpha = on ? 0.35 + 0.65 * Math.min(1, p.k) : 0.12;
-      ctx.fillStyle = color; ctx.shadowColor = color; ctx.shadowBlur = on ? 14 * p.k : 0;
+      const p = P[i], ent = map.nodes[i].kind === "entity", color = ent ? ENTITY_COLOR[map.nodes[i].etype] : mapColor(map.nodes[i].type, css), bright = lit(i);
+      ctx.fillStyle = color;
+      if (bright) { const g = p.r * 3; ctx.globalAlpha = 0.45 * Math.min(1, p.k); ctx.drawImage(glowOf(color), p.x - g, p.y - g, g * 2, g * 2); }
+      ctx.globalAlpha = bright ? 0.35 + 0.65 * Math.min(1, p.k) : 0.12;
+      const glow = bright && focus >= 0 && near.has(i);
+      if (glow) { ctx.shadowColor = color; ctx.shadowBlur = 14 * p.k; }
       ctx.beginPath();
       // Knowledge is a square, the person's memory a round cell (D-090).
       if (ent) { ctx.moveTo(p.x, p.y - p.r * 1.2); ctx.lineTo(p.x + p.r, p.y); ctx.lineTo(p.x, p.y + p.r * 1.2); ctx.lineTo(p.x - p.r, p.y); ctx.closePath(); }
       else if (map.nodes[i].kind === "knowledge") ctx.rect(p.x - p.r * 0.9, p.y - p.r * 0.9, p.r * 1.8, p.r * 1.8); else ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
       ctx.fill();
-      if (i === sel || i === map.hover) { ctx.shadowBlur = 0; ctx.globalAlpha = 1; ctx.strokeStyle = brand; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(p.x, p.y, p.r + 4, 0, Math.PI * 2); ctx.stroke(); }
+      if (glow) ctx.shadowBlur = 0;
+      if (i === sel || i === map.hover || (mapView.hits && mapView.hits.has(i) && focus < 0)) { ctx.globalAlpha = i === sel || i === map.hover ? 1 : 0.7; ctx.strokeStyle = brand; ctx.lineWidth = i === sel || i === map.hover ? 2 : 1.2; ctx.beginPath(); ctx.arc(p.x, p.y, p.r + 4, 0, Math.PI * 2); ctx.stroke(); }
     }
     ctx.shadowBlur = 0;
-    // Names: the hubs, and whatever is in focus.
-    const hubs = [...P.keys()].filter((i) => map.deg[i] > 0).sort((a, b) => map.deg[b] - map.deg[a]).slice(0, w > 700 ? 7 : 4);
+    // Names: the hubs (or, after a find, what it found), and whatever is in focus.
+    const hubs = (mapView.hits ? [...mapView.hits].sort((a, b) => (map.size[b] || 0) - (map.size[a] || 0)) : map.hubs).slice(0, w > 700 ? 7 : 4);
     ctx.font = "600 11px Electrolize, 'IBM Plex Sans Thai', system-ui, sans-serif"; ctx.textAlign = "center";
     const taken = [];
     for (const i of [...new Set(focus >= 0 ? [focus, ...near] : hubs)]) {
-      if (!match(map.nodes[i])) continue;
+      if (!lit(i) && i !== focus) continue;
       const t0 = map.nodes[i].title, t = t0.length > 28 ? t0.slice(0, 27) + "…" : t0;
       const tw = ctx.measureText(t).width, bx = P[i].x - tw / 2, by = P[i].y - P[i].r - 17;
       // A name that would sit on another is left off; the focused one always shows.
@@ -1527,7 +1667,7 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
     if (map.hover < 0) tip.hidden = true;
     else {
       const m = map.nodes[map.hover];
-      tip.replaceChildren(el("div", "what", m.title), el("div", "small", m.kind === "entity" ? m.etype + " · in " + m.count + " memories · click to see where" : (m.type || "no kind") + " · " + map.deg[map.hover] + " link(s) · " + m.path));
+      tip.replaceChildren(el("div", "what", m.title), el("div", "small", m.kind === "entity" ? m.etype + " · in " + m.count + " memories · click to see where" : (m.type || "no kind") + " · " + (map.size[map.hover] || 0) + " link(s)" + (map.size[map.hover] > map.deg[map.hover] ? ", " + map.deg[map.hover] + " on screen" : "") + " · " + m.path));
       tip.hidden = false; tip.style.left = Math.min(w - 240, P[map.hover].x + 14) + "px"; tip.style.top = Math.max(4, P[map.hover].y - 12) + "px";
     }
     c.style.cursor = map.drag ? "grabbing" : map.hover >= 0 ? "pointer" : "grab";
@@ -1536,11 +1676,14 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
     map.raf = 0;
     if ($("memories").hidden || $("mapBody").hidden || document.hidden) return;
     const dt = map.last ? Math.min(64, now - map.last) : 16; map.last = now;
+    if (mapView.around && mapView.centre !== memShown) mapApply();
     mapStep(); if (map.spin && !map.drag) map.ry += dt * 0.00012;
-    mapDraw(dt);
+    // At rest — laid out, nothing held or pointed at — every other frame is drawn: the slow turn looks the same for half the work.
+    const rest = !map.drag && !map.mouse && map.heat < 0.005;
+    if (!rest || !map.drawn || now - map.drawn > 28) { mapDraw(map.drawn ? Math.min(64, now - map.drawn) : 16); map.drawn = now; }
     map.raf = requestAnimationFrame(mapFrame);
   }
-  function mapStart() { if (!map.raf) { map.last = 0; map.raf = requestAnimationFrame(mapFrame); } }
+  function mapStart() { if (!map.raf) { map.last = 0; map.drawn = 0; map.raf = requestAnimationFrame(mapFrame); } }
   document.addEventListener("visibilitychange", mapStart);
   const cv = $("mapCanvas");
   const mouseAt = (e) => { const r = cv.getBoundingClientRect(); map.mouse = [e.clientX - r.left, e.clientY - r.top]; };
@@ -1680,11 +1823,13 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
   };
   $("memFilter").addEventListener("input", drawMemories);
   $("memType").addEventListener("change", drawMemories);
+  // What a search by meaning came back with; a search that could not run says so, never "nothing found".
+  function searchSaid(r) { return r.searched === false ? "Nothing was searched: " + (r.message || "there is no index yet and no vector store answered.") : r.text || r.message || r.error || "Nothing found."; }
   $("memSearch").onclick = async () => {
     const q = $("memFilter").value.trim(); if (!q) { toast("Type what to look for in the box first."); return; }
     $("memSearch").disabled = true; memShown = ""; drawMemories(); $("memPath").textContent = "Search by meaning: " + q; $("memText").hidden = false; $("memText").textContent = "Searching…";
     const r = await api("/api/memory-search", { query: q, scope: memKind || "all" });
-    $("memText").textContent = r.text || r.message || r.error || "Nothing found."; $("memSearch").disabled = false;
+    $("memText").textContent = searchSaid(r); $("memSearch").disabled = false;
   };
   async function loadSettings() {
     let s; try { s = await api("/api/settings"); } catch { return; }

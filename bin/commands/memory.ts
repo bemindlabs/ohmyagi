@@ -121,6 +121,11 @@ async function cmdMemorySearch(argv: readonly string[]): Promise<number> {
   }
   if (result.vector !== "ok") console.error(dim(`vector half skipped: ${result.vector.failed}`));
   if (result.hits.length === 0) {
+    // Neither index could be asked: "no hit" would claim a search that never ran, so say so, and exit 3.
+    if (result.fts === "absent" && result.vector !== "ok") {
+      console.log("nothing searched");
+      return 3;
+    }
     console.log("no hit");
     return 1;
   }

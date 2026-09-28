@@ -9,7 +9,7 @@
  */
 
 /** The engine's version. Kept equal to `package.json`, checked by a test. */
-export const VERSION = "0.8.2";
+export const VERSION = "0.8.3";
 
 /** What a derived artefact records as the thing that produced it. */
 export const GENERATOR = `om-agi@${VERSION}`;

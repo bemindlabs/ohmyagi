@@ -2514,3 +2514,32 @@ release แรกบน public ติดป้าย **`v0.3.0-alpha` · pre-rel
 - **ช่องทาง (D-100 #3):** ssh เป็นช่อง bootstrap แล้ว tailnet · web/a2a bind 127.0.0.1 + `tailscale serve` · **AWS:** security group เปิด tcp/22 ให้ address ของเครื่องนี้ `/32` เท่านั้น (ไม่ใช่ 0.0.0.0/0) และถอนกฎนั้นหลัง `tailscale up` (แก้ตอน review — ร่างแรกเปิดให้ทั้งโลก) · VPS: sshd ของ provider · GCP: rule default-allow-ssh ของ network ค่าเริ่มต้น — ของ provider om-agi ไม่แตะ แต่ plan บอกไว้ · S13.3 ควรวัด IAP tunnel แทน
 - **VPS:** volume เป็นไฟล์ container ขนาดตายตัว 20 GB (ไฟล์เป้าหมายแบบ ssh ยังไม่มีช่องขนาด)
 - **service บนปลายทางรอบแรก:** web + triggers เท่านั้น (a2a serve / chat serve ยังไม่ติดตั้ง)
+
+## D-135 — ทางถัดไป: แอปลงมือถือจริงผ่าน TestFlight (build + sign บน Mac ของฟลีตด้วย team ที่เจ้าของมีอยู่)
+
+**สถานะ:** เจ้าของเคาะ (2026-09-27 — เลือก "แอปลงมือถือจริง (TestFlight)" จาก 4 ทาง: TestFlight · deploy VPS จริง (S13.2) · การเงิน (Stripe/IAP) · หยุด loop) · ต่อจาก D-133 (build iOS บน Mac ของฟลีต)
+
+- **ทำไมก่อน:** แอปครบฝั่งฟรีแล้ว (จับคู่ด้วย QR · แชท · ข้อเสนอ · memory) และ Mac ของฟลีตมี team Apple Developer แบบเสียเงินของเจ้าของอยู่แล้ว (cert Apple Development/Distribution) — เหลือแค่ sign + upload
+- **ลองอะไรได้:** iPhone ที่ลง Tailscale อยู่ใน tailnet เดียวกัน จับคู่กับ `ohmyagi web --https` (:30701) ด้วย QR แล้วใช้แอปกับ agent จริง
+- **ยังไม่ได้:** push จริง (ต้องมี APNs key `.p8` ใน relay + relay เปิด public — แยกเคาะภายหลัง)
+- **ของเจ้าของ (ทำเองหรือยืนยันกับ agent-anna โดยตรง — Anna ไม่ใช้บัญชี Apple ของเจ้าของจนกว่าเจ้าของยืนยันเอง):** ยืนยันให้ build แบบ sign · app record ใน App Store Connect (ชื่อ "Oh My AGI", bundle id `com.bemindlabs.ohmyagi` ที่ยังเป็นชั่วคราว — เปลี่ยนได้ก่อน record แรกเท่านั้น) · Issuer ID ของ ASC API key ที่อยู่บน Mac แล้ว · รายชื่อผู้ทดสอบ TestFlight
+- **ไม่เข้า repo:** team id, ชื่อเจ้าของ, key ใด ๆ — ส่งเข้า build ทาง env/ไฟล์นอก repo บน Mac เท่านั้น
+
+## D-136 — binary macOS ของทุก release เซ็นด้วย Developer ID + notarize บน Mac ของฟลีต
+
+**สถานะ:** เจ้าของทำให้พร้อม (2026-09-27 — สร้าง Developer ID Application + notarytool profile บน Mac ของฟลีต; agent-anna ทดสอบ notarize = Accepted) · แก้ปัญหา macOS kill binary แบบ ad-hoc ที่เครื่องของ agent-fern (rc=137 ทุกเวอร์ชันตั้งแต่ 0.5.0)
+
+- **ขั้นใหม่ใน release:** build 4 แบบบนเซิร์ฟเวอร์ → ส่ง `ohmyagi-darwin-{arm64,x64}` ไป Mac ของฟลีตทาง Taildrop → `codesign --options runtime --timestamp --entitlements ohmyagi.entitlements` → `notarytool submit --wait` → กลับมาทาง Taildrop → SHA256SUMS ใหม่ → upload
+- **entitlements:** Bun ใช้ JIT ของ JavaScriptCore — hardened runtime ต้องมี `allow-jit`, `allow-unsigned-executable-memory`, `disable-executable-page-protection`, `allow-dyld-environment-variables`, `disable-library-validation` ไม่งั้นโดน kill ตอนเปิด
+- **ข้อจำกัด:** CLI เดี่ยว ๆ staple ticket ไม่ได้ — ครั้งแรกที่เปิด Gatekeeper ต้องต่อเน็ตไปเช็ค (ถ้าต้อง offline ต้องห่อเป็น .pkg/.dmg — ยังไม่ทำ)
+- **ไม่เข้า repo:** ชื่อบน certificate และ team id
+
+## D-137 — Memory map แสดงทีละส่วน ไม่วาดทั้งหมด + กรองได้
+
+**สถานะ:** เจ้าของสั่ง (2026-09-27 — "Memory map (511 neurons · 1054 synapses · 150 shared things …) too big" + "need to filter able")
+
+- **ค่าเริ่มต้น:** 150 ความจำที่เชื่อมเยอะสุด (เลือก 60 / 150 / 300 / All ได้ จำค่าไว้ในเบราว์เซอร์) · ตัวเลขบนหัวยังนับทั้งหมด และบอก "showing X of Y" เมื่อไม่ได้แสดงครบ
+- **กรอง:** ช่อง Find (ชื่อ/path/คำอธิบาย/tag → แสดงที่เจอ + สิ่งที่มันลิงก์ไป), Around the chosen memory 1–2 ขั้น (คลิกจุดเพื่อเดินต่อ), ปุ่มชนิดใน legend เปิด/ปิดได้, show unlinked, Clear filters · Things มาเฉพาะที่ความจำในจอใช้ร่วมกัน ≥2
+- **เบาลง:** เส้นวาดเป็นชุด (1 stroke ต่อแบบ) · glow เป็น sprite ที่วาดครั้งเดียวต่อสี (เลิก shadowBlur ทุกจุดทุกเฟรม) · ตอนนิ่งวาด ~30 fps · จำกัดความลึกไม่ให้จุดที่หลุดใกล้ตาขยายจนเส้นพุ่งออกขอบ
+- **วัดจริง (headless Chrome, 512 ความจำ/1229 ลิงก์):** เดิมทั้งหมด = busy 76% · ใหม่ค่าเริ่มต้น = 17–19% · ใหม่ All = 26% · ไม่มี error ทุกโหมด
+- ฟิลเตอร์เดิมของรายการด้านล่างยังแค่ทำให้จางเหมือนเดิม

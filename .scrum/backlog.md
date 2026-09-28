@@ -770,14 +770,14 @@ E5 ──────┴──> E10 Web console (ทุกปุ่มคือ�
 
 | # | Story | วัน | ค่า/แรง |
 |---|---|---|---|
-| S14.1 | แอป Expo/React Native — แชท · ตอบข้อเสนอ · อ่าน memory · Engine/เวอร์ชัน (ใช้ `/api/*` เดิมของ `ohmyagi web`) | 3 | สูง |
-| S14.2 | จับคู่แอปกับ agent — QR จาก `ohmyagi web` (URL + key) · เก็บ key ใน secure storage · ผ่าน tailnet หรือ https · **ฝั่ง engine ✅ 2026-09-27** (`web --qr` + Settings → Pair a phone · เทียบ key แบบ constant-time · AC3 ปุ่ม "Unpair every phone" เปลี่ยน key ขณะรัน) · ฝั่งแอปอยู่ใน `ohmyagi-app` | 1 | **สูงสุด** (ประตู) |
-| S14.3 | push notification — ข้อเสนอใหม่/เหตุผิดปกติ (APNs/FCM ผ่าน relay ที่ไม่เห็นเนื้อหา) · **เปิดเองต่อมือถือ, protocol ใน D-130** · **ฝั่ง engine ✅ 2026-09-27** (`/api/push/*`, เฝ้าทุก 30 วิ, unpair = เลิกแจ้ง, erase) · relay = S16.6 · แอป = ต่อจาก PR #2 | 2 | สูง |
+| S14.1 | แอป Expo/React Native — แชท · ตอบข้อเสนอ · อ่าน memory · Engine/เวอร์ชัน (ใช้ `/api/*` เดิมของ `ohmyagi web`) · ✅ **merge แล้ว 2026-09-27** (ohmyagi-app: Chat · Proposals · Memory · Agent · Settings tab · ไอคอน Om · iOS 27 scene lifecycle) · รอ: RAG/markdown, onboarding/wizard, design system (PR ที่กำลังทำ) | 3 | สูง |
+| S14.2 | จับคู่แอปกับ agent — QR จาก `ohmyagi web` (URL + key) · เก็บ key ใน secure storage · ผ่าน tailnet หรือ https · **ฝั่ง engine ✅ 2026-09-27** (`web --qr` + Settings → Pair a phone · เทียบ key แบบ constant-time · AC3 ปุ่ม "Unpair every phone" เปลี่ยน key ขณะรัน) · ฝั่งแอปอยู่ใน `ohmyagi-app` · ✅ แอป: วางลิงก์ + สแกน QR · unpair ฝั่ง agent หมุน key (D-131 review) | 1 | **สูงสุด** (ประตู) |
+| S14.3 | push notification — ข้อเสนอใหม่/เหตุผิดปกติ (APNs/FCM ผ่าน relay ที่ไม่เห็นเนื้อหา) · **เปิดเองต่อมือถือ, protocol ใน D-130** · **ฝั่ง engine ✅ 2026-09-27** (`/api/push/*`, เฝ้าทุก 30 วิ, unpair = เลิกแจ้ง, erase) · relay = S16.6 · แอป = ต่อจาก PR #2 · ✅ engine + relay (S16.6, deploy tailnet) + แอป · รอ: APNs key/FCM ของเจ้าของ + relay public | 2 | สูง |
 | S14.4 | in-app purchase — subscription (StoreKit / Play Billing) + ตรวจใบเสร็จฝั่ง server · สิทธิ์รวมกับ Stripe บนเว็บ (D-113) | 2 | สูง |
 | S14.8 | ซื้อบนเว็บด้วย Stripe Checkout/Billing · webhook → สิทธิ์เดียวกับ IAP (D-112, D-113) | 1 | สูง |
 | S14.5 | managed provisioning — จ่ายแล้ว `ohmyagi deploy` สร้าง VM ของลูกค้าตามเงื่อนไข D-101 · ยกเลิกแล้ว destroy | 2 | **สูงสุด** |
 | S14.6 | ย้ายออก — ดาวน์โหลด/โอน repo ของ agent ไป self-host · ยืนยันว่า VM ถูกทำลาย | 1 | **สูงสุด** (D-101 ข้อ 3–4) |
-| S14.7 | ส่ง store — TestFlight/Play internal · privacy label · ประกาศว่าเป็น AI (I-5) · review guideline | 2 | สูง |
+| S14.7 | ส่ง store — TestFlight/Play internal · privacy label · ประกาศว่าเป็น AI (I-5) · review guideline · 🟡 **เริ่มแล้ว (D-133, D-135):** build บน Mac ของฟลีต — Release sign ลง iPhone ของเจ้าของได้แล้ว · `scripts/ios-testflight.sh` merge แล้ว · รอ: app record ใน App Store Connect + Issuer ID | 2 | สูง |
 
 **S14.2** — AC1: ไม่มี key = แอปทำอะไรไม่ได้ · AC2: key ไม่อยู่ใน log/backup ที่อ่านได้ · AC3: ยกเลิกการจับคู่จากฝั่ง agent ได้ (หมุน key)
 **S14.4** — AC1: ซื้อ/ต่ออายุ/ยกเลิก/คืนเงิน บน sandbox ของทั้งสอง store · AC2: สิทธิ์ถูกตัดสินจากใบเสร็จที่ server ตรวจ ไม่ใช่จากแอป · AC3: ไม่เก็บข้อมูลบัตร
@@ -822,12 +822,12 @@ E5 ──────┴──> E10 Web console (ทุกปุ่มคือ�
 
 | # | Story | วัน | ค่า/แรง |
 |---|---|---|---|
-| S16.1 | (a) บัญชีผู้ใช้ — ผู้จ้าง · เจ้าของ agent · ลูกค้า managed · auth + 2FA · **passkey + อีเมลกู้บัญชี ไม่มีรหัสผ่าน (D-129)** | 2 | สูง |
+| S16.1 | (a) บัญชีผู้ใช้ — ผู้จ้าง · เจ้าของ agent · ลูกค้า managed · auth + 2FA · **passkey + อีเมลกู้บัญชี ไม่มีรหัสผ่าน (D-129)** · ✅ merge + deploy tailnet :10720 | 2 | สูง |
 | S16.2 | (a) Stripe Connect — onboarding เจ้าของ agent เป็น connected account · escrow · application fee · refund บางส่วน (D-112) | 3 | **สูงสุด** |
 | S16.3 | (a) GitHub App — เก็บ private key ใน secret manager · ออก installation token ต่องาน · webhook PR/merge (D-114) | 2 | **สูงสุด** |
-| S16.4 | (a) ที่อยู่ของตลาด (E15) — API ของงาน/ข้อเสนอ/ต่อรอง · ตรวจลายเซ็นรายงาน usage (D-106, D-108) | 2 | สูง |
+| S16.4 | (a) ที่อยู่ของตลาด (E15) — API ของงาน/ข้อเสนอ/ต่อรอง · ตรวจลายเซ็นรายงาน usage (D-106, D-108) · 🟡 ขั้นต่ำขึ้นแล้ว (PR #5 platform, D-132): รายการ agent · งานที่โพสต์ · ยังไม่มีข้อเสนอ/ต่อรอง/ลายเซ็น | 2 | สูง |
 | S16.5 | (b) สิทธิ์รวม — ตรวจใบเสร็จ IAP ที่ server + webhook Stripe → entitlement เดียว (D-113) | 2 | สูง |
-| S16.6 | (b) push relay — APNs/FCM · ส่งเฉพาะ "มีเรื่องรอคุณ" ไม่มีเนื้อหา (S14.3) | 1 | กลาง |
+| S16.6 | (b) push relay — APNs/FCM · ส่งเฉพาะ "มีเรื่องรอคุณ" ไม่มีเนื้อหา (S14.3) · ✅ merge + deploy tailnet :10720 (review อิสระ 6 ข้อแก้ครบ) · รอ: APNs/FCM key ของเจ้าของ | 1 | กลาง |
 | S16.7 | (b) provisioning managed — สั่ง `ohmyagi deploy` ต่อลูกค้า · destroy เมื่อยกเลิก · ส่งกุญแจปลดล็อกผ่านอุปกรณ์ลูกค้า (D-101, D-111) | 3 | **สูงสุด** |
 
 **ทั้ง epic** — AC1: ไม่มี log/DB ใดเก็บเนื้อหาแชท/memory/prompt · AC2: backup + uptime + secret rotation มีขั้นตอนเขียนไว้ · AC3: PDPA/GDPR — ข้อมูลที่เก็บจริงมีรายการ และลบตามคำขอได้ (I-4)

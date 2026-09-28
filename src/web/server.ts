@@ -122,6 +122,32 @@ export function tailnetNames(statusJson: string): readonly string[] {
   }
 }
 
+/**
+ * What recall attached to a turn, as `turn --json` reports it — so the app can show an answer's sources.
+ * Only its shape passes, field by field: paths, headings, sizes and how each was found; never the text.
+ */
+export function recallOf(value: unknown): {
+  readonly chars: number;
+  readonly ceiling: number;
+  readonly skipped: number;
+  readonly attached: readonly { readonly path: string; readonly heading: string; readonly chars: number; readonly via: readonly string[] }[];
+} | null {
+  if (typeof value !== "object" || value === null) return null;
+  const r = value as Record<string, unknown>;
+  const count = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : 0);
+  const text = (v: unknown): string => (typeof v === "string" ? v.slice(0, 500) : "");
+  const attached = (Array.isArray(r["attached"]) ? r["attached"] : [])
+    .slice(0, 50)
+    .filter((a): a is Record<string, unknown> => typeof a === "object" && a !== null && typeof (a as Record<string, unknown>)["path"] === "string")
+    .map((a) => ({
+      path: text(a["path"]),
+      heading: text(a["heading"]),
+      chars: count(a["chars"]),
+      via: (Array.isArray(a["via"]) ? a["via"] : []).filter((v): v is string => v === "fts" || v === "vector"),
+    }));
+  return { chars: count(r["chars"]), ceiling: count(r["ceiling"]), skipped: count(r["skipped"]), attached };
+}
+
 /** Last lines of a child's stderr, for a message a person can read. */
 function said(stderr: string): string {
   return stderr
@@ -332,6 +358,7 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[], 
         heldMessages: typeof answer["heldMessages"] === "number" ? answer["heldMessages"] : 0,
         changed: answer["changed"] ?? null,
         proposals: answer["proposals"] ?? [],
+        recall: recallOf(answer["recall"]),
         notes: said(out.stderr),
       });
     }
@@ -388,7 +415,8 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[], 
       if (query === "" || query.length > 500) return json({ error: "type what to look for" }, 400);
       const scope = body["scope"] === "memory" || body["scope"] === "knowledge" ? body["scope"] : "all";
       const out = await deps.run(["memory", "search", ...place, "--limit", "8", "--scope", scope, query]);
-      return json({ ok: out.code === 0, text: out.stdout.trim(), message: said(out.stderr) });
+      // `searched: false` is exit 3 — neither index could be asked — so "nothing found" is never said of a search that did not run.
+      return json({ ok: out.code === 0, searched: out.code !== 3, text: out.stdout.trim(), message: said(out.stderr) });
     }
     // D-081: a memory created or edited is `memory write --yes`; a delete is `memory forget`,
     // shown first unless write is true. The path is checked here and again by the command.

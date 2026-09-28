@@ -216,14 +216,15 @@ describe("memory search", () => {
     expect(s.asked.some((line) => line.includes("omagi__beta"))).toBe(true);
   }, 60_000);
 
-  test("before any index: no hit, exit 1, and it says what to run", async () => {
+  test("before any index, with no vector store either: nothing searched, exit 3, and it says what to run", async () => {
     const home = await sandbox();
     const agent = await agentWith(home, MEMORY);
     const result = await run(home, ["memory", "search", agent, "--subject", "alpha", "port"], {
       OM_AGI_EMBED_URL: DEAD,
       OM_AGI_QDRANT_URL: DEAD,
     });
-    expect(result.code).toBe(1);
+    expect(result.code).toBe(3);
+    expect(result.stdout.trim()).toBe("nothing searched");
     expect(result.stderr).toContain("ohmyagi memory index");
     expect(result.stderr).toContain("vector half skipped");
   }, 60_000);

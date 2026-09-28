@@ -1,7 +1,7 @@
 # The demo (B3)
 
 The one thing MVP-lite is defined by — and re-run before every release since (v0.1.0, v0.2.0,
-v0.3.0, v0.4.0, v0.4.1, v0.4.2, v0.5.0, v0.5.1, v0.6.0, v0.6.1, v0.7.0, v0.7.1, v0.7.2, v0.8.0, v0.8.1 and v0.8.2 each passed 15/15; the runs are listed at the end). It proves the core claims in a bare
+v0.3.0, v0.4.0, v0.4.1, v0.4.2, v0.5.0, v0.5.1, v0.6.0, v0.6.1, v0.7.0, v0.7.1, v0.7.2, v0.8.0, v0.8.1, v0.8.2 and v0.8.3 each passed 15/15; the runs are listed at the end). It proves the core claims in a bare
 container; it does not exercise `setup`, triggers, `observe patterns` or recall, which have tests of
 their own.
 
@@ -311,3 +311,8 @@ Run `0a4d532e`, on the tree released as 0.8.1: **15/15, exit 0**; the binary in 
 
 Run `c7517aef`, on the tree released as 0.8.2: **15/15, exit 0**; the binary in the container reported
 `0.8.2`. Table kept in `notes/2026-09-27_demo-v0.8.2.txt`.
+
+### 2026-09-28 · `qwen3.8:27b` · `debian:bullseye-slim` · **v0.8.3**
+
+Run `de86a5a6`, on the tree released as 0.8.3: **15/15, exit 0**; the binary in the container reported
+`0.8.3`. Table kept in `notes/2026-09-28_demo-v0.8.3.txt`.

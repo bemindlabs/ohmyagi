@@ -1,6 +1,38 @@
 # Changelog
 
-## Unreleased
+## 0.8.3 — 2026-09-28
+
+A Memory map that stays usable at hundreds of memories, a search that says when it could not run, and what the
+app needs to show an answer's sources. The macOS binaries are signed with a Developer ID and notarized (D-136).
+
+### Changed
+- **The Memory map shows a part of memory at a time, and can be filtered (D-137).** At 500 memories it drew one
+  hairball and kept the laptop busy. It now lays out and draws only its view:
+  - the 150 most linked by default, or 60, 300 or all;
+  - **Find**, which shows what matches and what that links to;
+  - **Around the chosen memory**, one or two steps out, walked by clicking a dot;
+  - kinds switched off by clicking them in the legend, unlinked memories shown or hidden, and **Clear filters**.
+
+  The counts still describe the whole memory and say how much of it is showing.
+- **Drawing the map costs less.**
+  - Lines are stroked in batches.
+  - The glow is a sprite stamped per dot, instead of a canvas blur on every dot every frame.
+  - At rest it draws at about 30 fps.
+  - A stray dot near the eye no longer blows up and throws its lines off the edge.
+
+  Measured in headless Chrome on 512 notes and 1229 links: the old map kept the page 76% busy, the new default
+  17–19%, and All 26%.
+
+### Fixed
+- **A search that could not run no longer says "no hit".** With no full-text index yet and no vector store
+  answering, `memory search` claimed it had looked and found nothing. It now prints `nothing searched` and exits 3.
+  `/api/memory-search` says `searched: false`, and the page says "Nothing was searched:" with the reasons. Found
+  while verifying the app's RAG work.
+
+### Added
+- **The app can show an answer's sources.** `/api/turn` now passes on what recall attached: each piece's path,
+  heading, size, and how it was found (words or meaning), never its text, just as `turn --json` already reports
+  it. Asked for by the app's RAG work, ohmyagi-app PR #10.
 
 ## 0.8.2 — 2026-09-27
 

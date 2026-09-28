@@ -2,7 +2,7 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { PAGE_HTML } from "../../src/web/page.ts";
-import { allowedHosts, handler, pairingLink, sameToken, startWeb, tailnetNames, TOKEN_HEADER, type KeyControl, type WebDeps } from "../../src/web/server.ts";
+import { allowedHosts, handler, pairingLink, recallOf, sameToken, startWeb, tailnetNames, TOKEN_HEADER, type KeyControl, type WebDeps } from "../../src/web/server.ts";
 import { keyPrint } from "../../src/web/key.ts";
 import { ago, excerpt, levelSentence, remoteForPage, triageChips, type AgentInfo, type SettingsState, type ViewState } from "../../src/web/view.ts";
 import type { Triage } from "../../src/decide/triage.ts";
@@ -341,6 +341,17 @@ describe("Agent and Memories (read-only)", () => {
     expect((await h(post({ query: "  " }))).status).toBe(400);
   });
 
+  test("a search that could not run says so (exit 3 → searched: false); a search that ran is searched even with no hit", async () => {
+    const answers = [3, 1, 0];
+    const { deps } = fakeDeps();
+    const h = handler({ ...deps, run: async () => ({ code: answers.shift()!, stdout: "x", stderr: "no fts.sqlite\n" }) }, "tok", HOSTS);
+    const post = () => req("/api/memory-search", { method: "POST", body: JSON.stringify({ query: "vllm" }) });
+    expect(await (await h(post())).json()).toMatchObject({ ok: false, searched: false });
+    expect(await (await h(post())).json()).toMatchObject({ ok: false, searched: true });
+    expect(await (await h(post())).json()).toMatchObject({ ok: true, searched: true });
+    expect(PAGE_HTML).toContain('r.searched === false ? "Nothing was searched: "');
+  });
+
   test("a remote is shown without credentials, and linked when it is a forge", () => {
     expect(remoteForPage("git@github.com:o/r.git")).toEqual({ remote: "git@github.com:o/r.git", web: "https://github.com/o/r" });
     expect(remoteForPage("https://u:secret@github.com/o/r.git")).toEqual({ remote: "https://github.com/o/r.git", web: "https://github.com/o/r" });
@@ -488,6 +499,21 @@ describe("Memories CRUD (D-081)", () => {
     expect((await h(req("/api/memories/graph", { token: null }))).status).toBe(401);
     for (const id of ["mapCanvas", "mapSpin", "mapReset", "mapToggle", "mapLegend", "mapStats"]) expect(PAGE_HTML).toContain(`id="${id}"`);
     expect(PAGE_HTML).toContain("prefers-reduced-motion: reduce");
+  });
+
+  test("a big memory is filtered, not drawn whole: find, how many, around one memory, unlinked, kinds, clear", () => {
+    for (const id of ["mapFind", "mapLimit", "mapAround", "mapLoose", "mapClear", "mapEmpty"]) expect(PAGE_HTML).toContain(`id="${id}"`);
+    // The default is the most linked part, with All one choice away.
+    expect(PAGE_HTML).toContain('<option value="150">150 most linked</option>');
+    expect(PAGE_HTML).toContain('<option value="0">All</option>');
+    // The legend's kinds are buttons that turn a kind off, and the choice is kept.
+    expect(PAGE_HTML).toContain('el("button", "legchip")');
+    expect(PAGE_HTML).toContain('store.set("ohmyagi-map-off"');
+    // The stats say how much of memory is on screen.
+    expect(PAGE_HTML).toContain('"showing " + seenNotes + " of "');
+    // Lines are stroked in batches, and the glow is stamped, not blurred per dot per frame.
+    expect(PAGE_HTML).toContain("const batches = new Map()");
+    expect(PAGE_HTML).toContain("glowOf(color)");
   });
 
   test("fonts come from inside the binary, need no token, and nothing else under /fonts/ does (D-083)", async () => {
@@ -954,6 +980,34 @@ describe("push (S14.3, D-130)", () => {
     expect(PAGE_HTML).toContain('api("/api/push")');
     expect(PAGE_HTML).toContain("which learns when, never what");
     expect(PAGE_HTML).toContain("toast(r.warning ? r.warning :");
+  });
+});
+
+describe("what recall attached reaches the app (sources under an answer)", () => {
+  test("/api/turn passes the attachment's shape through: paths, headings, sizes, how found — never text", async () => {
+    const turnOut = {
+      text: "the answer",
+      route: "answered by ollama",
+      proposals: [],
+      recall: { chars: 1200, ceiling: 6000, skipped: 1, block: "SECRET MEMORY TEXT", attached: [{ path: "memory/notes/ports.md", heading: "Ports", chars: 800, via: ["fts", "vector"], text: "SECRET" }] },
+    };
+    const deps: WebDeps = { ...fakeDeps().deps, run: async () => ({ code: 0, stdout: JSON.stringify(turnOut), stderr: "" }) };
+    const res = (await (await handler(deps, "tok", HOSTS)(req("/api/turn", { method: "POST", body: JSON.stringify({ prompt: "which port" }) }))).json()) as { recall: unknown };
+    expect(res.recall).toEqual({ chars: 1200, ceiling: 6000, skipped: 1, attached: [{ path: "memory/notes/ports.md", heading: "Ports", chars: 800, via: ["fts", "vector"] }] });
+    expect(JSON.stringify(res)).not.toContain("SECRET");
+  });
+
+  test("no recall, or one of the wrong shape, is null or cleaned — never passed on as it came", () => {
+    expect(recallOf(undefined)).toBeNull();
+    expect(recallOf(null)).toBeNull();
+    expect(recallOf("x")).toBeNull();
+    expect(recallOf({ chars: -3, ceiling: "9", skipped: 1.7, attached: [{ path: 5 }, { path: "p".repeat(900), heading: 1, chars: "2", via: ["fts", "evil", 3] }, "junk"] })).toEqual({
+      chars: 0,
+      ceiling: 0,
+      skipped: 1,
+      attached: [{ path: "p".repeat(500), heading: "", chars: 0, via: ["fts"] }],
+    });
+    expect(recallOf({ attached: Array.from({ length: 80 }, (_, i) => ({ path: `memory/${i}.md` })) })!.attached).toHaveLength(50);
   });
 });
 
