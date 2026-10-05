@@ -137,3 +137,41 @@ describe("level 1 proposes instead of acting", () => {
     expect((JSON.parse(result.stdout) as { proposals: unknown[] }).proposals).toEqual([]);
   }, 60_000);
 });
+
+describe("D-149: a backend with no tools does not get to look as if it acted", () => {
+  // Measured 2026-10-04 (D-149 e2e): asked at level 2 to create a file, a real
+  // model behind ollama answered "done", the turn exited 0, and the only sign
+  // that nothing happened was D-043's "nothing" changed.
+  test("at level 2 an answer from ollama is said to be words only", async () => {
+    const ollama = proposingOllama("done");
+    const { soul, run } = await setup(ollama.url);
+    for (const category of ["write", "run", "reach"]) {
+      expect((await run(["autonomy", "set", category, "2", soul, "--subject", "example"])).code).toBe(0);
+    }
+    const result = await run(turn(soul));
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("done");
+    expect(result.stderr).toContain("ollama has no tools — it answered in words and could not act");
+  }, 60_000);
+
+  test("--json carries the same note, so the page and the app see it without reading stderr", async () => {
+    const ollama = proposingOllama("done");
+    const { soul, run } = await setup(ollama.url);
+    for (const category of ["write", "run", "reach"]) {
+      expect((await run(["autonomy", "set", category, "2", soul, "--subject", "example"])).code).toBe(0);
+    }
+    const two = JSON.parse((await run(turn(soul, "--json"))).stdout) as { notes: string[] };
+    expect(two.notes).toEqual([expect.stringContaining("ollama has no tools")]);
+    expect(((await run(["autonomy", "set", "reach", "1", soul, "--subject", "example"])).code)).toBe(0);
+    const one = JSON.parse((await run(turn(soul, "--json"))).stdout) as { notes: string[] };
+    expect(one.notes).toEqual([]);
+  }, 60_000);
+
+  test("at level 1 it is not said: nothing was allowed, so nothing is missing", async () => {
+    const ollama = proposingOllama("done");
+    const { soul, run } = await setup(ollama.url);
+    const result = await run(turn(soul));
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stderr).not.toContain("has no tools");
+  }, 60_000);
+});

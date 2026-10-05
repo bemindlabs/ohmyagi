@@ -32,7 +32,7 @@ import {
 } from "../../src/decide/autonomy.ts";
 
 function flat(level: Level, reach: ReachLevel = Math.min(level, 2) as ReachLevel): Dial {
-  return { read: level, write: level, run: level, reach, setBy: null, setAt: null };
+  return { read: level, write: level, run: level, reach, operate: 0, setBy: null, setAt: null };
 }
 
 function decide(options: {
@@ -54,8 +54,10 @@ function decide(options: {
 describe("no file, and the default that is also today's behaviour", () => {
   test("every category is 1 and the note says why that is not timidity", () => {
     const verdict = defaultEffective();
-    for (const category of CATEGORIES) expect(levelOf(verdict.dial, category)).toBe(1);
+    // D-153: the browser is the one category that starts at 0 — there was no browser before it.
+    for (const category of CATEGORIES) expect(levelOf(verdict.dial, category)).toBe(category === "operate" ? 0 : 1);
     expect(verdict.act).toBe(1);
+    expect(verdict.operate).toBe(0);
     expect(verdict.clamps).toEqual([]);
     expect(verdict.notes.join(" ")).toContain("what om-agi already did before this dial existed");
   });
@@ -73,7 +75,7 @@ describe("a file that could not be read falls to silence, never to the default",
   });
 
   test("and it says so per category, with both numbers", () => {
-    const verdict = decide({ stored: flat(2), source: "file-unreadable" });
+    const verdict = decide({ stored: { ...flat(2), operate: 2 }, source: "file-unreadable" });
     for (const category of CATEGORIES) {
       const clamp = verdict.clamps.find((entry) => entry.category === category);
       expect(clamp, category).toBeDefined();
@@ -176,7 +178,7 @@ describe("no silent clamp — including the one the minimum makes", () => {
     // person setting it is told at the moment of setting. This is the value
     // `ohmyagi autonomy set` prints.
     const verdict = decide({
-      stored: { read: 1, write: 3, run: 3, reach: 1, setBy: null, setAt: null },
+      stored: { read: 1, write: 3, run: 3, reach: 1, operate: 0, setBy: null, setAt: null },
       source: "file",
       confirmedThree: ["write", "run"],
     });
@@ -213,7 +215,7 @@ describe("no silent clamp — including the one the minimum makes", () => {
       decide({ stored: flat(3), source: "file", envValue: "0" }),
       decide({ stored: flat(3), source: "file", stopped: true }),
       decide({
-        stored: { read: 3, write: 3, run: 1, reach: 2, setBy: null, setAt: null },
+        stored: { read: 3, write: 3, run: 1, reach: 2, operate: 0, setBy: null, setAt: null },
         source: "file",
       }),
     ];
@@ -243,7 +245,7 @@ describe("the stored dial's provenance survives the decision", () => {
 });
 
 describe("D-042 — a 3 counts only where a person confirmed it on this machine", () => {
-  const threes: Dial = { read: 3, write: 3, run: 3, reach: 2, setBy: "someone", setAt: "2026-09-23T00:00:00Z" };
+  const threes: Dial = { read: 3, write: 3, run: 3, reach: 2, operate: 0, setBy: "someone", setAt: "2026-09-23T00:00:00Z" };
 
   test("a file that says 3 with no confirmation is held at 2, and the reason names the hole", () => {
     const verdict = decide({ stored: threes, source: "file" });
@@ -269,5 +271,49 @@ describe("D-042 — a 3 counts only where a person confirmed it on this machine"
   test("the stop flag and the ceiling still win over a confirmed 3", () => {
     expect(decide({ stored: threes, source: "file", confirmedThree: ["write"], stopped: true }).dial.write).toBe(0);
     expect(decide({ stored: threes, source: "file", confirmedThree: ["write"], envValue: "1" }).dial.write).toBe(1);
+  });
+});
+
+describe("D-153 — operate runs at min(operate, reach), under every ceiling", () => {
+  const withOperate = (operate: Level, reach: ReachLevel = 2): Dial => ({ ...flat(2), reach, operate });
+
+  test("operate above reach is clamped, out loud, with reach named", () => {
+    const verdict = decide({ stored: withOperate(2, 1), source: "file" });
+    expect(verdict.operate).toBe(1);
+    const clamp = verdict.clamps.find((c) => c.category === "operate");
+    expect(clamp).toEqual(expect.objectContaining({ set: 2, effective: 1 }));
+    expect(clamp!.why).toContain("min(operate, reach)");
+    expect(verdict.act).toBe(1);
+  });
+
+  test("operate at or below reach is in force as set, with no clamp", () => {
+    const verdict = decide({ stored: withOperate(1), source: "file" });
+    expect(verdict.operate).toBe(1);
+    expect(verdict.clamps).toEqual([]);
+  });
+
+  test("operate 3 is held at 2 until it is confirmed at a terminal (D-042)", () => {
+    const unconfirmed = decide({ stored: withOperate(3), source: "file" });
+    expect(unconfirmed.dial.operate).toBe(2);
+    expect(unconfirmed.operate).toBe(2);
+    expect(unconfirmed.clamps.find((c) => c.category === "operate")!.why).toContain("never confirmed");
+
+    const confirmed = decide({ stored: withOperate(3), source: "file", confirmedThree: ["operate"] });
+    expect(confirmed.dial.operate).toBe(3);
+    expect(confirmed.operate).toBe(3);
+    expect(confirmed.clamps).toEqual([]);
+  });
+
+  test("confirmed operate 3 with reach below its top is the minimum, and says so", () => {
+    const verdict = decide({ stored: withOperate(3, 1), source: "file", confirmedThree: ["operate"] });
+    expect(verdict.operate).toBe(1);
+    expect(verdict.clamps.find((c) => c.category === "operate")).toEqual(expect.objectContaining({ set: 3, effective: 1 }));
+  });
+
+  test("the ceiling and the brake lower it like every category", () => {
+    expect(decide({ stored: withOperate(2), source: "file", envValue: "1" }).operate).toBe(1);
+    expect(decide({ stored: withOperate(3), source: "file", confirmedThree: ["operate"], envValue: "2" }).operate).toBe(2);
+    expect(decide({ stored: withOperate(2), source: "file", stopped: true }).operate).toBe(0);
+    expect(decide({ stored: withOperate(2), source: "file-unreadable" }).operate).toBe(0);
   });
 });

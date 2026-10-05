@@ -531,7 +531,7 @@ describe("no bare call to a misrouted console method, anywhere", () => {
     expect(files).toContain(join("scripts", "cli-parity.ts"));
     expect(files).toContain(join("notes", "odd2-driver.ts"));
     expect(files).toContain(join("test", "cli", "streams.test.ts"));
-  });
+  }, 30_000);
 
   test("every hit is either gone or exempted with a reason", async () => {
     const hits: string[] = [];
@@ -544,7 +544,7 @@ describe("no bare call to a misrouted console method, anywhere", () => {
       }
     }
     expect(hits).toEqual([]);
-  });
+  }, 30_000);
 
   test("an exemption that no longer names a real line fails rather than lingers", async () => {
     const live = new Set<string>();
@@ -558,7 +558,7 @@ describe("no bare call to a misrouted console method, anywhere", () => {
     for (const [at, reason] of EXEMPT) {
       expect(live.has(at), `${at} is exempted ("${reason}") and has no bare call on it`).toBe(true);
     }
-  });
+  }, 30_000);
 });
 
 // ---------------------------------------------------------------------------

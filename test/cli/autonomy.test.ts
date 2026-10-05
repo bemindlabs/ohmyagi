@@ -122,7 +122,7 @@ describe("reading the dial off disk", () => {
 
   test("a file that parses is what it says", async () => {
     const home = await sandbox();
-    const dial: Dial = { read: 2, write: 2, run: 1, reach: 1, setBy: "a test", setAt: "2026-09-22T00:00:00.000Z" };
+    const dial: Dial = { read: 2, write: 2, run: 1, reach: 1, operate: 0, setBy: "a test", setAt: "2026-09-22T00:00:00.000Z" };
     await writeFile(dialPath(home), serializeDial(dial, dialBody()));
     const read = await readDial(home);
     expect(read.source).toBe("file");
@@ -145,7 +145,7 @@ describe("reading the dial off disk", () => {
 describe("writing it back", () => {
   test("what is written reads back as what was asked for", async () => {
     const home = await sandbox();
-    const dial: Dial = { read: 3, write: 2, run: 2, reach: 2, setBy: "a test", setAt: "2026-09-22T00:00:00.000Z" };
+    const dial: Dial = { read: 3, write: 2, run: 2, reach: 2, operate: 0, setBy: "a test", setAt: "2026-09-22T00:00:00.000Z" };
     const path = await writeDial(home, dial);
     expect(path).toBe(dialPath(home));
     expect((await readDial(home)).stored).toEqual(dial);
@@ -176,7 +176,7 @@ describe("deciding: the file, the ceiling and the brake together", () => {
   test("the brake outranks a file that says 2", async () => {
     const home = await sandbox();
     const env = { home, env: { XDG_STATE_HOME: join(home, "state") } };
-    await writeDial(home, { read: 2, write: 2, run: 2, reach: 2, setBy: null, setAt: null });
+    await writeDial(home, { read: 2, write: 2, run: 2, reach: 2, operate: 0, setBy: null, setAt: null });
     expect((await decideDial(home, env)).effective.act).toBe(2);
 
     await mkdir(join(home, "state", "om-agi"), { recursive: true });
@@ -194,7 +194,7 @@ describe("deciding: the file, the ceiling and the brake together", () => {
     // that had to reach the operator's real environment would be testing their
     // machine.
     const home = await sandbox();
-    await writeDial(home, { read: 3, write: 2, run: 2, reach: 2, setBy: null, setAt: null });
+    await writeDial(home, { read: 3, write: 2, run: 2, reach: 2, operate: 0, setBy: null, setAt: null });
     const verdict = await decideDial(home, {
       home,
       env: { XDG_STATE_HOME: join(home, "state"), [AUTONOMY_MAX_ENV]: "1" },
@@ -255,7 +255,7 @@ describe("ohmyagi autonomy show", () => {
 
     expect(result.code).toBe(0);
     for (const category of ["read", "write", "run", "reach"]) {
-      expect(result.stdout).toContain(`${category.padEnd(6)} set 1   in force 1`);
+      expect(result.stdout).toContain(`${category.padEnd(7)} set 1   in force 1`);
     }
     expect(result.stdout).toContain("min(write, run, reach) = 1");
     // The sentence a reader gets backwards if nobody writes it down.
@@ -402,7 +402,7 @@ describe("ohmyagi autonomy set", () => {
     const home = await sandbox();
     const result = await runCli(home, ["autonomy", "set", "sideways", "1", home, "--subject", "example"]);
     expect(result.code).toBe(2);
-    expect(result.stderr).toContain("read, write, run, reach");
+    expect(result.stderr).toContain("read, write, run, reach, operate");
   });
 
   test("it refuses to overwrite a file it could not read", async () => {
@@ -463,8 +463,8 @@ describe("D-042 — a 3 typed into the file is not a 3", () => {
 
     const result = await runCli(home, ["autonomy", "show", home, "--subject", "example"]);
 
-    expect(result.stdout).toContain(`${"write".padEnd(6)} set 3   in force`);
-    expect(result.stdout).not.toContain(`${"write".padEnd(6)} set 3   in force 3`);
+    expect(result.stdout).toContain(`${"write".padEnd(7)} set 3   in force`);
+    expect(result.stdout).not.toContain(`${"write".padEnd(7)} set 3   in force 3`);
     expect(result.stdout).toContain("never confirmed at a terminal");
   });
 
@@ -531,4 +531,75 @@ describe("AC4 at a real terminal", () => {
     const record = confirmationsPath({ home, env: { XDG_STATE_HOME: join(home, "state") } }, home, subjectId("example"));
     expect(await readConfirmations(record)).toEqual({});
   }, 60_000);
+});
+
+describe("D-153 — operate, shown and set like every category", () => {
+  test("`show` lists operate at 0 with its English and Thai, and the browser's level", async () => {
+    const home = await sandbox();
+    const result = await runCli(home, ["autonomy", "show", home, "--subject", "example"]);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain(`${"operate".padEnd(7)} set 0   in force 0`);
+    expect(result.stdout).toContain("no browser · ไม่ใช้เบราว์เซอร์");
+    expect(result.stdout).toContain("the browser runs at min(operate, reach) = 0");
+    expect(result.stdout).toContain("stops for a yes before paying");
+  });
+
+  test("`set operate 2` with reach at 1 is said as a clamp at the moment of setting", async () => {
+    const home = await sandbox();
+    const result = await runCli(home, ["autonomy", "set", "operate", "2", home, "--subject", "example"]);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("operate is now 2 — acts only on the task's allowed sites");
+    expect(result.stdout).toContain("ทำได้เฉพาะเว็บที่งานอนุญาต");
+    expect(result.stdout).toContain("You set operate to 2. What is in force is 1.");
+    expect(await Bun.file(dialPath(home)).text()).toContain("operate = 2");
+  });
+
+  test("operate 3 outside a terminal is refused like every 3", async () => {
+    const home = await sandbox();
+    const result = await runCli(home, ["autonomy", "set", "operate", "3", home, "--subject", "example"]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("let operate act on its own in");
+    expect(await Bun.file(dialPath(home)).exists()).toBe(false);
+  });
+
+  test("an @1 file is read with operate 0, and the next `set` writes it back at @2 with nothing else changed", async () => {
+    const home = await sandbox();
+    await writeFile(
+      dialPath(home),
+      '+++\nschema = "om-agi/autonomy@1"\n\nread = 2\nwrite = 2\nrun = 2\nreach = 2\n+++\n\nwhy: raised for the move.\n',
+    );
+    const shown = await runCli(home, ["autonomy", "show", home, "--subject", "example"]);
+    expect(shown.code).toBe(0);
+    expect(shown.stdout).toContain("min(write, run, reach) = 2");
+    expect(shown.stdout).toContain(`${"operate".padEnd(7)} set 0   in force 0`);
+
+    const set = await runCli(home, ["autonomy", "set", "operate", "1", home, "--subject", "example"]);
+    expect(set.code).toBe(0);
+    const text = await Bun.file(dialPath(home)).text();
+    expect(text).toContain('schema = "om-agi/autonomy@2"');
+    for (const line of ["read = 2", "write = 2", "run = 2", "reach = 2", "operate = 1"]) expect(text).toContain(line);
+  });
+
+  test("a confirmed operate 3 with reach 2 is said as what it is, never as a minimum of 3 (review of #18)", async () => {
+    const home = await sandbox();
+    const env = { home, env: { XDG_STATE_HOME: join(home, "state") } };
+    await writeDial(home, { read: 2, write: 2, run: 2, reach: 2, operate: 3, setBy: null, setAt: null });
+    await setConfirmation(confirmationsPath(env, home, subjectId("example")), "operate", { by: "a test", at: "2026-10-05T00:00:00.000Z" });
+    const text = said(await decideDial(home, env, subjectId("example")), VENDORS);
+    expect(text).toContain("the browser runs at 3 — operate 3, confirmed at a terminal, with reach at its top (2)");
+    expect(text).not.toContain("min(operate, reach) = 3");
+    // Unconfirmed, it is the minimum, and says so.
+    const unconfirmed = said(await decideDial(home, { home, env: { XDG_STATE_HOME: join(home, "other") } }, subjectId("example")), VENDORS);
+    expect(unconfirmed).toContain("min(operate, reach) = 2");
+  });
+
+  test("the one-line dial names the browser too", () => {
+    expect(dialLine(defaultEffective())).toContain("operate 0 → the browser at 0");
+  });
+
+  test("the file's body explains operate and the always-pause list", () => {
+    expect(dialBody()).toContain("min(operate, reach)");
+    expect(dialBody()).toContain("ดูแล้วเสนอ");
+    expect(dialBody()).toContain("accepting terms");
+  });
 });

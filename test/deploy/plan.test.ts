@@ -73,7 +73,7 @@ describe("what goes, what is made there, what stays", () => {
 
     expect(keysOf(result.goes)).toEqual(["binary", "repo", "repo-history", "soul", "a2a", "chat", "push", "basis", "personal", "identity", "ledger"]);
     expect(keysOf(result.rebuilt)).toEqual(["dagi", "rag-marker", "collection"]);
-    expect(keysOf(result.stays)).toEqual(["backups", "confirmations", "runs", "triggers", "blocks"]);
+    expect(keysOf(result.stays)).toEqual(["backups", "confirmations", "runs", "browser", "triggers", "blocks"]);
 
     // Against the map itself, so a place added there shows up here or goes red.
     const map = dataMap({ home: made.home, env: made.env }, subjectId(made.subject), made.agentDir);

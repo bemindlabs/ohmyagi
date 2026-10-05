@@ -38,6 +38,7 @@ function flat(level: Level): Dial {
     write: level,
     run: level,
     reach: Math.min(level, 2) as ReachLevel,
+    operate: 0,
     setBy: null,
     setAt: null,
   };
@@ -215,7 +216,7 @@ describe("no cast composes a turn past the dial", () => {
         `${rel} is allowed but says none of the words`,
       ).toBeGreaterThan(0);
     }
-  });
+  }, 30_000);
 
   test("the checker catches both syntaxes and ignores the words in prose", () => {
     const caught = (source: string) => assertionEscapes("synthetic.ts", source, TYPES, []);

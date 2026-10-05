@@ -308,3 +308,15 @@ describe("what a good --as expands into", () => {
     }
   });
 });
+
+describe("--as and a bare -- (D-152)", () => {
+  test("for `memory ask`, --as=… after -- is its question, left where it is", async () => {
+    const argv = ["memory", "ask", "./agent", "--subject", "x", "--", "--as=/elsewhere", "--as", "y"];
+    expect(await expanded(argv)).toEqual(argv);
+  });
+
+  test("for every other command a -- changes nothing: --as after it is still read as --as", async () => {
+    const { said } = await refused(["turn", "--", "--as=/nowhere/at/all"]);
+    expect(said).toContain("no soul at /nowhere/at/all");
+  });
+});

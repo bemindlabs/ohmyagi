@@ -83,7 +83,7 @@ Usage:
                                         public key if \`ohmyagi key\` made one
                                         (it says so if not). Makes no key and
                                         serves nothing; \`a2a serve\` serves it.
-  ohmyagi turn <dir> --subject <id> (--prompt <text> | --prompt-file <path>)
+  ohmyagi turn <dir> --subject <id> (--prompt <text> | --prompt-file <path> | --proposal <id>)
              [--backend a,b,c] [--route auto|local|cloud] [--model <m> | --model <backend>=<m>,…]
              [--private] [--proposal <id>]
              [--no-recall] [--no-proposals] [--recall-chars <n>] [--history-json <[{role,text}]>] [--json]
@@ -96,7 +96,10 @@ Usage:
                                         refused one stops it (exit 4), and the
                                         approval is spent before the prompt
                                         goes, so a second turn needs a second
-                                        approval.
+                                        approval. Under --proposal the prompt
+                                        is the approved action, read from its
+                                        record; a different --prompt is refused
+                                        and nothing is spent (D-153).
                                         --route defaults to auto. When an
                                         acting turn needs recalled pieces kept
                                         from cloud, auto puts the fenced local
@@ -264,6 +267,27 @@ Usage:
                                         Exit 1: no hit. Exit 3: nothing was
                                         searched (no index yet, and no vector
                                         store answered).
+  ohmyagi memory ask <agent-dir> --subject <id> [--scope all|memory|knowledge] [--backend a,b,c] [--route auto|local|cloud] [--model <m>] [--private] [--json] [--] <question...>
+                                        Ask memory a question (D-152): the agent
+                                        answers in a few sentences from what
+                                        recall finds, in the question's
+                                        language, then lists the sources (file
+                                        and section) it was handed — never the
+                                        files pasted back. No tools at all, at
+                                        any dial level, and no proposal: only
+                                        claude, claude-local and ollama answer
+                                        (grok keeps read tools; file-channel
+                                        vendors cannot be handed the pieces).
+                                        Routed, screened and recorded in the
+                                        ledger as a turn is. Nothing about the
+                                        question recalled: "nothing in memory
+                                        about this", no model asked. After --,
+                                        the question is words, never a flag
+                                        (memory ask only). Each ask's recall
+                                        numbers, no text, go to <personal
+                                        dir>/ask/recall.jsonl. Exit 2: empty or
+                                        over 2000 characters. Exit 3: nothing
+                                        searched.
   ohmyagi egress needles --subject <id>
                                         Where the list of what must not leave
                                         this machine lives (personal, outside
@@ -331,8 +355,13 @@ Usage:
                                         flag off.** Without a directory it shows
                                         the machine's half only: the brake and
                                         the ceiling.
-  ohmyagi autonomy set <read|write|run|reach> <0-3> <dir> --subject <id>
+  ohmyagi autonomy set <read|write|run|reach|operate> <0-3> <dir> --subject <id>
                                         Write one category into <dir>/${AUTONOMY_FILE}.
+                                        operate is the browser (D-153): it runs
+                                        at min(operate, reach), starts at 0, and
+                                        at every level stops for a yes before
+                                        paying, sending, deleting, credentials
+                                        or accepting terms.
                                         Level 3 has to be typed at a terminal
                                         and there is no --yes; who set it and
                                         when are recorded in the file. Says at
@@ -358,6 +387,13 @@ Usage:
                                         from standard input, which keeps them out
                                         of shell history and \`ps\` the way
                                         --prompt-file does.
+  ohmyagi proposal new <dir> --subject <id> --refile <proposal-id>
+                                        File a spent approval again, from its own
+                                        record, when the turn that spent it sent
+                                        nothing (D-144). A new proposal that waits
+                                        for a new yes; once per approval, and
+                                        refused (4) for one a turn ran or may
+                                        have run.
   ohmyagi proposal decide <proposal-id> <dir> --subject <id> (--approve | --refuse)
                          [--note <text>]
                                         Answer one, recording who and when. A
@@ -385,9 +421,40 @@ Usage:
                                         it on every filing.
   ohmyagi stop [<dir> --subject <id>]   Stop everything, in a fixed order: set
                                         the brake, take every category to 0, end
-                                        the turns that are running. Prints what
-                                        it could not reach and the exact command
-                                        for each. Exit 1 if anything survived.
+                                        the turns that are running, docker kill
+                                        every browser task. Prints what it could
+                                        not reach and the exact command for
+                                        each. Exit 1 if anything survived.
+  ohmyagi browser up --subject <id> --allow <origin> [--allow <origin>…] [--operate 1|2] [--task <id>] [--ttl <s>] [--no-build] [--json]
+                                        Internal (E17, not reachable from turns
+                                        yet). One task's browser: a fresh
+                                        container with headless Chromium and
+                                        Playwright MCP on a 127.0.0.1 port
+                                        (30730-30749) behind a per-task token
+                                        that is never printed, egress only to the named
+                                        origins (scheme://host[:port], no paths,
+                                        no wildcards), a trace and screenshots
+                                        in the subject's personal directory,
+                                        ended by down, stop or its deadline
+                                        (--ttl, default 1800 s). Builds the image
+                                        here when missing; never pushes it.
+                                        --operate (default 1) is the most its
+                                        guard serves: 1 look tools, 2 also act.
+                                        Refused while the brake is on.
+  ohmyagi browser down <task> [--json]  docker kill that task's container. The
+                                        recording stays until erase.
+  ohmyagi browser status [--json]       The running tasks, after ending any
+                                        whose owner is gone or that nothing
+                                        names.
+  ohmyagi browser mcp-config <task> --vendor <id> [--level 1|2] [--json]
+                                        Write the one-server MCP config a vendor
+                                        CLI is handed for that task (mode 600: it
+                                        holds the token), or say why the vendor
+                                        gets none (only claude and claude-local
+                                        are wired; exit 1 otherwise). --level is
+                                        operate's: 1 approves look tools only, 2
+                                        also click and type; code-running tools
+                                        never, and sensitive actions are held.
   ohmyagi triggers show <dir> --subject <id>
                                         The schedules in triggers.md, when each
                                         last fired and when it is next due.

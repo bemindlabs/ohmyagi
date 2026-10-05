@@ -29,7 +29,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { statSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { homedir, hostname, tmpdir, uptime } from "node:os";
 import { join, resolve } from "node:path";
 import { isatty } from "node:tty";
 import {
@@ -295,11 +295,14 @@ describe("colour is a question about the stream, asked once", () => {
 });
 
 describe("ledgerEnv — the machine facts the ledger is allowed to see", () => {
-  test("home, env and a clock, and nothing else", () => {
+  test("home, env, a clock and — for the lock alone — the machine, and nothing else", () => {
     const env = ledgerEnv();
-    expect(Object.keys(env).sort()).toEqual(["env", "home", "now"]);
+    expect(Object.keys(env).sort()).toEqual(["env", "home", "machine", "now"]);
     expect(env.home).toBe(homedir());
     expect(env.env).toBe(process.env);
+    // D-145: the name and boot time that let a writer tell a killed turn's lock from a live one.
+    expect(env.machine?.host).toBe(hostname());
+    expect(Math.abs(env.machine!.bootedAt - (Date.now() - uptime() * 1000))).toBeLessThan(5_000);
   });
 
   test("`now` is a function, so every entry reads the clock when it is written", () => {

@@ -2,17 +2,20 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { PAGE_HTML } from "../../src/web/page.ts";
-import { allowedHosts, handler, pairingLink, recallOf, sameToken, startWeb, tailnetNames, TOKEN_HEADER, type KeyControl, type WebDeps } from "../../src/web/server.ts";
+import { ALREADY_RUNNING, ASK_BUSY, MEMORY_ASK_TIMEOUT_MS, askAnswer, allowedHosts, handler, pairingLink, recallOf, sameToken, startWeb, tailnetNames, TOKEN_HEADER, type KeyControl, type WebDeps } from "../../src/web/server.ts";
 import { keyPrint } from "../../src/web/key.ts";
-import { ago, excerpt, levelSentence, remoteForPage, triageChips, type AgentInfo, type SettingsState, type ViewState } from "../../src/web/view.ts";
+import { ago, excerpt, levelSentence, operateSentence, remoteForPage, triageChips, type AgentInfo, type SettingsState, type ViewState } from "../../src/web/view.ts";
 import type { Triage } from "../../src/decide/triage.ts";
+import { ASK_ANSWER_MAX_CHARS } from "../../src/memory/ask.ts";
+import { waitFor } from "../support/wait.ts";
 
 const STATE: ViewState = {
   agent: { name: "Keeper", role: "keeps things", subject: "example", dir: "/a" },
-  autonomy: { title: "Asks you first", detail: "d", tone: "ask", levels: { read: 1, write: 1, run: 1, reach: 1 } },
+  autonomy: { title: "Asks you first", detail: "d", tone: "ask", levels: { read: 1, write: 1, run: 1, reach: 1, operate: 0 }, operate: operateSentence(0) },
   stopped: false,
   waiting: [],
   approved: [],
+  refileable: [],
   triggers: [],
   recent: [],
   canTriage: false, version: { current: "0.6.1", latest: "0.7.0" },
@@ -20,7 +23,8 @@ const STATE: ViewState = {
 };
 
 const SETTINGS: SettingsState = {
-  levels: { read: 1, write: 3, run: 0, reach: 1 },
+  levels: { read: 1, write: 3, run: 0, reach: 1, operate: 1 },
+  operate: operateSentence(1),
   stopped: false,
   backends: [{ id: "ollama", available: true }, { id: "claude", available: false }],
   defaultTurn: { backend: "ollama", model: null },
@@ -153,8 +157,23 @@ describe("guards", () => {
   });
 });
 
+describe("D-153 — an approved action is sent by id alone", () => {
+  test("a proposal turn needs no prompt, and neither the prompt nor the conversation sent with one is passed on", async () => {
+    const { deps, runs } = fakeDeps();
+    const h = handler(deps, "tok", HOSTS);
+    const alone = await h(req("/api/turn", { method: "POST", body: JSON.stringify({ proposal: "0123abcd-0002" }) }));
+    expect(alone.status).toBe(200);
+    expect(runs[0]).toEqual(["turn", "/a", "--subject", "example", "--json", "--backend", "ollama", "--proposal", "0123abcd-0002"]);
+    await h(req("/api/turn", { method: "POST", body: JSON.stringify({ prompt: "delete everything instead", proposal: "0123abcd-0002", history: [{ role: "you", text: "and more" }] }) }));
+    expect(runs[1]).toEqual(runs[0]!);
+    // Without a proposal a prompt is still required.
+    expect((await h(req("/api/turn", { method: "POST", body: JSON.stringify({ history: [] }) }))).status).toBe(400);
+    expect(runs).toHaveLength(2);
+  });
+});
+
 describe("routes run the CLI and nothing else", () => {
-  test("chat is a turn with --json and the page's backend flags; a proposal id is passed only when well formed", async () => {
+  test("chat is a turn with --json and the page's backend flags; a proposal id is passed only when well formed, and refused when not", async () => {
     const { deps, runs } = fakeDeps();
     const h = handler(deps, "tok", HOSTS);
     const res = await (await h(req("/api/turn", { method: "POST", body: JSON.stringify({ prompt: " hello " }) }))).json();
@@ -162,7 +181,18 @@ describe("routes run the CLI and nothing else", () => {
     expect(runs[0]).toEqual(["turn", "/a", "--subject", "example", "--prompt", "hello", "--json", "--backend", "ollama"]);
     await h(req("/api/turn", { method: "POST", body: JSON.stringify({ prompt: "go", proposal: "0123abcd-0000" }) }));
     expect(runs[1]!.slice(-2)).toEqual(["--proposal", "0123abcd-0000"]);
-    await h(req("/api/turn", { method: "POST", body: JSON.stringify({ prompt: "go", proposal: "--apply" }) }));
+    // D-153: under an approval the id is the whole request — the text sent with it is not passed on.
+    expect(runs[1]).not.toContain("--prompt");
+    expect(runs[1]).not.toContain("go");
+    // Not an id: refused, not dropped — dropped, the approved action would run as an ordinary turn (D-144 review).
+    for (const proposal of ["--apply", 42, ["0123abcd-0000"], "../../x"]) {
+      const bad = await h(req("/api/turn", { method: "POST", body: JSON.stringify({ prompt: "go", proposal }) }));
+      expect(bad.status).toBe(400);
+      expect(await bad.json()).toEqual({ ok: false, error: "that is not a proposal id — nothing was run" });
+    }
+    expect(runs).toHaveLength(2);
+    // null is no proposal: an ordinary turn.
+    await h(req("/api/turn", { method: "POST", body: JSON.stringify({ prompt: "go", proposal: null }) }));
     expect(runs[2]).not.toContain("--proposal");
     expect((await h(req("/api/turn", { method: "POST", body: "{}" }))).status).toBe(400);
   });
@@ -196,6 +226,274 @@ describe("routes run the CLI and nothing else", () => {
   });
 });
 
+describe("an approved proposal runs once — one turn per proposal at the door (D-144)", () => {
+  /** Deps whose `turn` for `held` waits until released, and a record of every CLI started. */
+  function heldTurn(held: string) {
+    const base = fakeDeps();
+    const started: (readonly string[])[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let entered!: () => void;
+    const inside = new Promise<void>((resolve) => (entered = resolve));
+    const deps: WebDeps = {
+      ...base.deps,
+      run: async (args) => {
+        started.push(args);
+        if (args[0] === "turn" && args.includes(held)) {
+          entered();
+          await gate;
+        }
+        return base.deps.run(args);
+      },
+    };
+    return { deps, started, release, inside };
+  }
+  const turnFor = (proposal?: string) =>
+    req("/api/turn", { method: "POST", body: JSON.stringify(proposal === undefined ? { prompt: "hello" } : { prompt: "delete the old logs", proposal }) });
+
+  test("two calls at once for one proposal: one runs, the other is 409 and starts no CLI", async () => {
+    const { deps, started, release, inside } = heldTurn("0123abcd-0001");
+    const h = handler(deps, "tok", HOSTS);
+
+    const first = h(turnFor("0123abcd-0001"));
+    await inside; // the first one's CLI is running now
+    const second = await h(turnFor("0123abcd-0001"));
+    expect(second.status).toBe(409);
+    expect(await second.json()).toEqual({ ok: false, error: ALREADY_RUNNING });
+    expect(ALREADY_RUNNING).toStartWith("Already running");
+    expect(started).toHaveLength(1);
+
+    // Only that proposal is held: another one, and ordinary chat, go ahead meanwhile.
+    expect((await h(turnFor("0123abcd-0002"))).status).toBe(200);
+    expect((await h(turnFor())).status).toBe(200);
+    expect(started.map((args) => args.includes("0123abcd-0001"))).toEqual([true, false, false]);
+
+    release();
+    const done = await first;
+    expect(done.status).toBe(200);
+    expect(await done.json()).toMatchObject({ ok: true, text: "hi" });
+
+    // Back, and so free again at this door. Whether it may run again is the
+    // engine's to say — and it says no: the approval was claimed once.
+    expect((await h(turnFor("0123abcd-0001"))).status).toBe(200);
+    expect(started.filter((args) => args.includes("0123abcd-0001"))).toHaveLength(2);
+  });
+
+  test("a turn that throws frees its proposal, so the door does not stay shut", async () => {
+    const base = fakeDeps();
+    let calls = 0;
+    const deps: WebDeps = {
+      ...base.deps,
+      run: async (args) => {
+        calls += 1;
+        if (calls === 1) throw new Error("the child could not start");
+        return base.deps.run(args);
+      },
+    };
+    const h = handler(deps, "tok", HOSTS);
+    await expect(h(turnFor("0123abcd-0003"))).rejects.toThrow("the child could not start");
+    expect((await h(turnFor("0123abcd-0003"))).status).toBe(200);
+  });
+
+  test("a turn under an approval that failed with no answer says why as its error — the page and the app show it (D-144 review)", async () => {
+    const spentLine = "ohmyagi: proposal 0123abcd-0001 stays spent — turn t took its approval and nothing was sent (D-144). To run it again, file it again.";
+    const deps: WebDeps = {
+      ...fakeDeps().deps,
+      run: async () => ({
+        code: 1,
+        stdout: JSON.stringify({ text: "", route: "no backend answered · 0.0s", backend: "ollama", proposals: [] }),
+        stderr: `no backend answered · 0.0s\n${spentLine}\n`,
+      }),
+    };
+    const h = handler(deps, "tok", HOSTS);
+    const withProposal = (await (await h(turnFor("0123abcd-0001"))).json()) as { ok: boolean; text: string; error: string };
+    expect(withProposal.ok).toBe(false);
+    expect(withProposal.text).toBe("");
+    // Its last line is what became of the approval.
+    expect(String(withProposal.error).split("\n").at(-1)).toBe(spentLine.replace(/^ohmyagi:\s*/, ""));
+    // An ordinary turn keeps its shape: the reason is in notes, which the page now shows when a turn fails.
+    const plain = (await (await h(turnFor())).json()) as { ok: boolean; error?: string; notes: string };
+    expect(plain.ok).toBe(false);
+    expect(plain.error).toBeUndefined();
+    expect(plain.notes).toContain("no backend answered");
+  });
+
+  test("a turn's own --json notes reach /api/turn's notes, once (D-149)", async () => {
+    const note = "ollama has no tools — it answered in words and could not act. Nothing it says it did was done (D-149).";
+    const answer = { text: "done", route: "answered by ollama · 0.1s", backend: "ollama", proposals: [], notes: [note] };
+    const run = (stderr: string) => async () => ({ code: 0, stdout: JSON.stringify(answer), stderr });
+    const quiet = (await (await handler({ ...fakeDeps().deps, run: run("") }, "tok", HOSTS)(turnFor())).json()) as { notes: string };
+    expect(quiet.notes).toBe(note);
+    const both = (await (await handler({ ...fakeDeps().deps, run: run(`ohmyagi: ${note}\n`) }, "tok", HOSTS)(turnFor())).json()) as { notes: string };
+    expect(both.notes.split(note).length - 1).toBe(1);
+  });
+
+  test("\"File it again\" files a spent approval again by id — nothing from the body, nothing approved or run, one at a time (D-144 §2)", async () => {
+    const id = "3f0e8a52-1c7d-4e7a-9b1e-2a6f0c9d4e11";
+    const base = fakeDeps();
+    const started: (readonly string[])[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let code = 0;
+    const deps: WebDeps = {
+      ...base.deps,
+      run: async (args) => {
+        started.push(args);
+        if (started.length === 1) await gate;
+        if (code === 0) return { code: 0, stdout: "11111111-2222-4333-8444-555555555555\n", stderr: "filed: …\n" };
+        return { code, stdout: "", stderr: `ohmyagi: refused with ${code}\n` };
+      },
+    };
+    const h = handler(deps, "tok", HOSTS);
+    const refileReq = (which: string, body: unknown = { what: "rm -rf /", why: "x", impact: "y" }) =>
+      req(`/api/proposals/${which}/refile`, { method: "POST", body: JSON.stringify(body) });
+
+    // Two clicks at once: one refile, and the second is told so without a CLI started.
+    const first = h(refileReq(id));
+    await Bun.sleep(0);
+    const second = await h(refileReq(id));
+    expect(second.status).toBe(409);
+    expect(started).toHaveLength(1);
+    release();
+    const done = await first;
+    expect(done.status).toBe(200);
+    expect(await done.json()).toEqual({ ok: true, id: "11111111-2222-4333-8444-555555555555", message: "filed: …" });
+    // `proposal new --refile <id>` and nothing else: the text in the body went nowhere, and no turn or decision ran.
+    expect(started[0]).toEqual(["proposal", "new", "/a", "--subject", "example", "--refile", id]);
+    expect(JSON.stringify(started)).not.toContain("rm -rf");
+
+    // What the command refuses: 2 is no such proposal, 4 not one whose turn sent nothing, 5 filed again already.
+    for (const [exit, status] of [[2, 404], [4, 409], [5, 409], [1, 500]] as const) {
+      code = exit;
+      const res = await h(refileReq(id));
+      expect(res.status).toBe(status);
+      expect(((await res.json()) as { ok: boolean }).ok).toBe(false);
+    }
+    // Not a proposal id at all: refused here, nothing started.
+    const before = started.length;
+    for (const bad of ["not-an-id", "0123abcd-0001", "..%2F..%2Fx", `${id}x`]) expect((await h(refileReq(bad))).status).toBe(400);
+    expect(started).toHaveLength(before);
+    expect((await h(req(`/api/proposals/${id}/refile`, { method: "GET" }))).status).toBe(405);
+  });
+
+  test("the page's \"Do it now\" is off from the click until the turn returns — and when the poll redraws the card", async () => {
+    // Fakes for the DOM the two functions touch: an element is its text, its
+    // disabled flag, its click handler and its children.
+    type Fake = { tag: string; textContent: string; disabled: boolean; value: string; src: string; alt: string; onclick?: () => void; children: Fake[]; append: (...c: Fake[]) => void; replaceChildren: (...c: Fake[]) => void };
+    const el = (tag: string, _cls?: string, text?: string): Fake => {
+      const node: Fake = { tag, textContent: text ?? "", disabled: false, value: "", src: "", alt: "", children: [], append: (...c) => void node.children.push(...c), replaceChildren: (...c) => void (node.children = [...c]) };
+      return node;
+    };
+    const nodes = new Map<string, Fake>();
+    const $ = (id: string) => nodes.get(id) ?? nodes.set(id, el("div")).get(id)!;
+    const document = { querySelector: () => ({ src: "logo" }), createTextNode: (t: string) => el("#text", "", t), body: { classList: { add: () => undefined, remove: () => undefined } } };
+    const toasts: string[] = [];
+    const bodies: Record<string, unknown>[] = [];
+    let answer!: (value: Record<string, unknown>) => void;
+    const paths: string[] = [];
+    const api = (path: string, body: Record<string, unknown>) => {
+      paths.push(path);
+      bodies.push(body);
+      return new Promise<Record<string, unknown>>((resolve) => (answer = resolve));
+    };
+
+    const pick = (pattern: RegExp) => {
+      const source = pattern.exec(PAGE_HTML)?.[0];
+      expect(source).toBeDefined();
+      return source!;
+    };
+    const bubbles: [string, string][] = [];
+    const page = new Function(
+      "$", "el", "document", "toast", "api", "bubble",
+      `const runningProposals = new Set(); const chatLog = []; const closeMenu = () => {}; const runCommand = async () => {};
+       const refilingProposals = new Set(); const choice = () => ({}); const turnLine = () => ""; const refresh = async () => {};
+       ${pick(/async function send\(text, proposal\) \{[\s\S]*?\n  \}\n/)}
+       ${pick(/function renderApproved\(items, again\) \{[\s\S]*?\n  \}\n/)}
+       ${pick(/async function refile\(p, button\) \{[\s\S]*?\n  \}\n/)}
+       return { send, renderApproved, runningProposals };`,
+    )($, el, document, (t: string) => toasts.push(t), api, (cls: string, text: string) => void bubbles.push([cls, text])) as {
+      send: (text: string, proposal?: string) => Promise<void>;
+      renderApproved: (items: readonly { id: string; what: string; decided: string }[], again?: readonly { id: string; what: string; spent: string }[]) => void;
+      runningProposals: Set<string>;
+    };
+    const card = [{ id: "0123abcd-0001", what: "delete the old logs", decided: "just now" }];
+    const button = () => $("approved").children[1]!.children[2]!.children[0]!;
+
+    page.renderApproved(card);
+    expect(button().textContent).toBe("Do it now");
+    expect(button().disabled).toBe(false);
+
+    button().onclick!();
+    // Off the moment it is clicked, before anything has come back.
+    expect(button().disabled).toBe(true);
+    expect(button().textContent).toBe("Running…");
+    // D-153: the id alone — the turn builds the prompt from the record.
+    expect(bodies).toEqual([{ proposal: "0123abcd-0001" }]);
+
+    // The page polls every few seconds and draws the card again: still off.
+    page.renderApproved(card);
+    expect(button().disabled).toBe(true);
+    expect(button().textContent).toBe("Running…");
+    // And `/do` — or anything else that calls send — is held the same way.
+    await page.send("delete the old logs", "0123abcd-0001");
+    expect(toasts).toEqual(["Already running — it runs once."]);
+    expect(bodies).toHaveLength(1);
+
+    answer({ ok: true, text: "done" });
+    await Bun.sleep(0);
+    expect(page.runningProposals.size).toBe(0);
+    page.renderApproved(card);
+    expect(button().disabled).toBe(false);
+    expect(button().textContent).toBe("Do it now");
+    expect(bubbles.at(-1)).toEqual(["it", "done"]);
+
+    // A turn that failed says why (D-144 review): as the error when there was no answer…
+    bubbles.length = 0;
+    const failed = page.send("delete the old logs", "0123abcd-0001");
+    answer({ ok: false, text: "", error: "proposal 0123abcd-0001 stays spent — …" });
+    await failed;
+    expect(bubbles).toEqual([["me", "delete the old logs"], ["it", "proposal 0123abcd-0001 stays spent — …"]]);
+    // …and beside the answer when there was one, instead of dropping it.
+    bubbles.length = 0;
+    const ran = page.send("delete the old logs", "0123abcd-0001");
+    answer({ ok: false, text: "deleted", notes: "proposal 0123abcd-0001 was spent by this turn and it ran — ollama answered, and the ledger did not record it." });
+    await ran;
+    expect(bubbles).toEqual([
+      ["me", "delete the old logs"],
+      ["it", "deleted"],
+      ["sys", "proposal 0123abcd-0001 was spent by this turn and it ran — ollama answered, and the ledger did not record it."],
+    ]);
+
+    // D-144 §2 — "File it again", offered only for what the state lists as sent-nothing, never beside "Do it now".
+    page.renderApproved([], []);
+    expect($("approved").children).toEqual([]);
+    const spentId = "3f0e8a52-1c7d-4e7a-9b1e-2a6f0c9d4e11";
+    const spentCard = [{ id: spentId, what: "delete the old logs", spent: "just now" }];
+    page.renderApproved([], spentCard);
+    const again = () => $("approved").children[1]!.children[2]!.children[0]!;
+    expect(again().textContent).toBe("File it again");
+    expect(again().disabled).toBe(false);
+    expect(JSON.stringify($("approved").children)).not.toContain("Do it now");
+
+    paths.length = 0;
+    bodies.length = 0;
+    again().onclick!();
+    expect(again().disabled).toBe(true);
+    expect(again().textContent).toBe("Filing…");
+    // The id is the whole request: no text goes with it.
+    expect(paths).toEqual([`/api/proposals/${spentId}/refile`]);
+    expect(bodies).toEqual([{}]);
+    // Redrawn while it is filing: still off; and a second click sends nothing.
+    page.renderApproved([], spentCard);
+    expect(again().disabled).toBe(true);
+    again().onclick!();
+    expect(paths).toHaveLength(1);
+    answer({ ok: true, id: "new-id" });
+    await Bun.sleep(0);
+    expect(toasts.at(-1)).toBe("Filed again — it waits for your yes.");
+  });
+});
+
 describe("listening", () => {
   const started: { stop: (force?: boolean) => Promise<void> }[] = [];
   afterEach(async () => {
@@ -223,8 +521,8 @@ describe("stopping (D-088)", () => {
     const server = startWeb({ ...deps, memoryImport: async () => (await slow, { code: 0, stdout: "imported", stderr: "" }) }, { port: 0 });
     const port = new URL(server.url).port;
     const inFlight = fetch(`http://127.0.0.1:${port}/api/memory/import`, { method: "POST", headers: { [TOKEN_HEADER]: server.token, "content-type": "application/json" }, body: JSON.stringify({ url: "https://example.org/", write: true }) });
-    await new Promise((r) => setTimeout(r, 50));
-    expect(server.pending()).toBe(1);
+    // Wait for the request to be in flight rather than for 50 ms: on a loaded runner it may not have arrived yet.
+    expect(await waitFor(() => server.pending() === 1)).toBe(true);
     let stopped = false;
     const stopping = server.stop().then(() => (stopped = true));
     await new Promise((r) => setTimeout(r, 50));
@@ -281,6 +579,32 @@ describe("Settings (the page sets only what a command could, and nothing that ne
       expect((await h(post("/api/autonomy", bad))).status, JSON.stringify(bad)).toBe(400);
     }
     expect(runs).toHaveLength(1);
+  });
+
+  test("D-153: operate is a category the page sets 0–2, and 3 is typed in a terminal", async () => {
+    const { deps, runs } = fakeDeps();
+    const h = handler(deps, "tok", HOSTS);
+    const ok = (await (await h(post("/api/autonomy", { category: "operate", level: 1 }))).json()) as { ok: boolean };
+    expect(ok.ok).toBe(true);
+    expect(runs).toEqual([["autonomy", "set", "operate", "1", "/a", "--subject", "example"]]);
+    expect((await h(post("/api/autonomy", { category: "operate", level: 3 }))).status).toBe(400);
+    expect(runs).toHaveLength(1);
+  });
+
+  test("D-153: /api/state and /api/settings carry the browser's level in force, in English and Thai; the page shows it", async () => {
+    const { deps } = fakeDeps();
+    const h = handler(deps, "tok", HOSTS);
+    const state = (await (await h(req("/api/state"))).json()) as ViewState;
+    expect(state.autonomy.levels["operate"]).toBe(0);
+    expect(state.autonomy.operate).toEqual({ level: 0, title: "No browser", en: "no browser", th: "ไม่ใช้เบราว์เซอร์" });
+    const settings = (await (await h(req("/api/settings"))).json()) as SettingsState;
+    expect(settings.operate.level).toBe(1);
+    expect(settings.operate.th).toBe("ดูแล้วเสนอ — ไม่คลิก ไม่พิมพ์");
+    expect(operateSentence(3).en).toContain("typed phrase");
+    expect(operateSentence(2).title).toBe("Allowed sites only");
+    for (const text of ['["operate", "Browser", "use a web browser for you"]', 'id="operateLine"', "ทำเฉพาะเว็บที่อนุญาต", "/autonomy <read|write|run|reach|operate>"]) {
+      expect(PAGE_HTML).toContain(text);
+    }
   });
 
   test("removing a chat user or a peer is the remove command; adding has no route", async () => {
@@ -349,7 +673,8 @@ describe("Agent and Memories (read-only)", () => {
     expect(await (await h(post())).json()).toMatchObject({ ok: false, searched: false });
     expect(await (await h(post())).json()).toMatchObject({ ok: false, searched: true });
     expect(await (await h(post())).json()).toMatchObject({ ok: true, searched: true });
-    expect(PAGE_HTML).toContain('r.searched === false ? "Nothing was searched: "');
+    // The page's own searches ask now (D-152); a search that could not run still says so, never "nothing found".
+    expect(PAGE_HTML).toContain('if (r.searched === false) return "Nothing was searched: "');
   });
 
   test("a remote is shown without credentials, and linked when it is a forge", () => {
@@ -737,7 +1062,7 @@ describe("Memories CRUD (D-081)", () => {
     const sent = JSON.parse(turns[0]![turns[0]!.indexOf("--history-json") + 1]!) as { text: string }[];
     expect(sent.map((m) => m.text)).toEqual(Array.from({ length: 12 }, (_, i) => `m${i + 2}`));
     expect(turns[1]).not.toContain("--history-json");
-    expect(PAGE_HTML).toContain("if (talk.length) body.history = talk;");
+    expect(PAGE_HTML).toContain("if (talk.length && !proposal) body.history = talk;");
   });
 
   test("a refused delete shows the plan and the reason, not the plan alone", async () => {
@@ -1049,3 +1374,116 @@ describe("what recall attached reaches the app (sources under an answer)", () =>
   });
 });
 
+
+describe("ask your memory (D-152): POST /api/memory-ask", () => {
+  const ANSWER = {
+    ok: true, answer: "The dashboard listens on 30600 (memory/infra.md).", found: 2, backend: "ollama", model: "qwen3.8:27b", local: true, held: 0, searched: true,
+    sources: [{ path: "memory/infra.md", title: "Infra", section: "Ports" }, { path: "memory/b.md" }],
+    pieces: [{ path: "memory/infra.md", section: "Ports", excerpt: "The second-brain dashboard listens on port 30600" }],
+  };
+  const post = (body: unknown, init: { token?: string | null; host?: string; signal?: AbortSignal } = {}) => req("/api/memory-ask", { method: "POST", body: JSON.stringify(body), ...init });
+
+  test("it is `memory ask --json` with the started flags and the question after --, under a deadline; the answer passes field by field", async () => {
+    const { deps } = fakeDeps();
+    const seen: { args: readonly string[]; timeoutMs: number | undefined }[] = [];
+    const h = handler({ ...deps, run: async (args, options) => (seen.push({ args, timeoutMs: options?.timeoutMs }), { code: 0, stdout: JSON.stringify({ ...ANSWER, read: 2, extra: "<b>not passed</b>" }), stderr: "ohmyagi: recall: 2 piece(s)\n" }) }, "tok", HOSTS);
+    const res = await h(post({ question: "which port does the dashboard use?", scope: "memory" }));
+    expect(res.status).toBe(200);
+    expect(seen).toEqual([{ args: ["memory", "ask", "/a", "--subject", "example", "--scope", "memory", "--json", "--backend", "ollama", "--", "which port does the dashboard use?"], timeoutMs: MEMORY_ASK_TIMEOUT_MS }]);
+    expect(await res.json()).toEqual(ANSWER);
+  });
+
+  test("a question that starts with dashes is asked as written, after --, never read as a flag", async () => {
+    const { deps, runs } = fakeDeps();
+    const h = handler(deps, "tok", HOSTS);
+    for (const question of ["--subject other", "-v?", "--json"]) {
+      await h(post({ question }));
+      const args = runs.at(-1)!;
+      expect(args.slice(-2)).toEqual(["--", question]);
+      expect(args.indexOf("--")).toBe(args.length - 2);
+    }
+  });
+
+  test("the body is checked before anything runs: no question, an empty one, one over 2000 characters, a bad scope", async () => {
+    const { deps, runs } = fakeDeps();
+    const h = handler(deps, "tok", HOSTS);
+    for (const bad of [{}, { question: 3 }, { question: "   " }, { question: "x".repeat(2001) }, { question: "ok?", scope: "--rm" }, { question: "ok?", scope: "everything" }]) {
+      expect((await h(post(bad))).status, JSON.stringify(bad).slice(0, 40)).toBe(400);
+    }
+    expect(runs).toEqual([]);
+  });
+
+  test("the same key and Host as every other route", async () => {
+    const { deps, runs } = fakeDeps();
+    const h = handler(deps, "tok", HOSTS);
+    expect((await h(post({ question: "q" }, { token: null }))).status).toBe(401);
+    expect((await h(post({ question: "q" }, { token: "wrong" }))).status).toBe(401);
+    expect((await h(post({ question: "q" }, { host: "evil.example:30701" }))).status).toBe(421);
+    expect(runs).toEqual([]);
+  });
+
+  test("one ask per agent at a time — held until the child exits, even when the asker gave up — then the next runs", async () => {
+    const { deps } = fakeDeps();
+    let release!: () => void;
+    let started = 0;
+    const h = handler({ ...deps, run: async () => { started += 1; await new Promise<void>((r) => (release = r)); return { code: 0, stdout: JSON.stringify(ANSWER), stderr: "" }; } }, "tok", HOSTS);
+    // The phone asks, then gives up waiting: its request is aborted while the child still runs.
+    const gaveUp = new AbortController();
+    const first = h(post({ question: "one" }, { signal: gaveUp.signal }));
+    // Gives up once the child is really running — not after 5 ms, by which a slow runner may not have started it.
+    expect(await waitFor(() => started === 1)).toBe(true);
+    gaveUp.abort();
+    const second = await h(post({ question: "two" }));
+    expect(second.status).toBe(409);
+    expect(((await second.json()) as { error: string }).error).toBe(ASK_BUSY);
+    expect(started).toBe(1);
+    release();
+    await first;
+    const third = h(post({ question: "three" }));
+    // `release` is the third child's only once it has started; released earlier, it ends nothing and this hangs.
+    expect(await waitFor(() => started === 2)).toBe(true);
+    release();
+    expect((await third).status).toBe(200);
+    expect(started).toBe(2);
+  });
+
+  test("a child past the deadline is 504; nothing searched passes as searched: false; no JSON is an error with its last lines", async () => {
+    const { deps } = fakeDeps();
+    const outs = [
+      { code: -1, stdout: "", stderr: "", timedOut: true },
+      { code: 3, stdout: JSON.stringify({ ok: false, searched: false, error: "nothing searched — no index", answer: "", sources: [], found: 0, backend: null, model: null }), stderr: "" },
+      { code: 1, stdout: "", stderr: "ohmyagi: no backend answered\n" },
+    ];
+    const h = handler({ ...deps, run: async () => outs.shift()! }, "tok", HOSTS);
+    expect((await h(post({ question: "q" }))).status).toBe(504);
+    expect(await (await h(post({ question: "q" }))).json()).toMatchObject({ ok: false, searched: false, error: "nothing searched — no index", found: 0 });
+    expect(await (await h(post({ question: "q" }))).json()).toEqual({ ok: false, error: "no backend answered" });
+    expect(MEMORY_ASK_TIMEOUT_MS).toBeGreaterThan(180_000);
+  });
+
+  test("askAnswer: only the contract's shapes pass; sources deduplicated by path and section; the answer capped; ok needs exit 0 and ok", () => {
+    const out = askAnswer(JSON.stringify({
+      ok: true, answer: "a", found: "2", backend: 7,
+      sources: [{ path: "memory/a.md", title: 5, section: "" }, { title: "no path" }, { path: "memory/a.md" }, { path: "memory/a.md", section: "S" }, { path: "memory/a.md", section: "S", title: "again" }],
+      pieces: [{ path: "memory/a.md", excerpt: "e" }],
+    }), 0, "");
+    expect(out).toEqual({ ok: true, answer: "a", sources: [{ path: "memory/a.md" }, { path: "memory/a.md", section: "S" }], found: 0, backend: null, model: null, local: false, held: 0, pieces: [{ path: "memory/a.md", excerpt: "e" }], searched: true });
+    const long = askAnswer(JSON.stringify({ ok: true, answer: "y".repeat(ASK_ANSWER_MAX_CHARS * 3) }), 0, "");
+    expect([...(long["answer"] as string)].length).toBe(ASK_ANSWER_MAX_CHARS);
+    expect((long["answer"] as string).endsWith("…")).toBe(true);
+    expect(askAnswer(JSON.stringify({ ok: true, answer: "a" }), 1, "the ledger did not record it")).toMatchObject({ ok: false, error: "the ledger did not record it" });
+  });
+
+  test("the page asks, says it is searching, links each source to Read, and keeps the pieces behind a closed toggle", () => {
+    expect(PAGE_HTML).toContain('api("/api/memory-ask", { question: q, scope: memKind || "all" })');
+    expect(PAGE_HTML).toContain("Searching your memory…");
+    expect(PAGE_HTML).toContain("b.onclick = () => openMemory(s.path)");
+    expect(PAGE_HTML).toContain('el("details", "changed"); d.append(el("summary", "", "Show the pieces it read');
+    expect(PAGE_HTML).not.toMatch(/d\.open = true|<details open/);
+    // /search in the chat asks too (D-086: a command is what the page does), and says its sources as text.
+    expect(PAGE_HTML).toContain('api("/api/memory-ask", { question: words, scope })');
+    expect(PAGE_HTML).toContain('"\\n\\nSources: " + from');
+    // The raw route stays for whoever must show raw pieces (the app's management views); the page no longer pastes them.
+    expect(PAGE_HTML).not.toContain('api("/api/memory-search"');
+  });
+});

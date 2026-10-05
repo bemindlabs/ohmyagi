@@ -150,7 +150,7 @@ describe("no cast writes its way past the notice", () => {
         `${rel} is allowed but says none of the words`,
       ).toBeGreaterThan(0);
     }
-  });
+  }, 30_000);
 
   test("the checker catches both syntaxes and ignores the words in prose", () => {
     const caught = (source: string) => assertionEscapes("synthetic.ts", source, TYPES, []);

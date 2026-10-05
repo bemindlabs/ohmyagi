@@ -27,9 +27,23 @@ import { readdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import ts from "typescript";
 
+/**
+ * Parsed trees, by path, each kept with the exact text it was parsed from.
+ *
+ * `bun test` runs every file in one process, and a dozen guard tests walk the same `src/` tree — each of them
+ * parsing every file again. Under `bun run coverage` on a loaded runner that alone took one of them past bun's
+ * 5 s timeout. A tree is reused only for identical text, so a synthetic control at a real path, or a file that
+ * changed, is parsed afresh: the cache can make a check faster, never different.
+ */
+const parsed = new Map<string, { readonly source: string; readonly tree: ts.SourceFile }>();
+
 /** Parse once, with positions, so a hit can name a line. */
 function parse(path: string, source: string): ts.SourceFile {
-  return ts.createSourceFile(path, source, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS);
+  const known = parsed.get(path);
+  if (known !== undefined && known.source === source) return known.tree;
+  const tree = ts.createSourceFile(path, source, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS);
+  parsed.set(path, { source, tree });
+  return tree;
 }
 
 /** Every `.ts` file under a directory, recursively. */

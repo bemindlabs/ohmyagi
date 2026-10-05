@@ -80,6 +80,7 @@ E5 ──────┴──> E10 Web console (ทุกปุ่มคือ�
                                                     ┌── E16 Platform (Bun·Hono·PG) ◀─┤ ◀ ถัดไป ขนานกัน (D-125)
                                                     ├── E14 App (Expo·EAS·IAP) ◀─────┘   ซื้อ/managed รอ E16b + E13
                                                     └── E13 Deploy (VPS·GCP·AWS) ──> E15 Agent hiring (หลัง E16a)
+E5 + E12 ──> E17 Act · tasks · computer use (D-149: browser → task → desktop ทีหลัง)
 ```
 
 **เส้นวิกฤต:** `E0 → E1 → E2 → E5` = จุดที่ agent ยืนเองได้และลงมือเองได้ (นิยามของ D-015)
@@ -831,6 +832,41 @@ E5 ──────┴──> E10 Web console (ทุกปุ่มคือ�
 | S16.7 | (b) provisioning managed — สั่ง `ohmyagi deploy` ต่อลูกค้า · destroy เมื่อยกเลิก · ส่งกุญแจปลดล็อกผ่านอุปกรณ์ลูกค้า (D-101, D-111) | 3 | **สูงสุด** |
 
 **ทั้ง epic** — AC1: ไม่มี log/DB ใดเก็บเนื้อหาแชท/memory/prompt · AC2: backup + uptime + secret rotation มีขั้นตอนเขียนไว้ · AC3: PDPA/GDPR — ข้อมูลที่เก็บจริงมีรายการ และลบตามคำขอได้ (I-4)
+
+---
+
+### E17 — Act, take tasks, use the computer · ลงมือได้ · สั่งงานได้ · ใช้คอมพิวเตอร์ได้ (D-149)
+
+> เจ้าของสั่ง 2026-10-04 (D-149) · grooming ปิดแล้ว D-150..D-155 · ที่มา: `notes/2026-10-04_capability-survey.md` §5–6 และ `notes/2026-10-04_e2e-actions.md`
+> **เบราว์เซอร์ก่อน (D-150)** · **container ต่องานบนเซิร์ฟเวอร์ (D-151)** · **หมวดใหม่ `operate` = min(operate, reach) + รายการเรื่องอ่อนไหวหยุดถามทุกระดับ + อนุมัติผูกกับ action (D-153)** · **task ใน engine (D-154)** · **Playwright MCP ตัวเดียวทุก CLI (D-155)**
+> **กฎของทั้ง epic (D-149):** AC ของทุก story มี **e2e บน backend จริง** ใน `test/e2e/*.e2e.ts` — รัน CLI/model จริง ตรวจผลจริง (ไฟล์ · process · server ที่ได้รับ request · บรรทัด ledger) บนทุก backend ที่บอกว่ารองรับ · backend ที่ไม่รองรับต้องมี e2e ที่พิสูจน์ว่าปฏิเสธตรง ๆ · stub นับเป็น unit test เท่านั้น
+> **ลำดับ (D-155):** operate dial (D-153) → container (D-151) → MCP (D-155) → task (D-154) · Phase A ทำได้เลย (ปิด e2e ที่ล้ม 6 ข้อของ 2026-10-04) · เดสก์ท็อปทีหลัง · Mac ของเจ้าของต้อง spike ก่อน (D-150) — ยังไม่เปิดเป็น SP
+
+| # | Story | วัน | ค่า/แรง |
+|---|---|---|---|
+| S17.1 | ตาราง capability ใน engine (backend × model → act · run · browser · desktop · vision) แสดงใน `ohmyagi backends` และ `doctor` · turn ที่ต้องใช้ความสามารถที่ backend ไม่มี = ปฏิเสธพร้อมเหตุผล ไม่ใช้ turn (codex เมื่อ bwrap เริ่มไม่ได้ · ollama ที่ระดับ ≥ 2 · gemini ที่บัญชีไม่มีสิทธิ์) | 2 | สูง |
+| S17.2 | copilot ได้สิทธิ์ระดับ 2 (`GrantSpec` แบบ D-119) · ⏳ **flag ที่จะให้เป็นคำตัดสินของเจ้าของ** (`--allow-all-tools` หรือ `--allow-tool shell`/`write`) | 0.5 | กลาง |
+| S17.3 | คำสั่ง propose ระดับ 1 (D-045) ถึง vendor ที่ไม่มี system flag (codex · kimi · copilot · gemini) หรือปฏิเสธระดับ 1 บน vendor เหล่านั้น · ⏳ **ทางไหนเป็นคำตัดสินของเจ้าของ** (ใส่ใน prompt = เปลี่ยน D-039) | 1 | กลาง |
+| S17.4 | `turn --proposal` รันเฉพาะสิ่งที่อนุมัติ — prompt สร้างจาก record ไม่รับจากผู้เรียก · prompt ที่ต่างจากที่อนุมัติ = ปฏิเสธ ไม่จ่าย approval · `/api/turn` ส่งแค่ id (D-153 · ปิด e2e finding 6) · 🟡 **ฝั่ง engine ทำแล้วบน branch `feat/e17-operate-dial`** (action + digest ใน record · decision ผูก digest · turn/เว็บ/แอปส่งแค่ id) · e2e `approve-once` แก้แล้ว รอรันบน backend จริง | 1 | **สูงสุด** |
+| S17.5 | `ohmyagi task new\|show\|stop\|list` (D-154) — แผนที่บันทึกไว้ · log ทีละขั้น · งบ (เวลา · turn · token) · ทุกขั้นคือ `turn` ปกติ (ledger · dial · fence · egress · stop ยังคุม) · ทำต่อหลัง crash · ไม่มีเพดาน 120 วินาทีต่องาน (แต่ละขั้นมี timeout ของตัวเอง) | 4 | **สูงสุด** |
+| S17.6 | ช่องทางของ task (D-154, D-086) — CLI + เว็บ + แอปก่อน (`/api/tasks` API เดียว) แล้ว Telegram `/task` · A2A และ trigger ได้แค่**เสนอ** task | 3 | สูง |
+| S17.7 | container เบราว์เซอร์ต่องาน (D-151) — headless Chromium · profile สะอาดทุกงาน · proxy ที่ให้ออกเฉพาะ origin ที่งานอนุญาต · Playwright trace · `ohmyagi stop` → `docker kill` · Chromium `--no-sandbox` ⇒ container คือรั้ว | 4 | **สูงสุด** (ประตู) |
+| S17.8 | มือเบราว์เซอร์ของทุก CLI ผ่าน Playwright MCP (D-155) — config ของ om-agi เท่านั้น (claude `--mcp-config <ไฟล์ของ om-agi>` + `--strict-mcp-config` · เทียบเท่าใน CLI อื่น ตั้งราย vendor แบบ D-119/D-121) · MCP ของเจ้าของยังปิด (D-047) · local chain: fence เปิดเพิ่ม loopback port เดียว · egress ของ MCP server เองถูก fence | 3 | **สูงสุด** |
+| S17.9 | หมวด `operate` + รายการเรื่องอ่อนไหว + อนุมัติผูกกับ action (D-153) — ระดับจริง = min(operate, reach) · 0 ไม่ใช้เบราว์เซอร์ · 1 ดูแล้วเสนอ (D-045) · 2 ทำเฉพาะ origin ที่งานอนุญาต บันทึกและรายงาน (D-043) · 3 ทุก origin ต้องพิมพ์ยืนยันที่ terminal บนเครื่องนี้ (D-042) · จ่ายเงิน/ส่งข้อความ-อีเมล/ลบ/ใส่ credential/ยอมรับข้อตกลง **หยุดรอ "ใช่" ทุกระดับ** · อนุมัติผูกกับ step นั้นและใช้ครั้งเดียว (D-144) · 🟡 **ส่วนแรกทำแล้วบน branch `feat/e17-operate-dial`:** หมวด `operate` (dial `@2`, ไฟล์ `@1` อ่านเป็น operate 0, แสดงใน `autonomy` · หน้าเว็บ · `/api/state` ไทย/อังกฤษ) · `src/decide/sensitive.ts` (คงที่ เพิ่มได้อย่างเดียว test กันการลบ · ยังไม่ต่อกับเบราว์เซอร์) · approval ผูก digest ของ action (S17.4) · เหลือ: ต่อกับ step ของเบราว์เซอร์ (หลัง S17.7–S17.8) และ e2e | 2 | **สูงสุด** |
+| S17.10 | ดูและ audit — ภาพหน้าจอสดบนเว็บและในแอป · บันทึกอยู่ใต้ `personal/` ที่ `erase` ไปถึง | 2 | สูง |
+| S17.11 | ⏸ **ทีหลัง (D-150, D-155):** เดสก์ท็อปเสมือนใน container (Xvfb · WM · xdotool · noVNC) + loop ภาพหน้าจอ → action ของ om-agi บน LiteLLM `local-coder` · computer-use API ของ vendor เฉพาะเจ้าของที่มี key (BYOK) | 5 | กลาง |
+
+**S17.1** — AC1: ตารางตรงกับผล `actions.e2e.ts` ของทุก backend บนเครื่องนี้ · AC2: **e2e** codex/ollama/copilot ที่ระดับ 2 ถูกปฏิเสธพร้อมเหตุผล และไม่มีอะไรถูกใช้ (ไม่มีบรรทัด ledger) · AC3: **e2e** claude · grok · kimi และ local ทั้งสองทางยังผ่าน write/run/stop
+**S17.2** — AC1: **e2e** copilot ผ่าน write-l2 · run-l2 · stop · AC2: **e2e** ระดับ 1 ยังเขียน 0 ไฟล์
+**S17.3** — AC1: **e2e** kimi propose-l1 ยื่น proposal ได้ หรือถูกปฏิเสธพร้อมเหตุผล (ตามที่เจ้าของเลือก) · AC2: **e2e** codex ระดับ 1 แบบเดียวกัน
+**S17.4** — AC1: **e2e** approval ของ X รัน Y ไม่ได้ — prompt อื่นได้ exit 4 ไม่มีบรรทัด ledger ใหม่ และ approval ยังจ่ายได้ · AC2: **e2e** approve-once ยังผ่านบนทุก backend ที่ลงมือได้ โดยส่งแค่ `--proposal <id>` · AC3: record ที่ถูกแก้หลังอนุมัติ = ปฏิเสธ ไม่จ่าย (unit + CLI)
+**S17.5** — AC1: **e2e** task 3 ขั้น (เขียน → รัน → ตรวจ) จบบน claude-local และ claude พร้อมบรรทัด progress ต่อขั้น · AC2: **e2e** `ohmyagi stop` กลาง task หยุดขั้นที่รันอยู่ และไม่มีขั้นถัดไปเริ่ม · AC3: ledger มีบรรทัดต่อขั้น ผูกกับ task id · AC4: **e2e** kill process กลางขั้นแล้ว `task` ทำต่อได้จากขั้นที่ค้าง
+**S17.6** — AC1: **e2e** task ที่สร้างผ่าน web API รันบน backend จริง และ progress ขึ้นใน `/api/state` · AC2: **e2e** ข้อความ A2A และ trigger ไม่เริ่ม task เองโดยไม่มี "ใช่" · AC3: **e2e** Telegram `/task` สร้าง task เดียวกัน (หลังเว็บและแอป)
+**S17.7** — AC1: **e2e** agent เปิดหน้าที่ test เสิร์ฟ กรอกฟอร์มแล้วส่ง และ server ของ test ได้รับค่าตรงทุกตัว · AC2: **e2e** origin ที่ไม่อยู่ใน allowlist ถูก proxy กันและบันทึก · AC3: **e2e** `stop` kill container และไม่มี process ของมันเหลือ · AC4: profile ไม่ถูกใช้ซ้ำข้ามงาน
+**S17.8** — AC1: **e2e** งานฟอร์มของ S17.7 ผ่านบน claude-local · grok-local · claude · grok · kimi และ backend ที่ไม่ได้ต่อถูกปฏิเสธตรง ๆ · AC2: MCP ของเจ้าของยังไม่ถูกโหลด (ตรวจแบบ D-119) · AC3: **e2e** local chain ต่อได้แค่ LiteLLM + port ของ MCP ตัวเดียว
+**S17.9** — AC1: **e2e** ระดับ 1 เสนอการคลิกแต่ไม่คลิก (server ของ test ไม่ได้รับอะไร) · AC2: **e2e** ปุ่ม "pay" หรือ "send" หยุดรอ "ใช่" แม้ที่ระดับ 3 · AC3: **e2e** ระดับ 2 คลิก origin นอก allowlist ไม่ได้ และรายงานสิ่งที่ทำแบบ D-043 · AC4: รายการเรื่องอ่อนไหวลบไม่ได้ (test floor) · AC5: approval ใช้ได้กับ step ที่อนุมัติเท่านั้น ครั้งเดียว
+**S17.10** — AC1: **e2e** ภาพหน้าจอของ task ที่รันอยู่ขึ้นบนหน้าเว็บ · AC2: **e2e** `erase` ลบบันทึกของมัน และ dry run แสดงรายการ
+**S17.11** — AC1: **e2e** โมเดลในเครื่องเปิดแอปใน container แล้วเปลี่ยนสิ่งที่ test อ่านกลับได้ · AC2: วัดความแม่นยำบนชุดคงที่ บันทึกใน `notes/` · AC3: ภาพหน้าจอไม่ออกจากเครื่องบนทาง local
 
 ---
 

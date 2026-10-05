@@ -316,7 +316,8 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // the existing fence helper. Its process behaviour is covered by fence tests.
   // 136 since S13.1: one `case` label and one import, for `deploy`.
   // 142 since S15.8: two `case` labels and two imports, for `key` and `usage`.
-  ["bin/om-agi.ts", { lines: 142, why: "entry point — dispatch and process.exit" }],
+  // 145 since E17 (D-151): one `case` label and one import, for `browser`.
+  ["bin/om-agi.ts", { lines: 145, why: "entry point — dispatch and process.exit" }],
   // One `export const USAGE = \`…\`` around 240 lines of help text. A test could
   // import it and the floor would read 100% off a single declaration while the
   // text said anything at all; the size is the only honest number here.
@@ -345,7 +346,16 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // --market/--listing/--job binding, `usage verify`'s pins, and that a number must be plain integer digits.
   // 722 since D-142: `turn` says whose model `--model` is (one backend's, `backend=model` per step, refused
   // before anything is sent), and `web` and `chat serve` list their `--backend`/`--model` and how they are read.
-  ["bin/usage.ts", { lines: 722, why: "help text — one declaration, 722 lines of prose" }],
+  // 729 since D-144 §2: `proposal new --refile`, a spent approval filed again from its own record.
+  // 744 since D-152: `memory ask` — a summary from memory with its sources, read-only, `--` before the question, its exit codes.
+  // 747 since the PR #14 review: `memory ask` says it has no tools, and which backends answer.
+  // 750 since the D-152 follow-up: `--` is memory ask's alone, and where each ask's recall numbers go.
+  // E17 (D-151, D-155): the four `browser` entries (up, down, status, mcp-config), and `stop` saying it also
+  // docker-kills every browser task.
+  // 787 since E17's browser on top of D-153: 758 + the browser entries and the PR #19 review's words (`up`'s token
+  // and brake, `mcp-config`'s operate `--level`, mode 600, held sensitive actions).
+  // 789 since the PR #19 re-review: `up`'s `--operate 1|2`, the most its guard serves.
+  ["bin/usage.ts", { lines: 789, why: "help text — one declaration, 789 lines of prose" }],
   // The commands. Each is `cmdX(rest)` returning an exit code, and each reads
   // `process.env`, `homedir()` or `cwd` on its way. Calling them in-process
   // would mean swapping `HOME` inside the test runner; the tests spawn instead.
@@ -353,7 +363,7 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // in `dial.ts` can be called from a test and it is held to the floor, so the
   // report-writing that can only run in a spawned process lives on this side of
   // the line.
-  ["bin/commands/autonomy.ts", { lines: 295, why: "command — run by spawning the CLI" }],
+  ["bin/commands/autonomy.ts", { lines: 313, why: "command — run by spawning the CLI" }],
   ["bin/commands/backends.ts", { lines: 58, why: "command — run by spawning the CLI (test/cli/backends.test.ts runs it end to end)" }],
   ["bin/commands/doctor.ts", { lines: 91, why: "command — run by spawning the CLI (the LiteLLM key and own addresses it reads: readLiteLLMKey, checkLocalAction)" }],
   // 266 since odd3: `printErasePlan` takes the stream it writes to, and
@@ -402,14 +412,28 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // 423 since D-142: the picker's names come from the vendors' documented lists and the price table, never the
   // ledger; the local model is `--model`'s ollama step; a start `--model` no turn would take is refused; the last
   // turn and a turn's detail carry what was asked apart from what ran.
-  ["bin/commands/web.ts", { lines: 423, why: "command — serves until Ctrl-C; its parts are tested in src/web (the --qr print: src/web/qr.ts; the key change: startWeb + replaceKey; the push wiring and 30 s watch, per page key: src/web/push.ts, checked live against a loopback relay 2026-09-27)" }],
-  ["bin/commands/memory.ts", { lines: 629, why: "command — run by spawning the CLI" }],
+  // 424 since D-144 §2: the state lists the spent approvals that may be filed again (`refileable`, from the store).
+  // 429 since D-152: `run` with a deadline for `/api/memory-ask` — the deadline itself (SIGTERM, then SIGKILL to the
+  // child's group) is src/web/deadline.ts, on the floor; the route's use is tested in test/web/web.test.ts.
+  ["bin/commands/web.ts", { lines: 434, why: "command — serves until Ctrl-C; its parts are tested in src/web (the --qr print: src/web/qr.ts; the key change: startWeb + replaceKey; the push wiring and 30 s watch, per page key: src/web/push.ts, checked live against a loopback relay 2026-09-27)" }],
+  // 911 since D-152: `memory ask` (routing, egress, ledger, a read-only chain) — run by test/cli/memory-ask.test.ts;
+  // its words and arithmetic are src/memory/ask.ts, on the floor.
+  // 923 since the PR #14 review: no-tools backends only, relevance before the split; an ignored stop is ended by
+  // CliExec's own SIGKILL round (PR #12), not a second one here.
+  // 927 since the D-152 follow-up: each ask's recall numbers appended; the answer read against the handed paths.
+  ["bin/commands/memory.ts", { lines: 927, why: "command — run by spawning the CLI" }],
   ["bin/commands/observe.ts", { lines: 750, why: "command — run by spawning the CLI" }],
   // S5.2. The store itself is `src/decide/proposals.ts`, on the floor and
   // tested there; what is here is the parsing, the four subcommands, and the
   // refusals printed on every run — all of which only happen in a spawned
   // process, and are exercised by `test/cli/proposal.test.ts`.
-  ["bin/commands/proposal.ts", { lines: 388, why: "command — run by spawning the CLI" }],
+  // 424 since D-144 and its review: `decide` rewrites a record at the path it was read from, not one built from
+  // its id; `new --refile <id>` files a spent approval whose turn sent nothing again, from its own record (§2).
+  // 456 since D-144's follow-up: a refile is claimed (`claimRefile`) before its record is written, and carries
+  // who first filed it.
+  // 464 since D-144's review, again: a refile used up by an attempt that never wrote its proposal says so, rather
+  // than naming a proposal nobody can find (`refileWritten`).
+  ["bin/commands/proposal.ts", { lines: 470, why: "command — run by spawning the CLI" }],
   ["bin/commands/rebuild.ts", { lines: 38, why: "command — run by spawning the CLI" }],
   // 570 since S15.8: `soul card` reads the agent's key — never makes one — and prints its public half.
   // 572 since D-142: `soul verify --model` is routed per backend the way `turn` routes it.
@@ -420,7 +444,9 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // 191: the line that prints why a group signal was narrowed to one process.
   // A signal that reached less than it looks like it reached is the one thing
   // this command must not leave a person to infer.
-  ["bin/commands/stop.ts", { lines: 192, why: "command — run by spawning the CLI" }],
+  // 216 since E17 (D-151): step 4, `docker kill` on every browser task of this state root (src/browser/runtime.ts's
+  // sweep, on the floor), the command to run by hand when docker cannot be asked, and a failed kill counted.
+  ["bin/commands/stop.ts", { lines: 216, why: "command — run by spawning the CLI" }],
   // 169 since E5: the dial is consulted before anything is sent, and the run
   // record is written before the chain runs and removed in a `finally`.
   // 249 since S5.2: `--proposal` is checked after the brake and before
@@ -437,7 +463,23 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // 574 since D-142: `--model` is routed to the one step it was chosen for (`routeModels`), checked before
   // anything is read or sent and routed again on the real chain; each step is built with its own model, a note
   // says which step got which, and `--json` names what the answering backend ran and what it was asked apart.
-  ["bin/commands/turn.ts", { lines: 574, why: "command — run by spawning the CLI" }],
+  // 668 since D-144 and its review: the approval is read early and claimed as the last step before the prompt
+  // goes (`claimApproval`, check and claim in one step), a turn that lost the claim is told which turn has it,
+  // each backend handed the prompt is counted, and `cmdTurn` wraps the turn so every way out after a claim says
+  // what became of the approval — it ran, it may have, or nothing was sent, when the record is marked so it can
+  // be filed again (§2).
+  // 669 since D-144's follow-up: the answer is recorded when a backend's run returns it, not after the turn's
+  // other work.
+  // 666 since D-145: a turn the ledger refuses prints the ledger's own remedy for that kind of refusal — a held
+  // lock and an unwritable path want opposite advice — instead of one line that told both to delete the ledger.
+  // E17 (D-151, D-155). The container, the sweep and the MCP config are `src/browser/` (allowlist, runtime,
+  // mcp-config), on the floor and tested there; what is here is the four subcommands' parsing and printing, run by
+  // test/cli/browser.test.ts against a scripted docker, and the real `up` by test/e2e/browser.e2e.ts.
+  // 186 since the PR #19 review: the token never printed (`shown`, mcp-config's --json lists paths), and
+  // mcp-config's `--level 1|2`, run through effectiveDial and restrain like a turn's level.
+  // 189 since the PR #19 re-review: `up --operate 1|2`, shown in status, and handed to mcp-config's wiring.
+  ["bin/commands/browser.ts", { lines: 189, why: "command — run by spawning the CLI; its parts are tested in src/browser, and test/cli/browser.test.ts runs it" }],
+  ["bin/commands/turn.ts", { lines: 707, why: "command — run by spawning the CLI" }],
   ["bin/commands/worn.ts", { lines: 66, why: "command — run by spawning the CLI" }],
 ]);
 
@@ -532,7 +574,7 @@ export const PROOFS = new Map<string, Proof>([
       provedOn: "2026-09-24",
       by: "npm run demo -- --model <a local model>",
       result:
-        "15/15 criteria passed on 2026-09-28 on the tree released as 0.9.0 (run b7384f44, table kept in notes/2026-09-28_demo-v0.9.0.txt), on 0.8.3 the same day (run de86a5a6, table kept in notes/2026-09-28_demo-v0.8.3.txt), on 0.8.2 on 2026-09-27 (run c7517aef, table kept in notes/2026-09-27_demo-v0.8.2.txt), on 0.8.1 the same day (run 0a4d532e, table kept in notes/2026-09-27_demo-v0.8.1.txt), on 0.8.0 the same day (run 391c781f, table kept in notes/2026-09-27_demo-v0.8.0.txt), on 0.7.2 on 2026-09-26 (run f28cd0ba, table kept in notes/2026-09-26_demo-v0.7.2.txt), on 0.7.1 the same day (run 0eaea0cf, table kept in notes/2026-09-26_demo-v0.7.1.txt), on 0.7.0 the same day (run 1c88d842, table kept in notes/2026-09-26_demo-v0.7.0.txt), on 0.6.1 the same day (run 3eaea63f, table kept in notes/2026-09-26_demo-v0.6.1.txt), on 0.6.0 the same day (run 1972948d, table kept in notes/2026-09-26_demo-v0.6.0.txt), on 0.5.1 on 2026-09-25 (run caa68c60, table kept in notes/2026-09-25_demo-v0.5.1.txt), on 0.5.0 the same day (run 5e5f6903, table kept in notes/2026-09-25_demo-v0.5.0.txt), on 0.4.2 the same day (run fbad84d0, table kept in notes/2026-09-25_demo-v0.4.2.txt), on 0.4.1 the same day (run 8a52848c, table kept in notes/2026-09-25_demo-v0.4.1.txt), on 0.4.0 the day before (run 065c6900, table kept in notes/2026-09-24_demo-v0.4.0.txt), on 0.3.0 the same day (run cbeda900, " +
+        "15/15 criteria passed on 2026-10-05 on the tree released as 0.10.0 (run ff1ad2c7, table kept in notes/2026-10-05_demo-v0.10.0.txt), on 0.9.0 on 2026-09-28 (run b7384f44, table kept in notes/2026-09-28_demo-v0.9.0.txt), on 0.8.3 the same day (run de86a5a6, table kept in notes/2026-09-28_demo-v0.8.3.txt), on 0.8.2 on 2026-09-27 (run c7517aef, table kept in notes/2026-09-27_demo-v0.8.2.txt), on 0.8.1 the same day (run 0a4d532e, table kept in notes/2026-09-27_demo-v0.8.1.txt), on 0.8.0 the same day (run 391c781f, table kept in notes/2026-09-27_demo-v0.8.0.txt), on 0.7.2 on 2026-09-26 (run f28cd0ba, table kept in notes/2026-09-26_demo-v0.7.2.txt), on 0.7.1 the same day (run 0eaea0cf, table kept in notes/2026-09-26_demo-v0.7.1.txt), on 0.7.0 the same day (run 1c88d842, table kept in notes/2026-09-26_demo-v0.7.0.txt), on 0.6.1 the same day (run 3eaea63f, table kept in notes/2026-09-26_demo-v0.6.1.txt), on 0.6.0 the same day (run 1972948d, table kept in notes/2026-09-26_demo-v0.6.0.txt), on 0.5.1 on 2026-09-25 (run caa68c60, table kept in notes/2026-09-25_demo-v0.5.1.txt), on 0.5.0 the same day (run 5e5f6903, table kept in notes/2026-09-25_demo-v0.5.0.txt), on 0.4.2 the same day (run fbad84d0, table kept in notes/2026-09-25_demo-v0.4.2.txt), on 0.4.1 the same day (run 8a52848c, table kept in notes/2026-09-25_demo-v0.4.1.txt), on 0.4.0 the day before (run 065c6900, table kept in notes/2026-09-24_demo-v0.4.0.txt), on 0.3.0 the same day (run cbeda900, " +
         "table kept in notes/2026-09-24_demo-v0.3.0.txt), on 0.2.0 the same day (run fd433912, " +
         "table kept in notes/2026-09-24_demo-v0.2.0.txt), and earlier that day on the tree released as 0.1.0 (run 2ddacb38, " +
         "table kept in notes/2026-09-24_demo-v0.1.0.txt). Before that, " +
@@ -547,13 +589,16 @@ export const PROOFS = new Map<string, Proof>([
   [
     "scripts/cli-parity.ts",
     {
-      sha256: "d39f7e15aed08e8a1eb5b00b307c11bb4105da92e8049989350ed18625dba027",
-      provedOn: "2026-09-28",
+      sha256: "48c737c6eb5ea422aeca5144a3eedb6075b5bd667961a1f0c46e95b426257cc4",
+      provedOn: "2026-10-05",
       by: "npm run parity -- --base . --selftest",
       result:
         "exit 0 — control 1 steady, control 2 not blind to a changed character, control 3 not " +
         "blind to an added line, and control 4 refusing a side with no engine in it, over all " +
-        "18 case(s), 202 invocation(s) per side. Re-proved for `key` and `usage` (S15.8), which added " +
+        "18 case(s), 204 invocation(s) per side. Re-proved for `browser` (E17, D-151), which added bare " +
+        "`browser` and `browser wat` to `02-unknown` — usage errors only, since a real `up` starts a " +
+        "container and `status` asks docker. Before that, 18 case(s), 202 invocation(s) per side, proved " +
+        "2026-09-28. Re-proved for `key` and `usage` (S15.8), which added " +
         "bare `key`, bare `usage` and `usage wat` to `02-unknown` — usage errors only, since a real `key` " +
         "makes a random key and the two sides would differ by it — and which gave the engine " +
         "`OM_AGI_QDRANT_URL` pointing at the same dead address as `OLLAMA_HOST`, so no run of this " +

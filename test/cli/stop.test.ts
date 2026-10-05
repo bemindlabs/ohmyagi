@@ -35,6 +35,7 @@ import { procStat, runsRoot } from "../../src/decide/runs.ts";
 import { STOP_FILE } from "../../src/decide/stop.ts";
 import { stateRoot } from "../../src/state.ts";
 import { barePath, BUN, expectNoVendorOn } from "../support/bare-path.ts";
+import { waitFor } from "../support/wait.ts";
 
 const ROOT = join(import.meta.dir, "..", "..");
 const BIN = join(ROOT, "bin", "om-agi.ts");
@@ -70,10 +71,14 @@ const IGNORE_TERM = 'process.on("SIGTERM", () => {});';
 
 function stubSource(marker: string, stubborn: boolean): string {
   return `#!/usr/bin/env bun
-import { writeFileSync } from "node:fs";
-// Its own pid and start, so the test can check this exact process is gone.
-writeFileSync(${JSON.stringify(`${marker}.pid`)}, String(process.pid));
+import { renameSync, writeFileSync } from "node:fs";
+// The handler first: the pid file is the test's signal that this stub is ready to be stopped, so a stop can
+// never arrive before a stubborn stub has started ignoring SIGTERM.
 ${stubborn ? IGNORE_TERM : ""}
+// Its own pid and start, so the test can check this exact process is gone. Written whole, under a temporary
+// name first, so a test that sees the file never reads it half-written.
+writeFileSync(${JSON.stringify(`${marker}.pid.tmp`)}, String(process.pid));
+renameSync(${JSON.stringify(`${marker}.pid.tmp`)}, ${JSON.stringify(`${marker}.pid`)});
 // Alive for long enough that nothing here races. Nothing asserts on it.
 await Bun.sleep(30000);
 writeFileSync(${JSON.stringify(marker)}, "the turn ran to completion\\n");
@@ -140,14 +145,11 @@ async function runCli(harness: Harness, args: readonly string[]) {
   return { code: child.exitCode ?? -1, stdout, stderr };
 }
 
-/** Bounded poll. The bound catches a break; it is not a deadline (D-028). */
-async function until(done: () => boolean | Promise<boolean>, attempts = 600): Promise<boolean> {
-  for (let i = 0; i < attempts; i += 1) {
-    if (await done()) return true;
-    await Bun.sleep(25);
-  }
-  return await done();
-}
+/**
+ * Poll until `done`, giving up only after a minute. The bound catches a break, never a busy machine (D-028):
+ * a count of attempts was a budget of wall-clock time in disguise, and a loaded runner spends it in oversleeps.
+ */
+const until = (done: () => boolean | Promise<boolean>): Promise<boolean> => waitFor(done, { within: 60_000, every: 25 });
 
 /**
  * Is there anything at this path — file or directory?
@@ -252,9 +254,8 @@ describe("AC2 — a vendor that ignores SIGTERM is still stopped (D-044)", () =>
     const box = await harness(true);
     const turn = spawnCli(box, ["turn", SOUL, "--subject", "example", "--prompt", "anything"]);
 
+    // The stub writes its pid only once its SIGTERM handler is in, so from here the signal cannot beat it.
     expect(await until(async () => exists(`${box.marker}.pid`)), "the stub never started").toBe(true);
-    // Let the stub install its handler before the signal can arrive.
-    await Bun.sleep(300);
 
     const stop = await runCli(box, ["stop"]);
 

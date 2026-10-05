@@ -29,6 +29,7 @@ import { modelProblem } from "../exec/registry.ts";
 import { PAGE_HTML } from "./page.ts";
 import { encodeQr, qrPath } from "./qr.ts";
 import { keyPrint, newKey } from "./key.ts";
+import { ASK_ANSWER_MAX_CHARS, ASK_TIMEOUT_MS, askProblem, capAnswer } from "../memory/ask.ts";
 import { timingSafeEqual } from "node:crypto";
 
 export const TOKEN_HEADER = "x-ohmyagi-token";
@@ -58,8 +59,15 @@ export interface WebDeps {
   readonly profile: () => Promise<{ readonly ok: true; readonly profile: Profile } | { readonly ok: false; readonly reason: string }>;
   /** `soul edit` with this profile — a dry run unless `write`. */
   readonly editProfile: (profile: Profile, write: boolean) => Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string }>;
-  /** Run this engine with arguments; the result of the child. */
-  readonly run: (args: readonly string[]) => Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string }>;
+  /**
+   * Run this engine with arguments; the result of the child. With `timeoutMs`, a child still running then is sent
+   * SIGTERM and the result says `timedOut` — and it resolves only once that child has exited (D-152's ask is the
+   * one route that asks for it).
+   */
+  readonly run: (
+    args: readonly string[],
+    options?: { readonly timeoutMs?: number },
+  ) => Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string; readonly timedOut?: boolean }>;
   /**
    * S14.3 (D-130): the phones that asked to be told something is waiting. Absent on a page that does not offer
    * it; the routes then answer 404.
@@ -93,7 +101,7 @@ export interface WebServer {
 }
 
 const ID = /^[0-9a-f-]{8,64}$/;
-const CATEGORIES = ["read", "write", "run", "reach"];
+const CATEGORIES = ["read", "write", "run", "reach", "operate"];
 /**
  * A backend chain as `turn --backend` takes it, and a model name — nothing a shell or a flag could be smuggled
  * in. The model's rule is the engine's own (`modelProblem`, D-142), so the page can name exactly what `turn`
@@ -153,6 +161,50 @@ export function recallOf(value: unknown): {
   return { chars: count(r["chars"]), ceiling: count(r["ceiling"]), skipped: count(r["skipped"]), attached };
 }
 
+/**
+ * What `memory ask --json` printed, as `/api/memory-ask` answers it (D-152): `{ok, answer, sources, found, backend,
+ * model}` and beside them `local`, `held`, `pieces` (the excerpts behind "show the pieces it read") and `searched`.
+ * Field by field, so nothing but these shapes passes: the answer cut at {@link ASK_ANSWER_MAX_CHARS} whatever the
+ * child printed, sources deduplicated by path and section. A child that printed no JSON is an error with its last
+ * lines.
+ */
+export function askAnswer(stdout: string, code: number, notes: string): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    parsed = undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null) return { ok: false, error: notes || `it did not answer (exit ${code})` };
+  const r = parsed as Record<string, unknown>;
+  const text = (v: unknown, max = 500): string | undefined => (typeof v === "string" ? v.slice(0, max) : undefined);
+  const count = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : 0);
+  const list = (v: unknown): Record<string, unknown>[] =>
+    (Array.isArray(v) ? v : []).slice(0, 50).filter((x): x is Record<string, unknown> => typeof x === "object" && x !== null && typeof (x as Record<string, unknown>)["path"] === "string");
+  const optional = (name: string, v: unknown) => (text(v) === undefined || text(v) === "" ? {} : { [name]: text(v) });
+  const seen = new Set<string>();
+  const sources = list(r["sources"])
+    .map((src) => ({ path: text(src["path"])!, ...optional("title", src["title"]), ...optional("section", src["section"]) }))
+    .filter((src) => {
+      const id = `${src.path}\0${(src as { section?: string }).section ?? ""}`;
+      return seen.has(id) ? false : (seen.add(id), true);
+    });
+  const ok = code === 0 && r["ok"] === true;
+  return {
+    ok,
+    answer: typeof r["answer"] === "string" ? capAnswer(r["answer"]) : "",
+    sources,
+    found: count(r["found"]),
+    backend: text(r["backend"]) ?? null,
+    model: text(r["model"]) ?? null,
+    local: r["local"] === true,
+    held: count(r["held"]),
+    pieces: list(r["pieces"]).map((p) => ({ path: text(p["path"])!, ...optional("section", p["section"]), excerpt: text(p["excerpt"], 300) ?? "" })),
+    searched: r["searched"] !== false,
+    ...(ok ? {} : { error: text(r["error"], 1000) || notes || `it did not answer (exit ${code})` }),
+  };
+}
+
 /** Last lines of a child's stderr, for a message a person can read. */
 function said(stderr: string): string {
   return stderr
@@ -169,6 +221,34 @@ function said(stderr: string): string {
  * each request.
  */
 const distilling = new Map<string, { since: string; finished?: { ok: boolean; message: string } }>();
+/**
+ * D-144: the approved proposals whose turn is running now, per agent. Kept here for the same reason: a handler
+ * is made for each request, and two requests for one proposal are two handlers.
+ */
+const turning = new Set<string>();
+/** D-144 §2: the spent approvals being filed again now, per agent — one refile per id at a time. */
+const refiling = new Set<string>();
+/**
+ * D-152: the agents with an ask running now. One at a time per agent: an ask is a model call — minutes of a local
+ * GPU at worst — and a page or an app that sent one per keystroke must not start a process per keystroke. The
+ * mark is held until the child has exited, not until the asker stops waiting: a phone that gave up (or lost its
+ * connection) leaves its ask running here, and the next ask is told so rather than started beside it.
+ */
+const asking = new Set<string>();
+/** What an ask for an agent already answering one is told — with 409, and without a CLI started. */
+export const ASK_BUSY = "Already answering a question from this agent's memory — wait for that answer, then ask again.";
+/**
+ * How long `/api/memory-ask` waits for its child before ending it. The CLI holds its own model step to
+ * {@link ASK_TIMEOUT_MS} (sized for a model on this machine — see there); this is that plus a minute for recall,
+ * which may embed the question with a model that has to load first. Past it the child gets SIGTERM, which it
+ * answers by ending its backend's process group, and the page is told it took too long.
+ */
+export const MEMORY_ASK_TIMEOUT_MS = ASK_TIMEOUT_MS + 60_000;
+/** A proposal id as om-agi mints them. Filing again takes nothing looser: the id is the whole request. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+/** What a second turn for a proposal already running is told — with 409, and without a CLI started. */
+export const ALREADY_RUNNING =
+  "Already running — this approved suggestion's turn has not finished yet. It runs once, so nothing more was started.";
 /** A place in memory to read from: memory/ or a folder or file under it, nothing that climbs out. */
 const MEMORY_PLACE = /^memory(?:\/[A-Za-z0-9._-]+)*$/;
 
@@ -314,9 +394,17 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[], 
     }
 
     if (url.pathname === "/api/turn") {
-      const prompt = typeof body["prompt"] === "string" ? body["prompt"].trim() : "";
-      const proposal = typeof body["proposal"] === "string" && ID.test(body["proposal"]) ? body["proposal"] : undefined;
-      if (prompt === "" || prompt.length > 20_000) return json({ error: "write a message first" }, 400);
+      // A proposal id that is not one is refused, not dropped: dropped, the same prompt would run as an ordinary
+      // turn — the approved action, with no approval behind it (D-144 review). Absent or null is no proposal.
+      const named = body["proposal"];
+      if (named !== undefined && named !== null && (typeof named !== "string" || !ID.test(named))) {
+        return json({ ok: false, error: "that is not a proposal id — nothing was run" }, 400);
+      }
+      const proposal = typeof named === "string" ? named : undefined;
+      // D-153: under an approval the turn runs the approved action, built from its record by id. Whatever text
+      // the page or the app sent with it is not passed on — the id is the whole request.
+      const prompt = proposal !== undefined ? "" : typeof body["prompt"] === "string" ? body["prompt"].trim() : "";
+      if (proposal === undefined && (prompt === "" || prompt.length > 20_000)) return json({ error: "write a message first" }, 400);
       // The page may name a backend and a model (Settings); anything that is not
       // one is ignored and the flags `ohmyagi web` was started with apply.
       const backend = typeof body["backend"] === "string" && BACKEND_CHAIN.test(body["backend"]) ? body["backend"] : undefined;
@@ -331,15 +419,30 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[], 
       const flags = [...(useBackend === undefined ? [] : ["--backend", useBackend]), ...(useModel === undefined ? [] : ["--model", useModel])];
       // D-095: the last exchanges of this chat, so a turn is not alone. Shape-checked here; `turn` checks again.
       const rawHistory = body["history"];
-      const history = Array.isArray(rawHistory)
+      // Not under an approval: an approved action runs with no conversation added (D-153).
+      const history = proposal === undefined && Array.isArray(rawHistory)
         ? rawHistory
             .slice(-12)
             .filter((m): m is { role: "you" | "agent"; text: string } => typeof m === "object" && m !== null && (m.role === "you" || m.role === "agent") && typeof m.text === "string")
             .map((m) => ({ role: m.role, text: m.text.slice(0, 4000) }))
         : [];
-      const args = ["turn", ...place, "--prompt", prompt, "--json", ...flags, ...(history.length > 0 ? ["--history-json", JSON.stringify(history)] : [])];
+      const args = ["turn", ...place, ...(proposal === undefined ? ["--prompt", prompt] : []), "--json", ...flags, ...(history.length > 0 ? ["--history-json", JSON.stringify(history)] : [])];
       if (proposal !== undefined) args.push("--proposal", proposal);
-      const out = await deps.run(args);
+      // D-144 — one turn per approved proposal at a time. A second tap on "Do it now", or the app's "Run now"
+      // while the page's is running, is answered here and starts nothing. `turn` itself would refuse it too — the
+      // approval is claimed once, across processes — but only after a process was started to say so. Checked and
+      // taken with no `await` between, so two requests cannot both find it free.
+      const running = proposal === undefined ? undefined : `${deps.dir}\0${deps.subject}\0${proposal}`;
+      if (running !== undefined) {
+        if (turning.has(running)) return json({ ok: false, error: ALREADY_RUNNING }, 409);
+        turning.add(running);
+      }
+      let out: Awaited<ReturnType<WebDeps["run"]>>;
+      try {
+        out = await deps.run(args);
+      } finally {
+        if (running !== undefined) turning.delete(running);
+      }
       let answer: Record<string, unknown> | undefined;
       try {
         answer = JSON.parse(out.stdout) as Record<string, unknown>;
@@ -352,9 +455,17 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[], 
       // even for a child that predates the field; the held counts and the
       // change report pass through only as numbers/objects, never as HTML.
       const answeredBy = typeof answer["backend"] === "string" ? answer["backend"] : "";
+      const text = typeof answer["text"] === "string" ? answer["text"] : "";
+      // D-149: the turn's own notes first (`--json` carries them), then the tail of stderr, each said once.
+      const fromStderr = said(out.stderr);
+      const told = Array.isArray(answer["notes"]) ? answer["notes"].filter((n): n is string => typeof n === "string") : [];
+      const notes = [...told.filter((n) => !fromStderr.includes(n)), fromStderr].filter((n) => n !== "").join("\n");
       return json({
         ok: out.code === 0,
-        text: answer["text"] ?? "",
+        // D-144: a turn under an approval that failed with nothing to show says why, as the error — its last line
+        // is what became of the approval, and a page or an app that showed "(no answer)" would lose it.
+        ...(out.code !== 0 && proposal !== undefined && text === "" ? { error: notes || `it did not answer (exit ${out.code})` } : {}),
+        text,
         route: answer["route"] ?? "",
         backend: answeredBy,
         local: answeredBy === "" ? false : isLocalBackend(answeredBy),
@@ -366,8 +477,31 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[], 
         changed: answer["changed"] ?? null,
         proposals: answer["proposals"] ?? [],
         recall: recallOf(answer["recall"]),
-        notes: said(out.stderr),
+        notes,
       });
+    }
+
+    // D-144 §2 (the owner, 2026-09-29): "File it again" — a spent approval whose turn sent nothing, filed again
+    // as a new proposal waiting for a new yes. `proposal new --refile`: the command rebuilds what, why and impact
+    // from the stored record by id and refuses every other kind of proposal; nothing is taken from the body, and
+    // nothing is approved or run. One at a time per id, the way turns are.
+    const refile = /^\/api\/proposals\/([^/]+)\/refile$/.exec(url.pathname);
+    if (refile !== null) {
+      const id = refile[1]!;
+      if (!UUID.test(id)) return json({ ok: false, message: "that is not a proposal id — nothing was filed" }, 400);
+      const key = `${deps.dir}\0${deps.subject}\0${id}`;
+      if (refiling.has(key)) return json({ ok: false, message: "It is being filed again already." }, 409);
+      refiling.add(key);
+      let out: Awaited<ReturnType<WebDeps["run"]>>;
+      try {
+        out = await deps.run(["proposal", "new", ...place, "--refile", id]);
+      } finally {
+        refiling.delete(key);
+      }
+      const message = said(out.stderr);
+      // 2: no such proposal · 4: not one whose turn sent nothing · 5: filed again already, or a twin is waiting.
+      if (out.code === 0) return json({ ok: true, id: out.stdout.trim(), message });
+      return json({ ok: false, message }, out.code === 2 ? 404 : out.code === 4 || out.code === 5 ? 409 : 500);
     }
 
     const decide = /^\/api\/proposals\/([0-9a-f-]+)\/(approve|refuse|triage)$/.exec(url.pathname);
@@ -424,6 +558,37 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[], 
       const out = await deps.run(["memory", "search", ...place, "--limit", "8", "--scope", scope, query]);
       // `searched: false` is exit 3 — neither index could be asked — so "nothing found" is never said of a search that did not run.
       return json({ ok: out.code === 0, searched: out.code !== 3, text: out.stdout.trim(), message: said(out.stderr) });
+    }
+    // D-152: a question answered from memory — a summary and its sources, never the files pasted back. `memory ask`
+    // does the work (read-only on every backend, routed, screened and recorded as a turn is); this checks the body,
+    // keeps one ask per agent at a time, and holds the child to a deadline.
+    if (url.pathname === "/api/memory-ask") {
+      const raw = body["question"];
+      if (typeof raw !== "string") return json({ ok: false, error: "ask a question" }, 400);
+      const question = raw.trim();
+      const problem = askProblem(question);
+      if (problem !== undefined) return json({ ok: false, error: problem }, 400);
+      const rawScope = body["scope"];
+      if (rawScope !== undefined && rawScope !== null && rawScope !== "all" && rawScope !== "memory" && rawScope !== "knowledge") {
+        return json({ ok: false, error: "scope is all, memory or knowledge" }, 400);
+      }
+      const scope = typeof rawScope === "string" ? rawScope : "all";
+      // Checked and taken with no `await` between, so two requests cannot both find it free.
+      const key = `${deps.dir}\0${deps.subject}`;
+      if (asking.has(key)) return json({ ok: false, error: ASK_BUSY }, 409);
+      asking.add(key);
+      let out: Awaited<ReturnType<WebDeps["run"]>>;
+      try {
+        // The flags `ohmyagi web` was started with choose who answers, as they do for a turn (D-085). The question
+        // goes after `--`, word for word: one that starts with "-" is asked, never read as a flag.
+        out = await deps.run(["memory", "ask", ...place, "--scope", scope, "--json", ...(deps.turnFlags ?? []), "--", question], { timeoutMs: MEMORY_ASK_TIMEOUT_MS });
+      } finally {
+        asking.delete(key);
+      }
+      if (out.timedOut === true) {
+        return json({ ok: false, error: `No answer within ${Math.round(MEMORY_ASK_TIMEOUT_MS / 60_000)} minutes — the model may be busy or loading; nothing more is running.` }, 504);
+      }
+      return json(askAnswer(out.stdout, out.code, said(out.stderr)));
     }
     // D-081: a memory created or edited is `memory write --yes`; a delete is `memory forget`,
     // shown first unless write is true. The path is checked here and again by the command.

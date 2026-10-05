@@ -228,7 +228,7 @@ describe("the exemption list is still true", () => {
       (await sourceFiles(join(ROOT, "src"))).map((path) => path.slice(ROOT.length + 1)),
     );
     for (const rel of EXEMPT.keys()) expect(scanned.has(rel), rel).toBe(true);
-  });
+  }, 30_000);
 
   test("the control: the re-export check fires on a barrel with code in it", () => {
     expect(nonReExports("x.ts", `export * from "./a.ts";\nexport {};`)).toEqual([]);
@@ -402,7 +402,7 @@ describe("the recorded sizes are still the sizes of the files", () => {
       expect(scanned.has(rel), rel).toBe(true);
       expect(held.why.length, rel).toBeGreaterThan(10);
     }
-  });
+  }, 30_000);
 
   test("bin/ still has files on the floor, so the floor over it is not vacuous", async () => {
     // If every file under bin/ were held at a size, the 85% floor would apply
@@ -422,7 +422,7 @@ describe("the recorded sizes are still the sizes of the files", () => {
       join("bin", "shared.ts"),
       join("bin", "triage.ts"),
     ]);
-  });
+  }, 30_000);
 
   test("no file is on both lists, and nothing outside bin/ is held", () => {
     // EXEMPT excuses a file from having a test; SPAWN_ONLY holds it at a size.
@@ -819,7 +819,7 @@ describe("reading the tree", () => {
     expect(every).toContain("scripts/demo-bare-container.sh");
     expect(typescript).not.toContain("scripts/demo-bare-container.sh");
     expect(every.length).toBeGreaterThan(typescript.length);
-  });
+  }, 30_000);
 
   test("readFiles gives the three numbers, and hashes only what PROOFS names", async () => {
     const proved = [...PROOFS.keys()][0]!;

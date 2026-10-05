@@ -1,12 +1,13 @@
 /** `ohmyagi memory` — build an agent's recall from its `memory/`, and ask it something. */
 
 import { homedir, tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { GIT_UNDELETABLE, SCAN_BLIND_SPOTS } from "../../src/guard/index.ts";
 import {
   collectionFor,
   commitForget,
   commitIngest,
+  DEFAULT_RECALL_CHARS,
   formatForgetPlan,
   planForget,
   formatIngestPlan,
@@ -15,24 +16,65 @@ import {
   FTS_FILE,
   indexAgent,
   RAG_UNDELETABLE,
+  RECALL_HITS,
   ragDirFor,
   recall,
+  splitForCloud,
   vectorEndpoints,
+  type Attachment,
 } from "../../src/memory/index.ts";
-import { subjectId, type SubjectId } from "../../src/types.ts";
+import { subjectId, type SubjectId, UNREPORTED_USAGE } from "../../src/types.ts";
 import { basisDirFor, basisFor, readBasis, refusalLine, soulSubject } from "../../src/consent/basis.ts";
 import { commitMove, commitWrite, planMove, planWrite, type WritePlan } from "../../src/memory/write.ts";
-import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { OLLAMA_MODEL_ENV, OllamaExec } from "../../src/exec/ollama-exec.ts";
-import { asLocal } from "../../src/exec/local.ts";
+import { asLocal, LOCAL_CLI_SEES_PERSONAL } from "../../src/exec/local.ts";
 import { probeRestraint } from "../../src/exec/restraint.ts";
+import {
+  AnnouncedExec,
+  LOCAL_BACKENDS,
+  LOCAL_MODEL,
+  LocalCliExec,
+  PHASE_A_BACKENDS,
+  backend as buildBackend,
+  fallbackTrail,
+  routeModels,
+  turnChain,
+  type TurnResult,
+} from "../../src/exec/index.ts";
+import { fenceSupport } from "../../src/exec/fence.ts";
+import { chooseRoute, parseRoutePreference } from "../../src/exec/route.ts";
+import { isLocalCliId, localBaseVendor } from "../../src/exec/local-cli.ts";
+import { vendor } from "../../src/exec/registry.ts";
+import { describeRun, removeRunRecord, writeRunRecord } from "../../src/decide/runs.ts";
+import { judgeConfig, judgeEgress, judgeInput, loadLexicon, recordBlocked, screen, verdictFindings } from "../../src/egress/index.ts";
+import { RecordingExec, canAppend, modelOfTurn } from "../../src/ledger/index.ts";
+import { loadPrices } from "../../src/pricing/table.ts";
+import { printable } from "../../src/identity/shapes.ts";
+import {
+  ASK_TIMEOUT_MS,
+  appendAskRecall,
+  askRecallRecord,
+  askProblem,
+  noToolsWhenRestrained,
+  relevantForAsk,
+  askSystem,
+  nothingInMemory,
+  piecesOf,
+  readAnswer,
+  sourcesOf,
+  type AskPiece,
+  type AskSource,
+} from "../../src/memory/ask.ts";
+import { isKnownBackend, loadSoul, renderSoul, resolveSoulDir, sha256 } from "../../src/soul/index.ts";
+import { isLocalBackend } from "../../src/web/turninfo.ts";
 import { ensurePersonalDir, personalDir } from "../../src/guard/personal.ts";
 import { checkFacts, distillPrompt, factChunks, factNotes, FACTS_DIR, readFacts, type Fact, type FactDraft } from "../../src/memory/distill.ts";
 import { KNOWLEDGE_DIR, memoryKind, movedPath, SCOPES, type Scope } from "../../src/memory/kinds.ts";
-import { listMemories, readMemoryFile, whoMentions } from "../../src/web/memories.ts";
+import { listMemories, memoryMeta, readMemoryFile, whoMentions } from "../../src/web/memories.ts";
 import { convertFile, convertUrl, planImport, type Converted } from "../../src/memory/import.ts";
 import { dialEnv } from "../dial.ts";
-import { bold, dim, parseArgs, usageError } from "../shared.ts";
+import { bold, dim, dimErr, ledgerEnv, parseArgs, report, usageError } from "../shared.ts";
 
 const INDEX_USAGE = "usage: ohmyagi memory index <agent-dir> --subject <id>";
 const INGEST_USAGE = "usage: ohmyagi memory ingest <agent-dir> --from <dir> [--name <name>] [--yes]";
@@ -706,6 +748,333 @@ async function cmdDistill(argv: readonly string[]): Promise<number> {
   }
 }
 
+/**
+ * `ohmyagi memory ask` — a question answered from the agent's memory, as a summary with its sources (D-152).
+ *
+ * The same machinery as a turn, as far as it goes, so an ask is accounted for exactly as a turn is: the same
+ * recall (`recall` in "any" mode, `RECALL_HITS`, the 4,500-character ceiling), the same D-095 split (a backend
+ * on this machine is handed every piece, a cloud backend only the pieces the egress filter passes), the same
+ * route rule, the same egress door (`AnnouncedExec`: the filter, the optional local judge, the block log), the
+ * same ledger line per backend handed the question (`RecordingExec`, priced as a turn is), and a run record
+ * so `ohmyagi stop` reaches an ask in progress.
+ *
+ * What differs is what an ask is allowed to be:
+ *
+ * - **No tools at all, whatever the dial says.** Nothing is done, so the dial is not asked and no proposal is
+ *   filed (D-152); the chain runs under {@link probeRestraint} — read-only flags, never a grant — and admits only
+ *   backends whose read-only flags leave no tool (`noToolsWhenRestrained`: claude's `--tools ""`, so claude and
+ *   claude-local) or that have none (ollama). Read-only is not enough: grok's read tools read `~/.secrets` as
+ *   readily as `memory/`, and a memory note can ask them to (review of PR #14, proven with a canary).
+ * - **Only pieces about the question** (`relevantForAsk`): recall's nearest are not all near. None left = no model.
+ * - **A stop that is ignored is enforced:** the deadline or SIGTERM aborts the chain, and `CliExec` ends the vendor's
+ *   tree — SIGKILL for what outlives its SIGTERM (D-044) — before the ask returns.
+ * - **Only backends that can be handed the pieces.** A vendor whose only identity channel is a file it reads
+ *   (`identityStrength` not `system`) would answer without the recalled pieces at all, which is an invented
+ *   answer; it is left out of the chain and said so.
+ * - **No model when recall finds nothing.** The engine says "nothing in memory about this" itself.
+ * - **Sources from what was handed**, not from what the model wrote (`sourcesOf`).
+ * - **The question is never a flag.** Everything after a bare `--` is the question, word for word, so a
+ *   question that begins with `-` (or is `--json`) is asked, not parsed — the web route always passes it so.
+ */
+
+const ASK_USAGE =
+  "usage: ohmyagi memory ask <agent-dir> --subject <id> [--scope all|memory|knowledge] " +
+  "[--backend a,b,c] [--route auto|local|cloud] [--model <m> | --model <backend>=<m>,…] [--private] [--json] [--] <question...>";
+
+const ASK_BOOLEANS: readonly string[] = ["json", "private"];
+
+type AskRequest = Parameters<AnnouncedExec["run"]>[0];
+
+/** What `--json` prints — the API's contract (D-152) plus what the page's toggle and badge read. */
+interface AskJson {
+  readonly ok: boolean;
+  readonly answer: string;
+  readonly sources: readonly AskSource[];
+  readonly found: number;
+  readonly backend: string | null;
+  readonly model: string | null;
+  readonly local: boolean;
+  readonly held: number;
+  readonly read: number;
+  readonly pieces: readonly AskPiece[];
+  readonly searched: boolean;
+  readonly error?: string;
+}
+
+async function cmdMemoryAsk(argv: readonly string[]): Promise<number> {
+  // A bare `--` ends the options: what follows is the question, even when it looks like a flag.
+  const end = argv.indexOf("--");
+  const { positional, options } = parseArgs(end === -1 ? argv : argv.slice(0, end), ASK_BOOLEANS);
+  const [dir, ...words] = end === -1 ? positional : [...positional, ...argv.slice(end + 1)];
+  const asJson = options.has("json");
+  if (dir === undefined || dir === "" || words.length === 0) return usageError(ASK_USAGE);
+  const question = words.join(" ");
+  const problem = askProblem(question);
+  if (problem !== undefined) return usageError(`${problem}. Nothing was read or sent.`);
+  const rawSubject = options.get("subject");
+  if (rawSubject === undefined || rawSubject === "") return usageError(ASK_USAGE);
+  let id: SubjectId;
+  try {
+    id = subjectId(rawSubject);
+  } catch (error) {
+    return usageError(error instanceof Error ? error.message : String(error));
+  }
+  const scope = (options.get("scope") ?? "all") as Scope;
+  if (!SCOPES.includes(scope)) return usageError(`${ASK_USAGE} — --scope is ${SCOPES.join(", ")}`);
+  const routePreference = parseRoutePreference(options.get("route"));
+  if (routePreference === undefined) return usageError("--route must be one of auto, local or cloud");
+  const named = (options.get("backend") ?? "").split(",").map((p) => p.trim()).filter((p) => p !== "");
+  for (const name of named) {
+    if (!isKnownBackend(name) && !isLocalCliId(name)) return usageError(`unknown backend ${JSON.stringify(name)}`);
+  }
+  const modelRaw = options.get("model");
+  const modelCheck = routeModels(modelRaw, named.length > 0 ? named : [...PHASE_A_BACKENDS]);
+  if (!modelCheck.ok) return usageError(`${modelCheck.reason}. Nothing was sent.`);
+
+  const loaded = await loadSoul(dir, id);
+  if (!loaded.ok) return report(loaded.issues);
+  const soulDir = await resolveSoulDir(dir);
+  const agentDir = resolve(soulDir === dir ? dirname(dir) : dir);
+
+  const fail = (code: number, error: string, searched = true): number => {
+    if (asJson) {
+      const out: AskJson = { ok: false, answer: "", sources: [], found: 0, backend: null, model: null, local: false, held: 0, read: 0, pieces: [], searched, error };
+      console.log(JSON.stringify(out));
+    }
+    console.error(`ohmyagi: ${error}`);
+    return code;
+  };
+
+  // The recall a turn makes — "any" word, RECALL_HITS, the turn's ceiling — narrowed to the scope asked.
+  const checked = vectorEndpoints(process.env);
+  const found = await recall(agentDir, id, question, RECALL_HITS, checked.ok ? checked.endpoints : { reason: checked.reason }, undefined, "any", scope);
+  if (found.vector !== "ok") console.error(dimErr(`ohmyagi: recall: vector half skipped — ${found.vector.failed}`));
+  if (found.fts === "absent" && found.vector !== "ok") {
+    // `memory search`'s exit 3: neither index could be asked, so "nothing in memory" would claim a search that never ran.
+    return fail(3, `nothing searched — no ${FTS_FILE} (run \`ohmyagi memory index\`) and no vector store answered. Nothing was sent.`, false);
+  }
+
+  const { lexicon } = await loadLexicon(dialEnv(), id, loaded.soul.person.inherits_from);
+  const clean = (text: string) => screen(text, lexicon).length === 0;
+  // Only what is about the question (ASK_COSINE_FLOOR, ASK_FTS_MIN_TERMS): recall's nearest pieces are not all near.
+  const relevant = relevantForAsk(found.hits, question);
+  if (relevant.length < found.hits.length) console.error(dimErr(`ohmyagi: recall: ${found.hits.length - relevant.length} of ${found.hits.length} piece(s) left out as not about this question`));
+  const split = splitForCloud(relevant, DEFAULT_RECALL_CHARS, clean);
+  // Numbers only — so the cosine floor can be re-checked on this memory (`personal/…/ask/recall.jsonl`).
+  const logged = await appendAskRecall(dialEnv(), id, askRecallRecord({ at: new Date(), scope, hits: found.hits, vector: found.vector === "ok", kept: relevant.length, handed: split.local.attached.length }));
+  if (!logged.ok) console.error(dimErr(`ohmyagi: this ask's recall numbers were not kept: ${logged.reason}`));
+
+  if (split.local.attached.length === 0) {
+    // Nothing recalled: no model is asked, and nothing is written to the ledger — nothing was sent.
+    console.error(dimErr("ohmyagi: recall found nothing for this question; no model was asked."));
+    const answer = nothingInMemory(question);
+    if (asJson) {
+      const out: AskJson = { ok: true, answer, sources: [], found: 0, backend: null, model: null, local: false, held: 0, read: 0, pieces: [], searched: true };
+      console.log(JSON.stringify(out));
+    } else {
+      console.log(answer);
+    }
+    return 0;
+  }
+  console.error(dimErr(`ohmyagi: recall: ${split.local.attached.length} piece(s)${split.held > 0 ? ` · ${split.held} stay on this machine — a cloud backend gets the rest` : ""}`));
+
+  // Asked before anything is sent, as a turn asks it (S2.2, D-145).
+  const ledger = ledgerEnv();
+  const writable = await canAppend(ledger, id);
+  if (!writable.ok) return fail(1, `${writable.reason} Nothing was sent. ${writable.remedy}`);
+
+  // The route a turn would take, for a turn that does not act (D-095, S12.3).
+  const localReady = await Promise.all(LOCAL_BACKENDS.map((b) => buildBackend(b).available()));
+  const localAvailable = LOCAL_CLI_SEES_PERSONAL && fenceSupport().ok && localReady.some((a) => a.ok);
+  const route = named.length > 0
+    ? { prefer: named.some(isLocalCliId) ? "local" : "cloud", reason: "You named the backend chain, so automatic routing did not change it." }
+    : chooseRoute({ held: split.held, acting: false, preference: routePreference, localAvailable });
+  const wanted = named.length > 0 ? named : route.prefer === "local" ? [...LOCAL_BACKENDS, ...PHASE_A_BACKENDS] : [...PHASE_A_BACKENDS];
+  const routed = routeModels(modelRaw, wanted);
+  if (!routed.ok) return usageError(`${routed.reason}. Nothing was sent.`);
+  console.error(dimErr(`ohmyagi: route: ${route.reason}`));
+
+  // Only a backend that can be handed the pieces, and that has no tools at all, may answer from them.
+  const built = wanted.map((backendId) => {
+    const own = routed.models.get(backendId);
+    return { backendId, raw: buildBackend(backendId, own === undefined ? {} : { model: own }) };
+  });
+  const whyNot = (backendId: string, raw: (typeof built)[number]["raw"]): string | undefined => {
+    if (raw.identityStrength !== "system") return "it has no system-prompt channel, so it could not be handed the recalled pieces and would answer without them";
+    if (raw instanceof OllamaExec) return undefined;
+    const spec = vendor(isLocalCliId(backendId) ? localBaseVendor(backendId) : backendId);
+    return noToolsWhenRestrained(spec.readOnly) ? undefined : "even read-only it keeps tools that read files, and a memory note could point them anywhere";
+  };
+  const usable = built.filter((b) => whyNot(b.backendId, b.raw) === undefined);
+  for (const left of built) {
+    const why = whyNot(left.backendId, left.raw);
+    if (why !== undefined) console.error(dimErr(`ohmyagi: ${left.backendId} is left out of this ask — ${why}.`));
+  }
+  if (usable.length === 0) return fail(1, "no backend in this chain can answer an ask — it needs one that is handed the pieces and has no tools: claude, claude-local or ollama. Nothing was sent.");
+
+  const soulText = renderSoul(loaded.soul);
+  const turnId = crypto.randomUUID();
+  const prices = await loadPrices(ledger.home, ledger.env);
+  if (prices.owner.state === "unusable") {
+    console.error(`ohmyagi: the price file ${printable(prices.ownerPath)} cannot be used — ${printable(prices.owner.reason)}. This ask is recorded as not charged (table-unusable).`);
+  }
+  const writeFailures: Error[] = [];
+  const judge = judgeConfig(process.env);
+  const blocked: Promise<void>[] = [];
+  const modelRun = new Map<string, string | null>();
+  /** The pieces each backend was handed, by id — what its answer's sources are. */
+  const handed = new Map<string, Attachment>();
+  // An empty working directory: a vendor's read-only tools see nothing of wherever this was started.
+  const cwd = await mkdtemp(join(tmpdir(), "ohmyagi-ask-"));
+  // Made before the chain, so a step reached after the deadline or a stop is not started at all.
+  const controller = new AbortController();
+
+  const chain = turnChain(
+    usable.map(({ backendId, raw }) => {
+      const localCli = raw instanceof LocalCliExec ? raw : undefined;
+      const ran = localCli !== undefined ? LOCAL_MODEL : raw instanceof OllamaExec ? (raw.defaultModel ?? null) : null;
+      modelRun.set(backendId, ran);
+      const announced = new AnnouncedExec(
+        new RecordingExec(raw, {
+          ledger,
+          turnId,
+          newId: () => crypto.randomUUID(),
+          content: options.has("private") ? "withheld" : "full",
+          model: ran,
+          prices,
+          soulSha: sha256(soulText),
+          onWriteFailure: (error) => writeFailures.push(error),
+        }),
+        {
+          origin: raw,
+          write: (line) => console.error(dimErr(line)),
+          // D-048: the question and everything in the system prompt are screened before anything leaves.
+          screen: (request) => screen(`${request.prompt}\n${request.system ?? ""}`, lexicon),
+          ...(judge === undefined
+            ? {}
+            : { judge: async (request) => verdictFindings(await judgeEgress(judgeInput(request.prompt, split.cloud.block), lexicon.needles, judge)) }),
+          onBlocked: (backendId, findings) => {
+            blocked.push(
+              recordBlocked(dialEnv(), id, { at: new Date().toISOString(), backend: backendId, findings }).then(
+                () => undefined,
+                (error: unknown) => console.error(`ohmyagi: the block was not recorded: ${String(error)}`),
+              ),
+            );
+          },
+        },
+      );
+      return withRun(announced, (request, run) => {
+        // Locality is decided on the request as it will run — a local CLI's fence is part of it (D-123).
+        const prepared = localCli === undefined ? request : localCli.prepare(request);
+        const local = asLocal(raw, localCli === undefined ? undefined : prepared) !== undefined;
+        const attachment = local ? split.local : split.cloud;
+        if (controller.signal.aborted) return Promise.resolve(notAsked(backendId, request.prompt, "not asked: the ask was stopped, or ran out of time, before this step"));
+        if (attachment.attached.length === 0) {
+          // Every recalled piece is held from this backend (D-095): it is not asked a question it cannot see the answer to.
+          return Promise.resolve(notAsked(backendId, request.prompt));
+        }
+        handed.set(backendId, attachment);
+        return run({ ...prepared, system: askSystem(soulText, attachment, question) });
+      });
+    }),
+  );
+
+  // `ohmyagi stop` finds an ask in progress by this record, as it finds a turn.
+  let runRecordPath: string | undefined;
+  try {
+    runRecordPath = await writeRunRecord(dialEnv(), describeRun({ turnId, subject: id, backends: usable.map((b) => b.backendId), at: new Date() }));
+  } catch (error) {
+    console.error(`ohmyagi: could not write the run record (${String(error)}); \`ohmyagi stop\` will not find this ask.`);
+  }
+  // A deadline sized for a model on this machine (ASK_TIMEOUT_MS), and SIGTERM — the web page's own deadline, or
+  // `ohmyagi stop` — ends the backend's process group the way its own timeout does, rather than orphaning it.
+  // The abort reaches each vendor CLI through `request.signal`: `CliExec` ends its whole tree with SIGTERM and,
+  // for whatever is still there after D-044's grace, SIGKILL — and returns only once that is over (PR #12).
+  const deadline = setTimeout(() => controller.abort(), ASK_TIMEOUT_MS);
+  const onTerm = () => controller.abort();
+  process.once("SIGTERM", onTerm);
+  let result: TurnResult;
+  try {
+    result = await chain.run({ subject: id, prompt: question, restraint: probeRestraint(), cwd, timeoutMs: ASK_TIMEOUT_MS, signal: controller.signal });
+  } finally {
+    clearTimeout(deadline);
+    process.removeListener("SIGTERM", onTerm);
+    if (runRecordPath !== undefined) await removeRunRecord(runRecordPath);
+    await rm(cwd, { recursive: true, force: true });
+  }
+  await Promise.all(blocked);
+
+  const answered = result.confidence === "confirmed" || result.confidence === "partial";
+  const trail = fallbackTrail(result.evidence.raw);
+  for (const failure of writeFailures) console.error(`ohmyagi: ledger write failed: ${failure.message}`);
+  if (!answered) {
+    const why = controller.signal.aborted ? `no answer within ${ASK_TIMEOUT_MS / 1000} s, or it was stopped` : `no backend answered${trail === undefined ? "" : ` — ${trail}`}`;
+    return fail(1, `${why}.`);
+  }
+  console.error(dimErr(`ohmyagi: answered by ${result.backend}${trail === undefined ? "" : ` · missed: ${trail}`}`));
+
+  const attachment = handed.get(result.backend) ?? split.cloud;
+  const read = readAnswer(result.text, attachment.attached.map((a) => a.path), question);
+  const titles = new Map<string, string>();
+  for (const path of new Set(attachment.attached.map((a) => a.path))) {
+    const file = await readMemoryFile(agentDir, path);
+    if (file.ok) titles.set(path, memoryMeta(path, file.text).title);
+  }
+  const aboutModel = modelOfTurn(result.evidence.model, null, modelRun.get(result.backend) ?? null);
+  const sources = read.covered ? sourcesOf(attachment, titles, read.answer) : [];
+  const out: AskJson = {
+    ok: writeFailures.length === 0,
+    answer: read.covered ? read.answer : nothingInMemory(question),
+    sources,
+    // How many pieces the answer drew on; 0 when the model found nothing about this in what it read.
+    found: read.covered ? attachment.attached.length : 0,
+    backend: result.backend,
+    model: aboutModel.model,
+    local: isLocalBackend(result.backend),
+    held: attachment === split.local ? 0 : split.held,
+    read: attachment.attached.length,
+    pieces: piecesOf(relevant, attachment),
+    searched: true,
+    ...(writeFailures.length > 0 ? { error: `answered, and the ledger did not record it (${writeFailures.length} line(s))` } : {}),
+  };
+  if (asJson) {
+    console.log(JSON.stringify(out));
+  } else {
+    console.log(out.answer);
+    if (sources.length > 0) {
+      console.log("");
+      console.log(bold("Sources:"));
+      for (const s of sources) console.log(`  ${s.path}${s.section === undefined ? "" : ` — ${s.section}`}${s.title === undefined ? "" : dim(`  (${s.title})`)}`);
+    }
+  }
+  return writeFailures.length > 0 ? 1 : 0;
+}
+
+/** A result that says this backend was not asked, so the chain moves on — no line, no announcement. */
+function notAsked(backendId: string, prompt: string, raw = `not asked: every recalled piece is held from ${backendId} (personal words or contact details, D-095)`): TurnResult {
+  return {
+    backend: backendId,
+    text: "",
+    confidence: "failed",
+    identityStrength: "none",
+    evidence: { source: backendId, prompt, raw, usage: UNREPORTED_USAGE },
+  };
+}
+
+/** The same backend, with its `run` decided by `decide` — which may call the real one or answer itself. */
+function withRun<T extends { run: (request: AskRequest) => Promise<TurnResult> }>(
+  exec: T,
+  decide: (request: AskRequest, run: (request: AskRequest) => Promise<TurnResult>) => Promise<TurnResult>,
+): T {
+  return new Proxy(exec, {
+    get(target, key, receiver) {
+      if (key === "run") return (request: AskRequest) => decide(request, (r) => target.run(r));
+      const value = Reflect.get(target, key, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
 export async function cmdMemory(argv: readonly string[]): Promise<number> {
   const [sub, ...rest] = argv;
   switch (sub) {
@@ -713,6 +1082,8 @@ export async function cmdMemory(argv: readonly string[]): Promise<number> {
       return cmdMemoryIndex(rest);
     case "search":
       return cmdMemorySearch(rest);
+    case "ask":
+      return cmdMemoryAsk(rest);
     case "ingest":
       return cmdMemoryIngest(rest);
     case "forget":
@@ -728,6 +1099,6 @@ export async function cmdMemory(argv: readonly string[]): Promise<number> {
     case "distill":
       return cmdDistill(rest);
     default:
-      return usageError(`unknown memory subcommand ${JSON.stringify(sub ?? "")} — try "ingest", "index", "search", "write" or "forget"`);
+      return usageError(`unknown memory subcommand ${JSON.stringify(sub ?? "")} — try "ingest", "index", "search", "ask", "write" or "forget"`);
   }
 }

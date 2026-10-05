@@ -54,6 +54,7 @@
 
 import { rmdir, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { dockerIo, killContainer, readBrowserRecords, type DockerIo } from "../browser/store.ts";
 import { historyFacts, historySentence, type HistoryFacts } from "../guard/history.ts";
 import { personalDir } from "../guard/personal.ts";
 import { identityDirFor, keyPath } from "../identity/dir.ts";
@@ -66,6 +67,7 @@ import {
   type ForgetResult,
   type LedgerEnv,
 } from "../ledger/store.ts";
+import type { ThisMachine } from "../ledger/lock.ts";
 import {
   census,
   commitPurge,
@@ -107,6 +109,14 @@ export interface EraseEnv {
   readonly home: string;
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly now: () => Date;
+  /**
+   * This machine's name and boot time, for the ledger's lock (D-145) — handed
+   * on to the ledger's plan as `ledgerEnv()` hands it to a turn. Without it the
+   * erase judged every lock by age alone: a killed turn's lock held it up for
+   * ten minutes, and its own lock, left by a killed erase, named no machine and
+   * refused every turn for as long.
+   */
+  readonly machine?: ThisMachine;
 }
 
 /** Everything om-agi deletes, or only the personal half of it (AC5). */
@@ -178,6 +188,13 @@ export interface ErasePlan {
   readonly stateRoot: string;
   readonly dataRoot: string;
   readonly trees: readonly TreeTarget[];
+  /**
+   * The subject's browser tasks (D-151) whose containers `docker kill` ends
+   * before their records go with the `browser` tree. Killed first: a running
+   * container still writes into the recording and names the subject in its
+   * record.
+   */
+  readonly browsers: readonly { readonly task: string; readonly container: string }[];
   /** Single files that go — `person.md` under `--personal`, nothing otherwise. */
   readonly files: readonly string[];
   /**
@@ -318,7 +335,12 @@ export async function planErase(
   }
 
   // --- the ledger ---------------------------------------------------------
-  const ledgerEnv: LedgerEnv = { home: env.home, env: env.env, now: env.now };
+  const ledgerEnv: LedgerEnv = {
+    home: env.home,
+    env: env.env,
+    now: env.now,
+    ...(env.machine === undefined ? {} : { machine: env.machine }),
+  };
   const ledger = await planForget(ledgerEnv, subject, { kind: "all" });
   if (scope === "personal" && ledger.matched.length > 0) {
     notes.push(
@@ -438,6 +460,17 @@ export async function planErase(
     }
   }
 
+  const browsers = (await readBrowserRecords(env, subject)).records.map((record) => ({
+    task: record.task,
+    container: record.container,
+  }));
+  if (browsers.length > 0) {
+    notes.push(
+      `${browsers.length} browser task(s) of this subject are recorded; their containers are docker-killed ` +
+        `before the records and the recordings go.`,
+    );
+  }
+
   return {
     subject,
     scope,
@@ -447,6 +480,7 @@ export async function planErase(
     stateRoot: state,
     dataRoot: data,
     trees,
+    browsers,
     files,
     emptyParents,
     blocks,
@@ -534,6 +568,8 @@ export interface TreeResult {
 
 /** What the run actually did. Every number here is observed, none derived. */
 export interface EraseResult {
+  /** Each recorded browser task's container, and whether `docker kill` ended it. */
+  readonly browsers: readonly { readonly task: string; readonly container: string; readonly ok: boolean; readonly detail: string }[];
   readonly trees: readonly TreeResult[];
   readonly files: readonly { readonly path: string; readonly removed: boolean; readonly reason?: string }[];
   /** Directories whose only remaining content was the subject's own name. */
@@ -555,7 +591,13 @@ export interface EraseResult {
  * @throws {Error} when the ledger lock is held. A partial deletion reported as
  *   a success is the worst outcome available here, so it is not swallowed.
  */
-export async function commitErase(plan: ErasePlan): Promise<EraseResult> {
+export async function commitErase(plan: ErasePlan, docker: DockerIo = dockerIo()): Promise<EraseResult> {
+  // First, before anything is removed: a running container writes into the recording below.
+  const browsers: { task: string; container: string; ok: boolean; detail: string }[] = [];
+  for (const browser of plan.browsers) {
+    browsers.push({ ...browser, ...(await killContainer(docker, browser.container)) });
+  }
+
   const trees: TreeResult[] = [];
   for (const tree of plan.trees) {
     const result = await commitPurge(tree.plan);
@@ -606,7 +648,7 @@ export async function commitErase(plan: ErasePlan): Promise<EraseResult> {
       ? await dropCollection(plan.vector.url, plan.subject)
       : null;
 
-  return { trees, files, emptyParents, blocks, ledger, ledgerDirRemoved, vector };
+  return { browsers, trees, files, emptyParents, blocks, ledger, ledgerDirRemoved, vector };
 }
 
 /** The verdict. Never a boolean: "clean" and "clean enough" are different facts. */
@@ -811,7 +853,9 @@ export async function verifyErase(
       : await collectionState(plan.vector.url, plan.subject);
   const vectorLeft = vectorAfter !== null && vectorAfter.kind !== "absent";
 
+  // A browser container docker would not kill still runs with this subject's recording mounted.
   const failures =
+    result.browsers.filter((browser) => !browser.ok).length +
     (result.vector !== null && !result.vector.dropped ? 1 : 0) +
     result.files.filter((file) => !file.removed).length +
     result.blocks.filter((block) => block.outcome === "refused").length +

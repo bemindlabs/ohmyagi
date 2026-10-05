@@ -33,5 +33,6 @@ export * from "./effective.ts";
 export * from "./proposals.ts";
 export * from "./report.ts";
 export * from "./runs.ts";
+export * from "./sensitive.ts";
 export * from "./stop.ts";
 export * from "./triggers.ts";

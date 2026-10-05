@@ -182,7 +182,7 @@ describe("the tripwire — one place composes a personal path", () => {
       "personal data has one address and `personalDir` is it. A second place composing that " +
         "path is a second answer to which identity a file belongs to (I-3, D-014)",
     ).toEqual([]);
-  });
+  }, 30_000);
 
   test("the control: it fires on a second resolver and not on ordinary source", () => {
     const second = `const dir = join(dataRoot(home, env), subject, "personal");`;

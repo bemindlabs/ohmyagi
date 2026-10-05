@@ -80,6 +80,8 @@ describe("a turn that may act reports what it changed", () => {
     expect(result.stderr).toContain("- old-note.txt");
     expect(result.stderr).not.toContain("untouched.txt");
     expect(result.stderr).toContain("not seen by this report");
+    // A vendor CLI has tools; the D-149 line is for a backend that has none.
+    expect(result.stderr).not.toContain("has no tools");
     const json = JSON.parse(result.stdout) as { changed: { added: string[]; changed: string[]; removed: string[] } };
     expect(json.changed).toEqual({ added: ["made-by-the-turn.txt"], changed: [], removed: ["old-note.txt"] });
   }, 60_000);

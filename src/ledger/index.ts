@@ -19,4 +19,5 @@
 
 export * from "./entry.ts";
 export * from "./store.ts";
+export * from "./lock.ts";
 export * from "./recording.ts";

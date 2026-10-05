@@ -34,6 +34,7 @@ import {
   AUTONOMY_MAX_ENV,
   DEFAULT_DIAL,
   LEVEL_MEANING,
+  OPERATE_MEANING,
   actLevel,
   confirmationsPath,
   heldBy,
@@ -155,7 +156,13 @@ export function dialBody(): string {
     "Levels, and what they mean here:\n\n" +
     ([0, 1, 2, 3] as const).map((level) => `- \`${level}\` — ${LEVEL_MEANING[level]}`).join("\n") +
     "\n\nA turn runs at `min(write, run, reach)`. At 1 it carries the vendor's read-only\n" +
-    "flag, which is what om-agi has always done; at 2 and above that flag is **not sent**.\n" +
+    "flag, which is what om-agi has always done; at 2 and above that flag is **not sent**.\n\n" +
+    "`operate` is the browser (D-153), and runs at `min(operate, reach)`:\n\n" +
+    ([0, 1, 2, 3] as const)
+      .map((level) => `- \`${level}\` — ${OPERATE_MEANING[level].en} · ${OPERATE_MEANING[level].th}`)
+      .join("\n") +
+    "\n\nAt every level it stops for a yes before paying, sending a message or e-mail, deleting,\n" +
+    "entering a password or credential, or accepting terms.\n\n" +
     "Write below why a level was changed — nothing reads it, and it is the part a reader\n" +
     "six months from now will need.\n"
   );
@@ -206,7 +213,8 @@ export function dialLine(effective: EffectiveDial): string {
     `autonomy: read ${effective.dial.read} · write ${effective.dial.write} · ` +
     `run ${effective.dial.run} · reach ${effective.dial.reach} → acts at ` +
     `${actLevel(effective.dial)}` +
-    heldNote(effective.dial)
+    heldNote(effective.dial) +
+    ` · operate ${effective.dial.operate} → the browser at ${effective.operate}`
   );
 }
 

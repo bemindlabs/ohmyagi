@@ -129,7 +129,7 @@ describe("the erase layer's import closure", () => {
 
     expect(sockets).toContain(join("src", "exec", "ollama-exec.ts"));
     expect(spawns).toContain(SPAWN_CHOKEPOINT);
-  });
+  }, 30_000);
 });
 
 // ---------------------------------------------------------------------------

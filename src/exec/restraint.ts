@@ -76,6 +76,12 @@ export interface Restraint {
    * minimum would have to be broken to produce (D-047).
    */
   readonly unfenced: boolean;
+  /**
+   * The browser's level for this turn (D-153): `min(operate, reach)`, 3 only when operate is a confirmed 3.
+   * 0 = no browser, 1 = look and propose, 2 = act on the task's allowed sites, 3 = act on any site. A turn
+   * handed a browser gets its tools from this number (`src/browser/mcp-config.ts`), never from `act`.
+   */
+  readonly operate: Level;
 }
 
 /**
@@ -92,6 +98,7 @@ export function restrain(effective: EffectiveDial): Restraint {
     act: effective.act,
     loosened: effective.act >= 2,
     unfenced: effective.act >= 2 && effective.dial.write === 3 && effective.dial.run === 3,
+    operate: effective.operate,
   }) as Restraint;
 }
 

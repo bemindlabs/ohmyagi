@@ -14,11 +14,11 @@
  */
 
 import { statSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, hostname, uptime } from "node:os";
 import { join, resolve } from "node:path";
 import { isatty } from "node:tty";
 import { PLACE_IDS, placeOf } from "../src/erase/index.ts";
-import type { LedgerEnv } from "../src/ledger/index.ts";
+import type { LedgerEnv, ThisMachine } from "../src/ledger/index.ts";
 import { formatIssue, type SoulIssue } from "../src/soul/index.ts";
 
 /**
@@ -327,9 +327,25 @@ export const HELP_FLAGS: readonly string[] = ["--help", "-h"];
  * words nobody has, the failure is in the direction that does nothing, and
  * `--prompt-file` — which the help text already recommends for anything you
  * would rather not put on a command line — does not go through argv at all.
+ *
+ * One exception, and only one: `memory ask`, whose question is everything after a bare `--`, word for word
+ * (D-152). There `memory ask … -- --help` asks a question that is the word "--help", and help would answer a
+ * question nobody asked. Everywhere else a `--` changes nothing here: `ohmyagi stop -- --help` is still a
+ * command asked how, and it does nothing — the rule this function exists for.
  */
-export function asksForHelp(argv: readonly string[]): boolean {
-  return argv.some((token) => HELP_FLAGS.includes(token));
+export function asksForHelp(argv: readonly string[], command = ""): boolean {
+  const end = takesVerbatimAfterDashes(command, argv[0]) ? argv.indexOf("--") : -1;
+  return (end === -1 ? argv : argv.slice(0, end)).some((token) => HELP_FLAGS.includes(token));
+}
+
+/**
+ * The commands whose words after a bare `--` are a value, not options (D-152): `memory ask`'s question. Kept
+ * to a list of one on purpose — every other command reads `--help` and `--as` wherever they sit.
+ */
+export const VERBATIM_AFTER_DASHES: readonly string[] = ["memory ask"];
+
+export function takesVerbatimAfterDashes(command: string, sub: string | undefined): boolean {
+  return VERBATIM_AFTER_DASHES.includes(`${command} ${sub ?? ""}`);
 }
 
 /**
@@ -391,9 +407,23 @@ export function indent(text: string, prefix: string): string {
     .join("\n");
 }
 
-/** The machine facts the ledger is allowed to see, in one place. */
+/**
+ * This machine's name and boot time — what the ledger's lock needs to tell a
+ * killed writer's lock from a live one (D-145). Read here, in `bin/`, because
+ * nothing under `src/` reads the machine for itself (D-021); every command
+ * that takes the lock hands it on: `ledgerEnv()`, and `erase`.
+ */
+export function thisMachine(): ThisMachine {
+  return { host: hostname(), bootedAt: Date.now() - uptime() * 1000 };
+}
+
+/**
+ * The machine facts the ledger is allowed to see, in one place.
+ *
+ * `machine` is the lock's alone (D-145): see {@link thisMachine}.
+ */
 export function ledgerEnv(): LedgerEnv {
-  return { home: homedir(), env: process.env, now: () => new Date() };
+  return { home: homedir(), env: process.env, now: () => new Date(), machine: thisMachine() };
 }
 
 /**

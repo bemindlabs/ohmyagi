@@ -331,6 +331,7 @@ ${MARKDOWN_CSS}
       <div class="sb-main">
         <h2 id="h-status" class="small upper">On its own, it…</h2>
         <div class="sb-level"><span class="pill" id="level">…</span><span class="hint" id="levelDetail"></span></div>
+        <div class="hint" id="operateLine"></div>
       </div>
       <div class="sb-next"><h2 class="small upper">Next scheduled</h2><div id="nextRun" class="mono">—</div></div>
       <div class="sb-stop"><button class="danger" id="stopBtn" title="Stops every running turn and sets every category to 0">Stop everything</button><span class="hint">Safe to press any time.</span></div>
@@ -464,7 +465,7 @@ ${MARKDOWN_CSS}
       <div class="tagrow" id="memTags" role="group" aria-label="Collections"></div>
       <label class="small" for="memFilter">Filter by words</label>
       <input type="text" id="memFilter" placeholder="Type to narrow the list…" autocomplete="off">
-      <div class="row"><select id="memType" aria-label="Kind"><option value="">All kinds</option></select><button id="memSearch" title="Ask recall — the same search a turn uses">Search by meaning</button></div>
+      <div class="row"><select id="memType" aria-label="Kind"><option value="">All kinds</option></select><button id="memSearch" title="Ask your memory: a short answer from what recall finds, with its sources">Search by meaning</button></div>
       <div class="memlist" id="memList" style="margin-top:10px"></div>
     </section>
     <section aria-labelledby="h-memview">
@@ -598,6 +599,10 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
 
   let waitItems = [], waitSig = "";
   const picked = new Set();
+  // D-144: the approved suggestions whose turn this page has running. One at a time each: it runs once.
+  const runningProposals = new Set();
+  // D-144 §2: the spent ones this page is filing again right now. One click, one new suggestion.
+  const refilingProposals = new Set();
   // The cards on screen right now. A selection only ever holds these: a bulk "Allow once" must never reach a
   // card that a filter or "Show fewer" has hidden, since the person never saw what it would allow.
   let waitOnScreen = [];
@@ -669,18 +674,44 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
   }
   $("bulkYes").onclick = () => bulk("approve");
   $("bulkNo").onclick = () => bulk("refuse");
-  function renderApproved(items) {
+  function renderApproved(items, again) {
+    again = again || [];
     const box = $("approved"); box.replaceChildren();
-    if (!items.length) return;
-    box.append(el("p", "small", "Allowed and not done yet:"));
+    if (items.length) box.append(el("p", "small", "Allowed and not done yet:"));
     for (const p of items) {
       const c = el("div", "card");
       c.append(el("p", "what", p.what), el("p", "meta", "Allowed " + p.decided));
-      const go = el("button", "primary", "Do it now");
-      go.onclick = () => send(p.what, p.id);
+      // D-144: off from the click until the turn comes back — and still off when the poll draws this card again.
+      const running = runningProposals.has(p.id);
+      const go = el("button", "primary", running ? "Running…" : "Do it now");
+      go.disabled = running;
+      go.onclick = () => { go.disabled = true; go.textContent = "Running…"; send(p.what, p.id); };
       const row = el("div", "row"); row.append(go, el("span", "small", "Runs once. If it only suggests again, raise “write” to 2 in the terminal."));
       c.append(row); box.append(c);
     }
+    // D-144 §2 (the owner, 2026-09-29): an approval a failed turn took stays spent. Only when that turn sent nothing
+    // is it offered here — never one that ran or may have. Filing it again asks a new question; nothing runs.
+    if (again.length) box.append(el("p", "small", "Allowed, but the turn sent nothing — that approval is used up:"));
+    for (const p of again) {
+      const c = el("div", "card");
+      c.append(el("p", "what", p.what), el("p", "meta", "Nothing was sent" + (p.spent ? " · " + p.spent : "")));
+      const busy = refilingProposals.has(p.id);
+      const re = el("button", "primary", busy ? "Filing…" : "File it again");
+      re.disabled = busy;
+      re.onclick = () => refile(p, re);
+      const row = el("div", "row"); row.append(re, el("span", "small", "Files it as a new suggestion that waits for your yes. Nothing runs."));
+      c.append(row); box.append(c);
+    }
+  }
+  async function refile(p, button) {
+    if (refilingProposals.has(p.id)) return;
+    refilingProposals.add(p.id); button.disabled = true; button.textContent = "Filing…";
+    try {
+      const r = await api("/api/proposals/" + p.id + "/refile", {});
+      toast(r.ok ? "Filed again — it waits for your yes." : (r.message || r.error || "That did not work."));
+    } catch { /* the link expired: api() has said so */ }
+    finally { refilingProposals.delete(p.id); }
+    await refresh(true);
   }
   function renderList(id, items, line, empty) {
     const ul = $(id); ul.replaceChildren();
@@ -702,7 +733,9 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
     $("statusDot").className = "dot " + s.autonomy.tone; $("statusText").textContent = s.autonomy.title;
     renderEngine(s.engine);
     $("levelDetail").textContent = s.autonomy.detail;
-    renderWaiting(s.waiting, force === true); renderApproved(s.approved);
+    // D-153: the browser, at the level in force — min(operate, reach) — in English and in Thai.
+    const op = s.autonomy.operate; $("operateLine").textContent = op ? "Browser: " + op.title + " — " + op.en + " · " + op.th : "";
+    renderWaiting(s.waiting, force === true); renderApproved(s.approved, s.refileable);
     $("nextRun").textContent = s.triggers.length ? s.triggers.map((t) => t.id + " · " + t.next).join("  ·  ") : "nothing scheduled";
     renderList("triggers", s.triggers, (t) => { const li = el("li"); li.append(el("div", "", t.id), el("div", "small", "every " + t.every + " · next " + t.next)); return li; }, "No schedule. Add one in soul/triggers.md.");
     const recentSig = JSON.stringify(s.recent.map((r) => [r.id, r.when]));
@@ -826,22 +859,30 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
       if (text.startsWith("//")) text = text.slice(1);
       else { $("prompt").value = ""; closeMenu(); await runCommand(text); return; }
     }
+    if (proposal) {
+      if (runningProposals.has(proposal)) { toast("Already running — it runs once."); return; }
+      runningProposals.add(proposal);
+    }
     bubble("me", text); $("prompt").value = ""; $("send").disabled = true;
     const mini = el("img"); mini.src = document.querySelector(".logo").src; mini.alt = "";
     $("sending").replaceChildren(mini, document.createTextNode("Thinking…")); document.body.classList.add("thinking");
     try {
-      const body = proposal ? { prompt: text, proposal } : { prompt: text };
-      // D-095: the last six exchanges of this chat go with it — not the page's own notes, not this message.
+      // D-153: an approved action is sent as its id alone — the turn builds the prompt from the record.
+      const body = proposal ? { proposal } : { prompt: text };
+      // D-095: the last six exchanges of this chat go with it — not the page's own notes, not this message. Not with an approval.
       const talk = chatLog.slice(0, -1).filter((m) => m.cls === "me" || m.cls === "it").slice(-12).map((m) => ({ role: m.cls === "me" ? "you" : "agent", text: m.text.slice(0, 4000) }));
-      if (talk.length) body.history = talk;
+      if (talk.length && !proposal) body.history = talk;
       const pick = choice(); if (pick.backend) body.backend = pick.backend; if (pick.model) body.model = pick.model;
       const r = await api("/api/turn", body);
       if (r.error) bubble("it", r.error);
       else {
         const filed = (r.proposals || []).filter((p) => p.outcome === "filed").length;
         bubble("it", r.text || "(no answer)", turnLine(r, pick) + (filed ? " · " + filed + " suggestion(s) waiting for you" : ""), false, { changed: r.changed });
+        // D-144: a turn that did not finish says why — for one under an approval, what became of it. Shown, not dropped.
+        if (r.ok === false && r.notes) bubble("sys", r.notes);
       }
     } catch (e) { bubble("it", e && e.message === "expired" ? "This page's link has changed — open the link ohmyagi web printed (or the service's key), then send again." : "Could not reach the agent — is ohmyagi web still running?"); }
+    finally { if (proposal) runningProposals.delete(proposal); }
     $("send").disabled = false; $("sending").replaceChildren(document.createTextNode("Ctrl+Enter to send · / for commands")); document.body.classList.remove("thinking"); refresh();
   }
   // D-085: switch backend and model from the chat. The same two keys Settings writes, so both always agree.
@@ -985,13 +1026,14 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
       if (!p) return sys(((lastState && lastState.approved) || []).length ? "Say which: a number from /waiting's “allowed” list." : "Nothing allowed is waiting to be done.");
       return send(p.what, p.id);
     } },
-    { name: "search", args: "[knowledge|memory] <words>", help: "Search memory by meaning, the way a turn recalls — or one kind only", run: async (a) => {
-      if (!a) return sys("Search for what? /search [knowledge|memory] <words>");
+    { name: "search", args: "[knowledge|memory] <question>", help: "Ask memory — a short answer with its sources, the way Search by meaning does (or one kind only)", run: async (a) => {
+      if (!a) return sys("Ask what? /search [knowledge|memory] <question>");
       const first = a.split(" ")[0].toLowerCase(), scope = first === "knowledge" || first === "memory" ? first : "all";
       const words = scope === "all" ? a : a.slice(first.length).trim();
-      if (!words) return sys("Search " + scope + " for what?");
-      const r = await api("/api/memory-search", { query: words, scope });
-      sys("**" + (scope === "knowledge" ? "Knowledge" : scope === "memory" ? "Memory (not knowledge)" : "Memory") + " — " + words + "**\\n\\n" + searchSaid(r));
+      if (!words) return sys("Ask " + scope + " what?");
+      sys("Searching your memory…");
+      let r; try { r = await api("/api/memory-ask", { question: words, scope }); } catch { r = { ok: false, error: "The server did not answer." }; }
+      sys("**" + (scope === "knowledge" ? "Knowledge" : scope === "memory" ? "Memory (not knowledge)" : "Memory") + " — " + words + "**\\n\\n" + askSaid(r));
     } },
     { name: "remember", args: "<text>", help: "Save a note to memory (as New memory does)", more: "Goes to memory/notes/<date>-<words>.md through ohmyagi memory write: the credential scan and the memory basis apply.", run: async (a) => {
       if (!a) return sys("Remember what? /remember <text>");
@@ -1029,13 +1071,13 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
       showTab("memories"); memTag = t; if (mems.length) { drawTags(); drawMemories(); }
     } },
     { name: "memories", args: "[words]", help: "Open Memories, filtered by words", run: (a) => { showTab("memories"); $("memFilter").value = a; if (mems.length) drawMemories(); } },
-    { name: "autonomy", args: "[read|write|run|reach] [never|ask|tell]", help: "See or set what it may do on its own", more: "Levels here go up to “do it, then tell me” (2). Acting without asking (3) is typed in a terminal.", run: async (a) => {
+    { name: "autonomy", args: "[read|write|run|reach|operate] [never|ask|tell]", help: "See or set what it may do on its own", more: "Levels here go up to “do it, then tell me” (2). Acting without asking (3) is typed in a terminal.", run: async (a) => {
       const [cat, lvl] = a.toLowerCase().split(" ").filter(Boolean);
-      if (!cat) { const st = await api("/api/settings"); return sys("**What it may do on its own**\\n\\n" + CATS.map(([k, name]) => "- " + name + ": " + (st.levels[k] === 3 ? "on its own" : LEVELS[st.levels[k]] || st.levels[k])).join("\\n") + "\\n\\n/autonomy <read|write|run|reach> <never|ask|tell>"); }
-      const known = CATS.find(([k]) => k === cat); if (!known) return sys("The kinds are read, write, run and reach.");
+      if (!cat) { const st = await api("/api/settings"); return sys("**What it may do on its own**\\n\\n" + CATS.map(([k, name]) => "- " + name + ": " + (st.levels[k] === 3 ? (k === "operate" ? "any site" : "on its own") : wordsFor(k)[st.levels[k]] || st.levels[k])).join("\\n") + (st.operate ? "\\n\\nBrowser now: " + st.operate.en + " · " + st.operate.th : "") + "\\n\\n/autonomy <read|write|run|reach|operate> <never|ask|tell>"); }
+      const known = CATS.find(([k]) => k === cat); if (!known) return sys("The kinds are read, write, run, reach and operate.");
       if (!(lvl in LEVEL_WORDS)) return sys("The levels are never, ask and tell (0, 1, 2).");
       const r = await api("/api/autonomy", { category: cat, level: LEVEL_WORDS[lvl] });
-      sys(r.ok ? known[1] + ": **" + LEVELS[LEVEL_WORDS[lvl]].toLowerCase() + "**." : (r.message || r.error || "That did not work.")); refresh(true);
+      sys(r.ok ? known[1] + ": **" + wordsFor(cat)[LEVEL_WORDS[lvl]].toLowerCase() + "**." : (r.message || r.error || "That did not work.")); refresh(true);
     } },
     { name: "stop", args: "", help: "Pull the brake — the same as Stop everything", run: () => { $("stopBtn").click(); } },
     { name: "update", args: "", help: "Check for a newer ohmyagi", run: async () => { const r = await api("/api/update-check", {}); sys(r.message || (r.ok ? "Checked." : "Could not check.")); } },
@@ -1100,8 +1142,12 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
   // ── Settings ──
   const store = { get(k) { try { return localStorage.getItem(k) || ""; } catch { return ""; } }, set(k, v) { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch {} } };
   function choice() { return { backend: store.get("ohmyagi-backend"), model: store.get("ohmyagi-model") }; }
-  const CATS = [["read", "Read", "look at files and folders"], ["write", "Write", "change or create files"], ["run", "Run", "run commands on this computer"], ["reach", "Reach", "contact other services and agents"]];
+  const CATS = [["read", "Read", "look at files and folders"], ["write", "Write", "change or create files"], ["run", "Run", "run commands on this computer"], ["reach", "Reach", "contact other services and agents"], ["operate", "Browser", "use a web browser for you"]];
   const LEVELS = ["Never", "Ask me first", "Do it, then tell me"];
+  // D-153: the browser's own words. 3 (any site) is typed in a terminal, like every 3.
+  const OP_LEVELS = ["No browser", "Looks and suggests", "Allowed sites only"];
+  const OP_TH = ["ไม่ใช้เบราว์เซอร์", "ดูแล้วเสนอ", "ทำเฉพาะเว็บที่อนุญาต", "ทำได้ทุกเว็บ"];
+  const wordsFor = (key) => key === "operate" ? OP_LEVELS : LEVELS;
   const TABS = ["home", "agent", "profile", "memories", "privacy", "settings"];
   function showTab(which) {
     if (!TABS.includes(which)) which = "home";
@@ -1178,13 +1224,13 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
       for (const [key, name, what] of CATS) {
         const row = el("div", "cat"); const label = el("div"); label.append(el("div", "what", name), el("div", "small", "May it " + what + "?"));
         const seg = el("div", "seg");
-        LEVELS.forEach((word, level) => { const b = el("button", "", word); b.setAttribute("aria-pressed", String(wizLevels[key] === level)); b.onclick = () => { wizLevels[key] = level; wizRender(); }; seg.append(b); });
+        wordsFor(key).forEach((word, level) => { const b = el("button", "", word); b.setAttribute("aria-pressed", String(wizLevels[key] === level)); b.onclick = () => { wizLevels[key] = level; wizRender(); }; seg.append(b); });
         const right = el("div"); right.append(seg); if (wizLevels[key] === 3) right.append(el("span", "lock", "now 3 — lowering it here is fine"));
         row.append(label, right); body.append(row);
       }
     }
     if (st.review) {
-      const changedLv = CATS.filter(([k]) => wizLevels[k] !== wizLevelsOrig[k]).map(([k, n]) => n + " → " + LEVELS[wizLevels[k]]);
+      const changedLv = CATS.filter(([k]) => wizLevels[k] !== wizLevelsOrig[k]).map(([k, n]) => n + " → " + wordsFor(k)[wizLevels[k]]);
       const box = el("div", "notes"); box.textContent = "Checking…"; body.append(box);
       api("/api/profile", { profile: wizDraft, write: false }).then((r) => {
         const lines = [r.ok ? (r.message || "") : "Not saveable yet:\\n" + (r.problems || r.message || "")];
@@ -1216,7 +1262,7 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
     for (const [key, name] of CATS) {
       if (wizLevels[key] === wizLevelsOrig[key] || wizLevels[key] > 2) continue;
       const a = await api("/api/autonomy", { category: key, level: wizLevels[key] });
-      notes.push(a.ok ? name + " set to " + LEVELS[wizLevels[key]] : (a.message || a.error || name + " not set"));
+      notes.push(a.ok ? name + " set to " + wordsFor(key)[wizLevels[key]] : (a.message || a.error || name + " not set"));
     }
     toast(notes.filter(Boolean).join("\\n") || "Nothing to save.");
     await refresh(); await loadProfile();
@@ -1836,13 +1882,42 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
   };
   $("memFilter").addEventListener("input", drawMemories);
   $("memType").addEventListener("change", drawMemories);
-  // What a search by meaning came back with; a search that could not run says so, never "nothing found".
-  function searchSaid(r) { return r.searched === false ? "Nothing was searched: " + (r.message || "there is no index yet and no vector store answered.") : r.text || r.message || r.error || "Nothing found."; }
+  // D-152: what /search in the chat says — the summary and its sources as text; the pieces stay on the Memories tab.
+  function askSaid(r) {
+    if (r.searched === false) return "Nothing was searched: " + (r.error || "there is no index yet and no vector store answered.");
+    if (!r.ok && !r.answer) return r.error || "No answer came back.";
+    const tick = "\\u0060", from = (r.sources || []).map((s) => tick + s.path + tick + (s.section ? " — " + s.section : "")).join(" · ");
+    return (r.answer || "Nothing found.") + (from ? "\\n\\nSources: " + from : "");
+  }
+  // D-152: search by meaning is a question answered from memory — a short summary and the files it came from,
+  // each opening in Read. The pieces it read stay behind "Show the pieces it read", closed until asked.
+  function askShown(r) {
+    const box = $("memText"); box.replaceChildren(); box.style.whiteSpace = "normal";
+    if (r.searched === false) { box.textContent = "Nothing was searched: " + (r.error || "there is no index yet and no vector store answered."); return; }
+    if (!r.ok && !r.answer) { box.textContent = r.error || "No answer came back."; return; }
+    box.append(md(r.answer || "Nothing found."));
+    box.append(el("p", "small", (r.found === 0 ? "Nothing in memory answers this" : "From " + r.found + " piece" + (r.found === 1 ? "" : "s") + " of memory") + (r.backend ? " · answered by " + r.backend + (r.model ? " · " + r.model : "") + (r.local ? " · on this computer" : "") : " · no model was asked")));
+    if ((r.sources || []).length) {
+      box.append(el("div", "what", "Sources"));
+      const list = el("div", "memlist");
+      for (const s of r.sources) {
+        const b = el("button", "mem"); b.append(el("div", "", s.title || s.path), el("div", "small mono", s.path + (s.section ? " — " + s.section : "")));
+        b.onclick = () => openMemory(s.path); list.append(b);
+      }
+      box.append(list);
+    }
+    if ((r.pieces || []).length) {
+      const d = el("details", "changed"); d.append(el("summary", "", "Show the pieces it read (" + r.pieces.length + ")"));
+      for (const p of r.pieces) { const q = el("div", "small"); q.append(el("div", "mono", p.path + (p.section ? " — " + p.section : "")), el("div", "", p.excerpt)); d.append(q); }
+      box.append(d);
+    }
+    if (r.error && r.ok === false) box.append(el("p", "small", r.error));
+  }
   $("memSearch").onclick = async () => {
-    const q = $("memFilter").value.trim(); if (!q) { toast("Type what to look for in the box first."); return; }
-    $("memSearch").disabled = true; memShown = ""; drawMemories(); $("memPath").textContent = "Search by meaning: " + q; $("memText").hidden = false; $("memText").textContent = "Searching…";
-    const r = await api("/api/memory-search", { query: q, scope: memKind || "all" });
-    $("memText").textContent = searchSaid(r); $("memSearch").disabled = false;
+    const q = $("memFilter").value.trim(); if (!q) { toast("Type a question in the box first."); return; }
+    $("memSearch").disabled = true; memShown = ""; drawMemories(); $("memPath").textContent = "Asked: " + q; $("memActions").hidden = true; $("memText").hidden = false; $("memText").textContent = "Searching your memory…";
+    let r; try { r = await api("/api/memory-ask", { question: q, scope: memKind || "all" }); } catch { r = { ok: false, error: "The server did not answer." }; }
+    askShown(r); $("memSearch").disabled = false;
   };
   async function loadSettings() {
     let s; try { s = await api("/api/settings"); } catch { return; }
@@ -1852,8 +1927,10 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
       const now = s.levels[key];
       const row = el("div", "cat");
       const label = el("div"); label.append(el("div", "what", name), el("div", "small", "May it " + what + "?"));
+      // D-153: the browser runs at min(operate, reach), and stops for a yes before anything sensitive at every level.
+      if (key === "operate" && s.operate) label.append(el("div", "small", "In force: " + s.operate.en + " · " + s.operate.th + ". Paying, sending, deleting, passwords and accepting terms always wait for your yes."));
       const seg = el("div", "seg"); seg.setAttribute("role", "group"); seg.setAttribute("aria-label", name);
-      LEVELS.forEach((word, level) => {
+      wordsFor(key).forEach((word, level) => {
         const b = el("button", "", word); b.setAttribute("aria-pressed", String(now === level));
         b.onclick = async () => {
           if (now === level) return;
@@ -1865,7 +1942,7 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
         seg.append(b);
       });
       const right = el("div"); right.append(seg);
-      if (now === 3) right.append(el("span", "lock", "now: on its own (set in a terminal)"));
+      if (now === 3) right.append(el("span", "lock", key === "operate" ? "now: any site · " + OP_TH[3] + " (set in a terminal)" : "now: on its own (set in a terminal)"));
       row.append(label, right); cats.append(row);
     }
     // backend & model

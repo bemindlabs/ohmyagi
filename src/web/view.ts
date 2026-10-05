@@ -7,7 +7,7 @@
  * sentence here is wrong, the page is wrong, and a test says so.
  */
 
-import type { Level } from "../decide/autonomy.ts";
+import { OPERATE_MEANING, type Level } from "../decide/autonomy.ts";
 import type { Triage } from "../decide/triage.ts";
 
 /** One line for "what may it do on its own", from the level a turn acts at. */
@@ -29,6 +29,19 @@ export function levelSentence(act: Level, stopped: boolean): { readonly title: s
     case 3:
       return { title: "Acts on its own", detail: "It can change files and run commands without stopping to report.", tone: "act" };
   }
+}
+
+/** What the browser may do, as the page says it (D-153): the level in force, in English and in Thai. */
+export interface OperateSentence {
+  readonly level: Level;
+  readonly title: string;
+  readonly en: string;
+  readonly th: string;
+}
+
+/** One line for "may it use a browser", from the level the browser runs at — `min(operate, reach)`. */
+export function operateSentence(level: Level): OperateSentence {
+  return { level, title: OPERATE_WORDS[level] ?? String(level), en: OPERATE_MEANING[level].en, th: OPERATE_MEANING[level].th };
 }
 
 /** Plain words for Jev's risk kinds. */
@@ -87,7 +100,14 @@ export function excerpt(text: string | null, max = 90): string {
 /** What the page receives from `/api/state`. Built by the command, shaped here. */
 export interface ViewState {
   readonly agent: { readonly name: string; readonly role: string; readonly subject: string; readonly dir: string };
-  readonly autonomy: { readonly title: string; readonly detail: string; readonly tone: string; readonly levels: Readonly<Record<string, number>> };
+  readonly autonomy: {
+    readonly title: string;
+    readonly detail: string;
+    readonly tone: string;
+    readonly levels: Readonly<Record<string, number>>;
+    /** The browser (D-153), at the level in force — `min(operate, reach)`. */
+    readonly operate: OperateSentence;
+  };
   readonly stopped: boolean;
   readonly waiting: readonly {
     readonly id: string;
@@ -99,6 +119,11 @@ export interface ViewState {
     readonly chips: readonly Chip[];
   }[];
   readonly approved: readonly { readonly id: string; readonly what: string; readonly decided: string }[];
+  /**
+   * D-144 §2: approvals a failed turn took while sending nothing — spent, and offered to be filed again as a
+   * new question (`refileProblem`). Never one a turn ran or may have run. `spent` is when, as a person says it.
+   */
+  readonly refileable: readonly { readonly id: string; readonly what: string; readonly spent: string }[];
   readonly triggers: readonly { readonly id: string; readonly every: string; readonly next: string }[];
   readonly recent: readonly { readonly id: string; readonly when: string; readonly backend: string; readonly asked: string; readonly ok: boolean }[];
   readonly canTriage: boolean;
@@ -121,6 +146,8 @@ export interface ViewState {
 export interface SettingsState {
   /** Per category, 0–3. The page can set 0–2; a 3 is typed in a terminal. */
   readonly levels: Readonly<Record<string, number>>;
+  /** The browser (D-153), at the level in force — `min(operate, reach)`. */
+  readonly operate: OperateSentence;
   readonly stopped: boolean;
   /** Backends this machine can reach right now, for the chat's choice. */
   readonly backends: readonly { readonly id: string; readonly available: boolean }[];
@@ -138,10 +165,14 @@ export const CATEGORY_WORDS: Readonly<Record<string, { readonly name: string; re
   write: { name: "Write", what: "change or create files" },
   run: { name: "Run", what: "run commands on this computer" },
   reach: { name: "Reach", what: "contact other services and agents" },
+  operate: { name: "Browser", what: "use a web browser for you" },
 });
 
 /** What each level means, per category, in one short phrase. */
 export const LEVEL_WORDS: readonly string[] = ["Never", "Ask me first", "Do it, then tell me", "On its own"];
+
+/** What each `operate` level means, in one short phrase (D-153). The longer EN/TH lines are `OPERATE_MEANING`. */
+export const OPERATE_WORDS: readonly string[] = ["No browser", "Looks and suggests", "Allowed sites only", "Any site"];
 
 /** What the Agent tab receives from `/api/agent`: who it is, from its soul, and what it has done. */
 export interface AgentInfo {

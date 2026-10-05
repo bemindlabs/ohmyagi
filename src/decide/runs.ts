@@ -379,6 +379,89 @@ export function childrenOf(pid: number, io: SignalIo = REAL_SIGNALS): readonly P
   return found;
 }
 
+/** Every process `/proc` lists right now, by pid. One snapshot, so one consistent answer. */
+function processTable(io: SignalIo): Map<number, ProcStat> {
+  const table = new Map<number, ProcStat>();
+  for (const pid of io.listPids()) {
+    const stat = io.stat(pid);
+    if (stat !== null) table.set(pid, stat);
+  }
+  return table;
+}
+
+/**
+ * The parent `/proc` names for `stat`, if it can really be its parent.
+ *
+ * A pid is reused, and `ppid` is only a number: a parent that started **after**
+ * its child is a different process wearing a dead parent's number, and walking
+ * through it would claim a stranger's process as one of ours (or ours as a
+ * stranger's). Such a hop ends the walk.
+ */
+function parentOf(table: ReadonlyMap<number, ProcStat>, stat: ProcStat): ProcStat | undefined {
+  const parent = table.get(stat.ppid);
+  return parent !== undefined && parent.startTicks <= stat.startTicks ? parent : undefined;
+}
+
+/**
+ * Does `stat` descend from `ancestor`? Walks parents rather than children,
+ * because that is the direction `/proc` answers in one field. The hop limit is
+ * not defensive rounding: `ppid` chains are re-parented while a kill switch
+ * runs, and a cycle read out of two inconsistent snapshots would otherwise spin
+ * forever inside one.
+ */
+function descendsFrom(table: ReadonlyMap<number, ProcStat>, stat: ProcStat, ancestor: number): boolean {
+  let cursor = parentOf(table, stat);
+  for (let hops = 0; cursor !== undefined && hops < 128; hops += 1) {
+    if (cursor.pid === ancestor) return true;
+    cursor = parentOf(table, cursor);
+  }
+  return false;
+}
+
+/** `pid` and every process it runs under, as far as `/proc` can show it. */
+function lineageOf(table: ReadonlyMap<number, ProcStat>, pid: number): Set<number> {
+  const lineage = new Set<number>([pid]);
+  let cursor = table.get(pid);
+  for (let hops = 0; cursor !== undefined && hops < 128; hops += 1) {
+    cursor = parentOf(table, cursor);
+    if (cursor !== undefined) lineage.add(cursor.pid);
+  }
+  return lineage;
+}
+
+/** How many parents up `stat` is from `root`, for deepest-first ordering. */
+function depthBelow(table: ReadonlyMap<number, ProcStat>, stat: ProcStat, root: number): number {
+  let depth = 0;
+  let cursor: ProcStat | undefined = stat;
+  for (let hops = 0; cursor !== undefined && cursor.pid !== root && hops < 128; hops += 1) {
+    depth += 1;
+    cursor = parentOf(table, cursor);
+  }
+  return depth;
+}
+
+/**
+ * Every process below `pid`'s children that leads a process group of its own.
+ *
+ * A group signal reaches a group and nothing else, and a vendor's tool may put
+ * its shell in a new one: measured 2026-10-04 on grok 1.0.40 (D-149 e2e), every
+ * shell command runs as `bash` with `setsid`, so `sleep … && printf … > file`
+ * outlived `ohmyagi stop`'s signal to the vendor's group and wrote its file after
+ * the stop said everything was gone. Those processes are still this turn's work —
+ * found by walking parents from a turn whose start time was checked — so
+ * {@link signalTree} signals them too.
+ *
+ * Asked before anything is signalled: once the vendor dies, its children are
+ * re-parented and the line back to this turn is gone. The direct children are
+ * left out; {@link childrenOf} already names them.
+ */
+export function detachedDescendants(pid: number, io: SignalIo = REAL_SIGNALS): readonly ProcStat[] {
+  const table = processTable(io);
+  return [...table.values()].filter(
+    (stat) => stat.pid !== pid && stat.ppid !== pid && stat.pgid === stat.pid && descendsFrom(table, stat, pid),
+  );
+}
+
 /** One process a signal was sent to, and how it was addressed. */
 export interface Signalled {
   readonly pid: number;
@@ -404,6 +487,12 @@ export interface TerminationReport {
   readonly signalled: readonly Signalled[];
   /** Pids still alive when the poll gave up, with the command for a human. */
   readonly survivors: readonly { readonly pid: number; readonly pgid: number }[];
+  /**
+   * The process doing the stopping, when it is part of the turn it stops —
+   * `ohmyagi stop` run by the agent, or by a script the agent ran. Never signalled:
+   * a kill switch that kills itself first stops nothing after it (D-149 review).
+   */
+  readonly spared?: number;
   /** Why nothing was signalled, when nothing was. */
   readonly refusal?: string;
 }
@@ -417,51 +506,43 @@ export interface TerminationReport {
  * the first process of a pipeline the group leader and puts the second in the
  * group beside it, a sibling rather than a descendant.
  *
- * Walks parents rather than children, because that is the direction `/proc`
- * answers in one field. The hop limit is not defensive rounding: `ppid` chains
- * are reparented while this loop runs, and a cycle read out of two inconsistent
- * snapshots would otherwise spin forever inside a kill switch.
+ * A member whose `ppid` points at a process that started after it is not taken
+ * as descended through that number ({@link parentOf}): it counts as a stranger,
+ * which is the safe direction.
  */
 export function strangersInGroup(io: SignalIo, leaderPid: number): readonly ProcStat[] {
-  const table = new Map<number, ProcStat>();
-  for (const pid of io.listPids()) {
-    const stat = io.stat(pid);
-    if (stat !== null) table.set(pid, stat);
-  }
-
-  const descendsFromLeader = (from: ProcStat): boolean => {
-    let cursor: ProcStat | undefined = from;
-    for (let hops = 0; cursor !== undefined && hops < 128; hops += 1) {
-      if (cursor.pid === leaderPid) return true;
-      cursor = table.get(cursor.ppid);
-    }
-    return false;
-  };
-
+  const table = processTable(io);
   return [...table.values()].filter(
-    (stat) => stat.pgid === leaderPid && !descendsFromLeader(stat),
+    (stat) => stat.pgid === leaderPid && stat.pid !== leaderPid && !descendsFrom(table, stat, leaderPid),
   );
 }
 
 /**
  * Address one process as safely as it can be addressed.
  *
- * A process gets its **group** only when both halves hold: it leads that group,
- * and every other member of the group descends from it. `detached: true`
- * produces exactly that shape, and an inherited group never does. Anything else
- * gets the signal addressed to itself alone, because its group may hold a shell
- * somebody is using — or, per the measurement in the header, the `cat` on the
- * other side of a pipe.
+ * A process gets its **group** only when three things hold: it leads that group,
+ * every other member of the group descends from it, and the group holds neither
+ * the process doing the stopping nor anything that process runs under (`own`).
+ * `detached: true` produces the first two, and an inherited group never does.
+ * Anything else gets the signal addressed to itself alone, because its group may
+ * hold a shell somebody is using — or, per the measurement in the header, the
+ * `cat` on the other side of a pipe — or the `ohmyagi stop` that is sending it.
  *
  * Narrowing is the safe direction and it is also a *loss*: a vendor CLI's own
- * grandchildren are then out of reach. So it is reported, not swallowed, and
- * `ohmyagi stop` prints the manual command for what is left.
+ * grandchildren are then out of reach of this one signal. So it is reported, and
+ * {@link signalTree} addresses the rest of the tree one process at a time.
  */
-function sendTo(io: SignalIo, stat: ProcStat, signal: NodeJS.Signals): Signalled {
+function sendTo(io: SignalIo, stat: ProcStat, signal: NodeJS.Signals, own: ReadonlySet<number> = new Set()): Signalled {
   let how: "group" | "process" = "process";
   let narrowed: string | undefined;
 
-  if (stat.pgid === stat.pid) {
+  if (stat.pgid === stat.pid && own.has(stat.pid)) {
+    narrowed =
+      `pid ${stat.pid} leads process group ${stat.pgid}, and that group holds this stop ` +
+      `command or a process it runs under. A group signal would end the stop before it ` +
+      `finished, so the signal went to this process alone and the group's other members ` +
+      `are signalled one by one.`;
+  } else if (stat.pgid === stat.pid) {
     const strangers = strangersInGroup(io, stat.pid);
     if (strangers.length === 0) {
       how = "group";
@@ -469,8 +550,8 @@ function sendTo(io: SignalIo, stat: ProcStat, signal: NodeJS.Signals): Signalled
       narrowed =
         `pid ${stat.pid} leads process group ${stat.pgid}, but ${strangers.length} process(es) ` +
         `in that group do not descend from it (${strangers.map((s) => s.pid).join(", ")}) — a ` +
-        `pipeline or a shell job puts a sibling there. The signal went to this process alone. ` +
-        `Anything it started that outlives it is named below with the command to reach it.`;
+        `pipeline or a shell job puts a sibling there. The signal went to this process alone; ` +
+        `what it started is signalled one by one, and what outlives that is named below.`;
     }
   }
 
@@ -489,15 +570,165 @@ function sendTo(io: SignalIo, stat: ProcStat, signal: NodeJS.Signals): Signalled
   }
 }
 
+/** What {@link signalTree} did, and what it set out to end. */
+export interface TreeSignal {
+  readonly signalled: readonly Signalled[];
+  /**
+   * Every process the signal was meant to end, as the snapshot found it, in the
+   * order it was addressed — the start time is what lets a second signal prove it
+   * is still talking to the same process ({@link signalSurvivors}).
+   */
+  readonly watched: readonly ProcStat[];
+  /** The groups that got a group signal, by leader. */
+  readonly groups: ReadonlySet<number>;
+  /** The stopping process, when it was inside the tree and so left alone. */
+  readonly spared?: number;
+}
+
 /**
- * Stop one recorded turn: its vendor children first, then om-agi itself.
+ * Signal `root` and everything below it, so that nothing in the tree is missed
+ * and nothing outside it is touched.
  *
- * Children first, and the order is measured rather than stylistic: killing the
- * parent alone leaves the vendor CLI running with its parent reassigned to init
- * (measured 2026-09-22), which is the failure that makes a kill switch a lie.
+ * One snapshot of `/proc` first: the tree is every process whose parents lead
+ * back to `root`, and it has to be read before anything dies, because a dead
+ * parent's children are re-parented and the line back is gone. Then, in order:
+ *
+ * 1. every process in the tree that leads a group of its own, deepest first —
+ *    by its group when {@link sendTo} can show the group is safe;
+ * 2. every other process in the tree that no group signal reached, deepest
+ *    first, one by one;
+ * 3. `root` itself — children before parent, which is measured rather than
+ *    stylistic: killing the parent alone leaves the vendor CLI running with its
+ *    parent reassigned to init (measured 2026-09-22);
+ * 4. last, one by one, the processes in groups that hold `stopper` or a process
+ *    it runs under — those groups are never signalled as groups. `stopper`
+ *    itself is never signalled.
+ *
+ * `stopper` is the process doing the stopping: `ohmyagi stop` when the agent, or
+ * a script the agent runs, calls it from inside the turn (D-149 review), or the
+ * om-agi turn itself when it ends its own vendor child on a timeout.
+ */
+export function signalTree(
+  rootPid: number,
+  signal: NodeJS.Signals,
+  options: { readonly io?: SignalIo; readonly stopper?: number } = {},
+): TreeSignal {
+  const io = options.io ?? REAL_SIGNALS;
+  const stopper = options.stopper ?? process.pid;
+  const table = processTable(io);
+  const root = table.get(rootPid);
+  if (root === undefined) return { signalled: [], watched: [], groups: new Set() };
+
+  // The groups holding the stopper or a process it runs under. Not signalled as groups, ever.
+  const own = new Set<number>();
+  for (const pid of lineageOf(table, stopper)) {
+    const stat = table.get(pid);
+    if (stat !== undefined) own.add(stat.pgid);
+  }
+
+  const below = [...table.values()]
+    .filter((stat) => stat.pid !== rootPid && descendsFrom(table, stat, rootPid))
+    .sort((a, b) => depthBelow(table, b, rootPid) - depthBelow(table, a, rootPid));
+
+  const signalled: Signalled[] = [];
+  const groups = new Set<number>();
+  const watched: ProcStat[] = [];
+  const done = new Set<number>();
+  const send = (stat: ProcStat, alone: boolean): void => {
+    if (stat.pid === stopper || done.has(stat.pid)) return;
+    done.add(stat.pid);
+    watched.push(stat);
+    if (alone) {
+      try {
+        io.kill(stat.pid, signal);
+        signalled.push({ pid: stat.pid, how: "process", signal });
+      } catch (cause) {
+        signalled.push({ pid: stat.pid, how: "process", signal, failed: String(cause) });
+      }
+      return;
+    }
+    const sent = sendTo(io, stat, signal, own);
+    signalled.push(sent);
+    if (sent.how === "group" && sent.failed === undefined) groups.add(stat.pid);
+  };
+
+  // 1. Group leaders below the root, deepest first.
+  for (const stat of below) if (stat.pgid === stat.pid && !own.has(stat.pgid)) send(stat, false);
+  // 2. Everything below that no group signal reached.
+  for (const stat of below) {
+    if (own.has(stat.pgid) || done.has(stat.pid)) continue;
+    if (groups.has(stat.pgid)) {
+      done.add(stat.pid);
+      watched.push(stat);
+      continue;
+    }
+    send(stat, true);
+  }
+  // 3. The root.
+  if (!own.has(root.pgid)) send(root, false);
+  // 4. Last, one by one: what shares a group with the stopper or its parents.
+  for (const stat of [...below, root]) if (own.has(stat.pgid)) send(stat, true);
+
+  const stopping = table.get(stopper);
+  const inside = stopping !== undefined && (stopper === rootPid || descendsFrom(table, stopping, rootPid));
+  return { signalled, watched, groups, ...(inside ? { spared: stopper } : {}) };
+}
+
+/**
+ * D-044, for every process a tree signal meant to end: what is still the same
+ * process (same start time) gets `signal` — a leader that was reached as a group
+ * by its group again, under the same safety rule, and everything else one by
+ * one. A pid that was reused in between has a different start time and is left
+ * alone. Returns what was sent, and what was still alive to send it to.
+ */
+export function signalSurvivors(
+  tree: TreeSignal,
+  signal: NodeJS.Signals,
+  options: { readonly io?: SignalIo; readonly stopper?: number } = {},
+): { readonly signalled: readonly Signalled[]; readonly alive: readonly ProcStat[] } {
+  const io = options.io ?? REAL_SIGNALS;
+  const table = processTable(io);
+  const own = new Set<number>();
+  for (const pid of lineageOf(table, options.stopper ?? process.pid)) {
+    const stat = table.get(pid);
+    if (stat !== undefined) own.add(stat.pgid);
+  }
+  const alive = tree.watched.filter((stat) => isSameProcess(io, stat));
+  const signalled: Signalled[] = [];
+  const reached = new Set<number>();
+  for (const stat of alive) {
+    if (tree.groups.has(stat.pid)) {
+      const sent = sendTo(io, stat, signal, own);
+      signalled.push(sent);
+      if (sent.how === "group" && sent.failed === undefined) reached.add(stat.pid);
+    }
+  }
+  for (const stat of alive) {
+    if (tree.groups.has(stat.pid) || reached.has(io.stat(stat.pid)?.pgid ?? stat.pgid)) continue;
+    try {
+      io.kill(stat.pid, signal);
+      signalled.push({ pid: stat.pid, how: "process", signal });
+    } catch (cause) {
+      signalled.push({ pid: stat.pid, how: "process", signal, failed: String(cause) });
+    }
+  }
+  return { signalled, alive };
+}
+
+/** Is the process `stat` describes still running under that number? */
+function isSameProcess(io: SignalIo, stat: ProcStat): boolean {
+  const now = io.stat(stat.pid);
+  return now !== null && now.startTicks === stat.startTicks;
+}
+
+/**
+ * Stop one recorded turn: everything below om-agi first — what the vendor
+ * started in groups of its own, then the vendor — then om-agi itself
+ * ({@link signalTree}), and SIGKILL for whatever outlives SIGTERM (D-044).
  *
  * @param settle Called between polls. Injected so a test can drive it without
  *   sleeping, and so nothing here asserts anything about how fast a machine is.
+ * @param stopper The process doing the stopping, never signalled (default: this one).
  */
 export async function terminateRun(
   stored: StoredRun,
@@ -505,6 +736,7 @@ export async function terminateRun(
     readonly io?: SignalIo;
     readonly attempts?: number;
     readonly settle: () => Promise<void>;
+    readonly stopper?: number;
   },
 ): Promise<TerminationReport> {
   const io = options.io ?? REAL_SIGNALS;
@@ -530,39 +762,31 @@ export async function terminateRun(
     };
   }
 
-  const signalled: Signalled[] = [];
+  const scope = { io, ...(options.stopper === undefined ? {} : { stopper: options.stopper }) };
+  const tree = signalTree(record.pid, "SIGTERM", scope);
+  const signalled: Signalled[] = [...tree.signalled];
 
-  // The vendor children, each addressed by its own group where it leads one.
-  const children = childrenOf(record.pid, io);
-  for (const child of children) signalled.push(sendTo(io, child, "SIGTERM"));
-
-  // Then om-agi itself, which has no handler and dies on the default action.
-  signalled.push(sendTo(io, self, "SIGTERM"));
-
-  // What was signalled, with its start time, so the second signal can prove it
-  // is still addressing the same process and not a pid reused in between.
-  const watched = [...children, self];
-  const sameProcess = (stat: ProcStat): boolean => {
-    const now = io.stat(stat.pid);
-    return now !== null && now.startTicks === stat.startTicks;
-  };
+  // Every process the tree held, with the start time the snapshot read — not
+  // only the ones a signal was addressed to. A member that ignores SIGTERM while
+  // its group's leader dies on it is exactly what a watch over leaders missed.
   const wait = async (among: readonly ProcStat[]): Promise<readonly ProcStat[]> => {
     let alive = among;
     for (let attempt = 0; attempt < attempts && alive.length > 0; attempt += 1) {
       await options.settle();
-      alive = alive.filter(sameProcess);
+      alive = alive.filter((stat) => isSameProcess(io, stat));
     }
     return alive;
   };
 
-  let alive = await wait(watched);
+  let alive = await wait(tree.watched);
 
   // D-044 — SIGTERM was not enough. The owner decided a kill switch that a
   // hung or deliberately stubborn vendor can outlast is not a kill switch, so
-  // what is still the same process gets SIGKILL, addressed by the same rule.
+  // what is still the same process gets SIGKILL, addressed by the same rules.
   if (alive.length > 0) {
-    for (const stat of alive) signalled.push(sendTo(io, stat, "SIGKILL"));
-    alive = await wait(alive);
+    const killed = signalSurvivors({ ...tree, watched: alive }, "SIGKILL", scope);
+    signalled.push(...killed.signalled);
+    alive = await wait(killed.alive);
   }
 
   return {
@@ -570,6 +794,7 @@ export async function terminateRun(
     liveness,
     signalled,
     survivors: alive.map((stat) => ({ pid: stat.pid, pgid: io.stat(stat.pid)?.pgid ?? stat.pgid })),
+    ...(tree.spared === undefined ? {} : { spared: tree.spared }),
   };
 }
 

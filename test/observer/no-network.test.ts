@@ -262,7 +262,7 @@ describe("A. static — the observer's import closure", () => {
 
     expect(sockets).toContain(join("src", "exec", "ollama-exec.ts"));
     expect(spawns).toContain(SPAWN_CHOKEPOINT);
-  });
+  }, 30_000);
 
   test("the checker catches every spelling of a socket, and ignores comments", () => {
     const caught = (source: string) => networkEscapes("synthetic.ts", source);

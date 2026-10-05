@@ -148,6 +148,18 @@ describe("the parser, on prose it must read and prose it must not", () => {
     expect(HELP_FLAGS).toContain("--help");
   });
 
+  test("after a bare --, a help flag is `memory ask`'s question — and still a help flag for every other command", () => {
+    // `memory ask`: everything after `--` is the question (D-152).
+    expect(asksForHelp(["ask", "./agent", "--", "--help"], "memory")).toBe(false);
+    expect(asksForHelp(["ask", "./agent", "--", "-h"], "memory")).toBe(false);
+    expect(asksForHelp(["ask", "./agent", "--help", "--", "q"], "memory")).toBe(true);
+    // Everyone else: a `--` changes nothing, so a command asked how still does nothing.
+    expect(asksForHelp(["--", "--help"], "stop")).toBe(true);
+    expect(asksForHelp(["./agent", "--", "-h"], "turn")).toBe(true);
+    expect(asksForHelp(["search", "./agent", "--", "--help"], "memory")).toBe(true);
+    expect(asksForHelp(["--", "--help"])).toBe(true);
+  });
+
   test("helpFor slices the entry for a verb and stops at the next one", () => {
     const synthetic = [
       "ohmyagi 0.0.0 — x",
@@ -260,6 +272,9 @@ describe("asked how, every command answers and none of them acts", () => {
       ["stop", "--help"],
       ["stop", "-h"],
       ["stop", "./somewhere", "--subject", "example", "--help"],
+      // A `--` in front changes nothing for stop: only `memory ask` reads words after it as a value.
+      ["stop", "--", "--help"],
+      ["stop", "./somewhere", "--", "-h"],
     ]) {
       const box = await sandbox();
       const run = await runCli(box, argv);

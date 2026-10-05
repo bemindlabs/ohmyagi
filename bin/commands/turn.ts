@@ -27,7 +27,10 @@ import { printable } from "../../src/identity/shapes.ts";
 import {
   AUTONOMY_FILE,
   PROPOSE_INSTRUCTION,
+  SPENT_DIR,
   blockingProposal,
+  boundAction,
+  claimApproval,
   describeProposal,
   diffSnapshots,
   ensureProposalsDir,
@@ -39,9 +42,10 @@ import {
   proposalsDir,
   readProposals,
   snapshotTree,
-  spendProposal,
   spendability,
   writeProposal,
+  writeProposalAt,
+  type Proposal,
   type StoredProposal,
 } from "../../src/decide/index.ts";
 import { conversationBlock, forCloud, parseHistory, type Exchange } from "../../src/exec/conversation.ts";
@@ -115,7 +119,7 @@ async function readPromptFrom(path: string): Promise<string> {
 }
 
 const TURN_USAGE =
-  "usage: ohmyagi turn <dir> --subject <id> (--prompt <text> | --prompt-file <path>) " +
+  "usage: ohmyagi turn <dir> --subject <id> (--prompt <text> | --prompt-file <path> | --proposal <id>) " +
   "[--backend a,b,c] [--route auto|local|cloud] [--model <m> | --model <backend>=<m>,…] [--private] [--proposal <id>] [--no-recall] [--no-proposals] " +
   "[--recall-chars <n>] [--history-json <[{role,text}]>] [--json]";
 
@@ -131,12 +135,25 @@ const TURN_USAGE =
  * 2026-09-22 rather than caution: an approval that keeps working is how *I
  * allowed it once* becomes *it has been doing that ever since*, with nothing
  * anywhere to say when the old permission was used again.
+ *
+ * Asked twice by a turn (D-144). First with no `claimFor`: a reading, early and
+ * cheap, so an approval that is missing, pending, refused or spent stops the
+ * turn before anything is written. Then with `claimFor`, as the last step before
+ * the prompt goes: read again, and if it is still ready, **claimed in the same
+ * step** ({@link claimApproval}) — one exclusive step across processes, so of
+ * two turns started together exactly one gets it, and the other is refused here
+ * with nothing sent and told which turn has it. Everything that does not depend
+ * on the proposal — the ledger, the model and route, recall — is asked between
+ * the two, so a turn that stops for one of those has spent nothing.
  */
 async function approvalFor(
   subject: SubjectId,
   id: string,
+  claimFor?: string,
+  /** D-153: the action digest the first reading bound this turn to. The claim is refused if it moved since. */
+  boundTo?: string,
 ): Promise<
-  | { readonly ok: true; readonly dir: string; readonly stored: StoredProposal }
+  | { readonly ok: true; readonly stored: StoredProposal; readonly proposal: Proposal }
   | { readonly ok: false; readonly code: number }
 > {
   const dir = await proposalsDir(dialEnv(), subject);
@@ -145,8 +162,11 @@ async function approvalFor(
     return { ok: false, code: 1 };
   }
   const inventory = await readProposals(dir.path);
-  for (const bad of inventory.unreadable) {
-    console.error(`ohmyagi: ${bad.path} is in the proposal store and is not a proposal: ${bad.reason}`);
+  // Said on the first reading; the second would only say it again.
+  if (claimFor === undefined) {
+    for (const bad of inventory.unreadable) {
+      console.error(`ohmyagi: ${bad.path} is in the proposal store and is not a proposal: ${bad.reason}`);
+    }
   }
 
   const stored = findProposal(inventory, id);
@@ -164,7 +184,46 @@ async function approvalFor(
   }
 
   const state = spendability(stored.proposal);
-  if (state.kind === "ready") return { ok: true, dir: dir.path, stored };
+  if (state.kind === "ready") {
+    // D-153 — the approval pays for the action it named, and the record must still hold it. Asked on both
+    // readings, and on the second against what the first one bound the turn to: a record rewritten between
+    // the two is not claimed.
+    const bound = boundAction(stored.proposal);
+    if (!bound.ok || (boundTo !== undefined && bound.digest !== boundTo)) {
+      console.error(`ohmyagi: nothing was sent, and the approval is not spent — ${proposalLine(stored.proposal)}`);
+      console.error(`  ${bound.ok ? "the record changed while this turn was getting ready; run it again to read it afresh." : bound.reason}`);
+      return { ok: false, code: DIAL_REFUSED };
+    }
+    if (claimFor === undefined) return { ok: true, stored, proposal: stored.proposal };
+    let claim;
+    try {
+      claim = await claimApproval(stored, claimFor, new Date());
+    } catch (error) {
+      console.error(`ohmyagi: the approval could not be marked as spent: ${error instanceof Error ? error.message : String(error)}`);
+      console.error(
+        `Nothing was sent. An approval that cannot be recorded as used is one that could be used ` +
+          `again, and "good for one turn" would then be a sentence rather than a rule.`,
+      );
+      return { ok: false, code: 1 };
+    }
+    if (claim.ok) {
+      if (claim.copyFailed !== undefined) {
+        console.error(
+          `ohmyagi: the approval is claimed in ${SPENT_DIR}/, but its record could not say so too ` +
+            `(${claim.copyFailed}). Every reader of the store sees the claim; the turn goes ahead.`,
+        );
+      }
+      console.error(
+        dimErr(`ohmyagi: proposal ${stored.proposal.id} is spent on this turn (${claimFor}). Another turn needs another approval.`),
+      );
+      return { ok: true, stored, proposal: claim.proposal };
+    }
+    // Another turn claimed it between the reading and the claim: the race
+    // D-144 closes. Said the way a spent one is said, naming the turn that has it.
+    console.error(`ohmyagi: nothing was sent — ${proposalLine({ ...stored.proposal, usedByTurn: claim.turn })}`);
+    console.error(`  ${spentLine(claim.turn)} Another turn took it${claim.at === null ? "" : ` at ${claim.at}`}, a moment before this one.`);
+    return { ok: false, code: DIAL_REFUSED };
+  }
 
   console.error(`ohmyagi: nothing was sent — ${proposalLine(stored.proposal)}`);
   console.error(
@@ -175,10 +234,119 @@ async function approvalFor(
         ? `  It was refused${
             stored.proposal.decision?.note == null ? "" : `: ${stored.proposal.decision.note}`
           }. A refusal is remembered (S5.2 AC2); file a new proposal saying what is different.`
-        : `  Its approval was already spent by turn ${state.turn}. An approval is good for one ` +
-          `turn, on purpose: ask again and it will be a decision somebody made today.`,
+        : `  ${spentLine(state.turn)}`,
   );
   return { ok: false, code: DIAL_REFUSED };
+}
+
+/** One sentence for an approval some turn already has — the same whether it was read spent or lost a race. */
+function spentLine(turn: string): string {
+  return (
+    `Its approval was already spent by turn ${turn}. An approval is good for one ` +
+    `turn, on purpose: ask again and it will be a decision somebody made today.`
+  );
+}
+
+/** What a turn that claimed an approval knows about how far it got — told to `cmdTurn` as it goes. */
+interface Took {
+  /** Set the moment the approval is claimed. */
+  claimed?: { readonly proposal: Proposal; readonly stored: StoredProposal; readonly turnId: string; readonly subject: SubjectId };
+  /** Every backend whose own `run` was called — past the egress screen, so the request went out or may have. */
+  readonly handed: string[];
+  /** The backend that answered, if one did. */
+  answered?: string;
+  /** Set when an answer arrived and the ledger could not record it. */
+  unrecorded?: boolean;
+}
+
+/**
+ * The last line of a turn that claimed an approval and did not finish with 0
+ * (D-144). What it says depends on how far the turn got, because what the owner
+ * should do next does:
+ *
+ * - **it ran** — a backend answered, and the turn failed after that (the ledger
+ *   could not record it, say). Filing it again would run it a second time.
+ * - **it may have run** — the request reached a backend that did not answer. A
+ *   vendor CLI at level 2 may have acted before it failed; om-agi sees its
+ *   output, not its tool calls. Look before asking again.
+ * - **nothing was sent** — {@link afterUnsentFailure}: it stays spent, and may be
+ *   filed again.
+ */
+async function afterClaimedFailure(took: Took): Promise<string | undefined> {
+  const claimed = took.claimed;
+  if (claimed === undefined) return undefined;
+  const which = `proposal ${claimed.proposal.id} was spent by this turn (${claimed.turnId})`;
+  if (took.answered !== undefined) {
+    return (
+      `ohmyagi: ${which} and it ran — ${took.answered} answered${took.unrecorded === true ? ", and the ledger did not record it" : ""}. ` +
+      `Do not file it again to retry: that would run it a second time.`
+    );
+  }
+  if (took.handed.length > 0) {
+    return (
+      `ohmyagi: ${which} and it may have run — the request reached ${took.handed.join(", ")} before the turn failed. ` +
+      `Check what it did before asking for it again: a second approval would run it again.`
+    );
+  }
+  return afterUnsentFailure(claimed);
+}
+
+/**
+ * **D-144 §2 (the owner, 2026-09-29): an approval a failed turn took stays
+ * spent.** This is the one place a turn is known to have claimed an approval and
+ * then sent nothing to any backend — every backend unavailable, the egress
+ * screen stopped the prompt, or the turn threw before its first `run`; every
+ * check that does not depend on the proposal was asked before the claim, so only
+ * these are left. It is also where a hand-back would go, and the owner chose
+ * not to have one: a killed turn could not hand anything back, and a turn that
+ * got further may have acted.
+ *
+ * The remedy is to ask again. The record is marked `sentNothing`, which is what
+ * lets it be filed again from its own text — `proposal new --refile <id>`, or
+ * "File it again" on the web page — as a new proposal waiting for a new yes.
+ */
+async function afterUnsentFailure(claimed: NonNullable<Took["claimed"]>): Promise<string> {
+  const which = `ohmyagi: proposal ${claimed.proposal.id} stays spent — turn ${claimed.turnId} took its approval and nothing was sent (D-144).`;
+  try {
+    await writeProposalAt(claimed.stored.path, { ...claimed.proposal, sentNothing: true });
+  } catch (error) {
+    // Not marked, so it cannot be filed again from its record; the same what can still be filed by hand.
+    return (
+      `${which} It could not be marked as sent-nothing (${String(error)}); to ask again, file the same what ` +
+      `with \`ohmyagi proposal new <dir> --subject ${claimed.subject}\` and approve the new one.`
+    );
+  }
+  return (
+    `${which} To ask again, file it again — \`ohmyagi proposal new <dir> --subject ${claimed.subject} ` +
+    `--refile ${claimed.proposal.id}\`, or "File it again" on the web page — and approve the new one.`
+  );
+}
+
+/**
+ * The same backend, telling `took` when its own `run` is called, and when that
+ * run comes back with an answer. Wrapped inside the egress announcement, so a
+ * request the screen stopped is never counted: a backend in this list was
+ * handed the prompt, or was about to be.
+ *
+ * The answer is recorded here, the moment it arrives, and not after the turn's
+ * other work: anything that throws after an answer (the after-snapshot, the
+ * report, the capture) must leave "it ran", not "it may have run".
+ */
+function counted<T extends { readonly id: string; run: (request: TurnRequestLike) => Promise<TurnResult> }>(exec: T, took: Took): T {
+  return new Proxy(exec, {
+    get(target, key, receiver) {
+      if (key === "run") {
+        return async (request: TurnRequestLike) => {
+          took.handed.push(target.id);
+          const result = await target.run(request);
+          if (result.confidence === "confirmed" || result.confidence === "partial") took.answered = target.id;
+          return result;
+        };
+      }
+      const value = Reflect.get(target, key, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
 }
 
 /**
@@ -206,8 +374,28 @@ export const TURN_BOOLEANS: readonly string[] = ["json", "private", "no-recall",
  * The ledger is checked for writability *before* the prompt goes out. A turn
  * that has already been sent cannot be un-sent by a later error, so "I cannot
  * record this" has to be an answer to a question asked first.
+ *
+ * A turn that claimed an approval and then did not finish with 0 — or threw —
+ * says what became of it, on every way out (D-144): it ran, it may have, or
+ * nothing was sent. The sentence is here rather than at each `return`, so a way
+ * out added later cannot miss it.
  */
 export async function cmdTurn(argv: readonly string[]): Promise<number> {
+  const took: Took = { handed: [] };
+  let code: number | undefined;
+  try {
+    code = await turnOnce(argv, took);
+    return code;
+  } finally {
+    if (code !== 0) {
+      const line = await afterClaimedFailure(took);
+      if (line !== undefined) console.error(line);
+    }
+  }
+}
+
+/** Everything `cmdTurn` does; `took` is told how far a turn with an approval got. */
+async function turnOnce(argv: readonly string[], took: Took): Promise<number> {
   const { positional, options } = parseArgs(argv, TURN_BOOLEANS);
   const dir = positional[0];
   const subject = options.get("subject");
@@ -222,26 +410,30 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
   if (promptText !== undefined && promptText !== "" && promptFile !== undefined && promptFile !== "") {
     return usageError("--prompt and --prompt-file name two different prompts; pass one of them");
   }
+  // D-153: under `--proposal` the prompt is the approved action, read from its record, so none need be given.
+  const underApproval = options.has("proposal");
   if (
     dir === undefined ||
     subject === undefined ||
     subject === "" ||
-    ((promptText === undefined || promptText === "") && (promptFile === undefined || promptFile === ""))
+    (!underApproval && (promptText === undefined || promptText === "") && (promptFile === undefined || promptFile === ""))
   ) {
     return usageError(TURN_USAGE);
   }
 
-  let prompt: string;
+  /** What the caller sent, if anything. Under an approval it is only ever compared, never run. */
+  let given: string | undefined;
   if (promptFile !== undefined && promptFile !== "") {
     try {
-      prompt = await readPromptFrom(promptFile);
+      given = await readPromptFrom(promptFile);
     } catch (error) {
       return usageError(`cannot read the prompt from ${promptFile}: ${String(error)}`);
     }
-    if (prompt === "") return usageError(`the prompt read from ${promptFile} is empty`);
-  } else {
-    prompt = promptText!;
+    if (given === "") return usageError(`the prompt read from ${promptFile} is empty`);
+  } else if (promptText !== undefined && promptText !== "") {
+    given = promptText;
   }
+  let prompt = given ?? "";
 
   let id;
   try {
@@ -253,6 +445,10 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
   // D-095: the conversation this turn belongs to, sent by the web page's chat.
   let history: readonly Exchange[] = [];
   const historyRaw = options.get("history-json");
+  if (historyRaw !== undefined && historyRaw !== "" && underApproval) {
+    // D-153: an approved action runs as it was approved. A conversation sent with it would be a second prompt.
+    return usageError("--history-json cannot go with --proposal: an approved action runs as it was approved, with no conversation added. Nothing was sent.");
+  }
   if (historyRaw !== undefined && historyRaw !== "") {
     const parsedHistory = parseHistory(historyRaw);
     if (!parsedHistory.ok) return usageError(`${TURN_USAGE} — ${parsedHistory.reason}`);
@@ -302,10 +498,11 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
   }
   // S5.2 — asked here, after the brake and before anything is written, because
   // this is the cheapest refusal left: a proposal that was refused, is still
-  // waiting, or has already been spent stops the turn with nothing done. The
-  // record is *marked* spent later, immediately before the prompt goes out.
+  // waiting, or has already been spent stops the turn with nothing done. Only
+  // read here: it is claimed as the last step before the prompt goes (D-144),
+  // once everything else that could stop this turn has been asked.
   const proposalId = options.get("proposal");
-  let approval: { dir: string; stored: StoredProposal } | undefined;
+  let boundDigest: string | undefined;
   if (proposalId !== undefined) {
     // An empty value is a refusal rather than an absence. `--proposal` with
     // nothing after it is somebody asking for a turn *under an approval*, and
@@ -316,7 +513,28 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
     }
     const asked = await approvalFor(id, proposalId);
     if (!asked.ok) return asked.code;
-    approval = { dir: asked.dir, stored: asked.stored };
+    // D-153 — the turn runs exactly the approved action. Its prompt comes from the record, never from the
+    // caller; a caller who sent one as well is refused unless it is that action, word for word.
+    const bound = boundAction(asked.proposal);
+    // approvalFor has already refused a record whose binding fails; this narrows the type.
+    if (!bound.ok) return DIAL_REFUSED;
+    if (given !== undefined && given !== bound.action.prompt) {
+      console.error(`ohmyagi: nothing was sent, and the approval is not spent — the prompt is not the approved action.`);
+      console.error(`  approved (${bound.digest.slice(0, 19)}…): ${JSON.stringify(bound.action.prompt.slice(0, 200))}`);
+      console.error(`  this turn was given:      ${JSON.stringify(given.slice(0, 200))}`);
+      console.error(
+        `  An approval pays for what it was given for, and nothing else (D-153). Leave out --prompt and the turn ` +
+          `runs the approved action; for anything else, file a proposal and ask for a yes.`,
+      );
+      return DIAL_REFUSED;
+    }
+    prompt = bound.action.prompt;
+    boundDigest = bound.digest;
+    console.error(
+      dimErr(
+        `ohmyagi: proposal ${asked.proposal.id} runs the approved action ${bound.digest.slice(0, 19)}…`,
+      ),
+    );
   }
 
   const restraint = restrain(verdict.effective);
@@ -337,10 +555,8 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
   const writable = await canAppend(ledger, id);
   if (!writable.ok) {
     console.error(`ohmyagi: ${writable.reason}`);
-    console.error(
-      "Nothing was sent. A turn nobody can look back at is the thing S2.2 exists to prevent; " +
-        "fix the path above, or delete the ledger directory if you want a fresh one.",
-    );
+    // D-145: a held lock and an unwritable path want opposite advice, and neither is "delete the ledger".
+    console.error(`Nothing was sent. ${writable.remedy}`);
     return 1;
   }
 
@@ -442,6 +658,8 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
   const blocked: Promise<void>[] = [];
   /** Per backend id, the model it runs by construction — null for a vendor CLI, which says what it ran (D-142). */
   const modelRun = new Map<string, string | null>();
+  /** Backends in this chain that have no tools at all (D-149): they can answer, never act. */
+  const toolless = new Set<string>();
   const workdir = process.cwd();
   const chain = turnChain(
     backendIds.map((backendId) => {
@@ -454,7 +672,9 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
       // if any, as a request: its line names the model its output reports.
       const ran = localCli !== undefined ? LOCAL_MODEL : raw instanceof OllamaExec ? (raw.defaultModel ?? null) : null;
       modelRun.set(backendId, ran);
-      const announced = new AnnouncedExec(new RecordingExec(raw, { ...recording, model: ran }), {
+      if (raw instanceof OllamaExec) toolless.add(backendId);
+      // D-144: counted inside the announcement, so a prompt the egress screen stopped is not counted as sent.
+      const announced = new AnnouncedExec(counted(new RecordingExec(raw, { ...recording, model: ran }), took), {
         origin: raw,
         write: (line) => console.error(dimErr(line)),
         // S8.3 (D-048): prompt and system — the soul and whatever recall
@@ -493,29 +713,18 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
     }),
   );
 
-  // S5.2 — the approval is spent **before** the prompt goes, for the reason the
-  // ledger is checked first: a turn that has been sent cannot be un-sent, so an
-  // approval marked afterwards is one that a crash mid-turn hands back unused.
-  // A write that fails stops the turn: an approval om-agi cannot record as
-  // spent is one that could be spent twice, and twice is the thing the owner
-  // decided against.
-  if (approval !== undefined) {
-    try {
-      await writeProposal(approval.dir, spendProposal(approval.stored.proposal, turnId, new Date()));
-    } catch (error) {
-      console.error(`ohmyagi: the approval could not be marked as spent: ${String(error)}`);
-      console.error(
-        `Nothing was sent. An approval that cannot be recorded as used is one that could be used ` +
-          `again, and "good for one turn" would then be a sentence rather than a rule.`,
-      );
-      return 1;
-    }
-    console.error(
-      dimErr(
-        `ohmyagi: proposal ${approval.stored.proposal.id} is spent on this turn (${turnId}). ` +
-          `Another turn needs another approval.`,
-      ),
-    );
+  // S5.2 (D-144) — the approval is claimed **here**, as the last step before
+  // the prompt goes, and read again in the same step: of two turns started
+  // together, exactly one gets it, and the other stops here with nothing sent.
+  // Here rather than at the reading above, so that nothing that does not depend
+  // on the proposal — the ledger, the model and route, recall, the price file —
+  // can stop the turn after its approval was spent.
+  let approval: Proposal | undefined;
+  if (proposalId !== undefined) {
+    const claimed = await approvalFor(id, proposalId, turnId, boundDigest);
+    if (!claimed.ok) return claimed.code;
+    approval = claimed.proposal;
+    took.claimed = { proposal: approval, stored: claimed.stored, turnId, subject: id };
   }
 
   // S5.4 — written **before** the prompt goes anywhere, and removed in a
@@ -573,6 +782,13 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
   }
 
   const answered = result.confidence === "confirmed" || result.confidence === "partial";
+  // D-149 — a backend with no tools answers in words and nothing else. At a level that lets a turn act, its
+  // answer is said for what it is, so a "done" from a model that could do nothing is not read as done.
+  const notes: string[] = [];
+  if (verdict.effective.act >= 2 && answered && toolless.has(result.backend)) {
+    notes.push(`${result.backend} has no tools — it answered in words and could not act. Nothing it says it did was done (D-149).`);
+  }
+  for (const note of notes) console.error(`ohmyagi: ${note}`);
   // `--no-proposals`: a measurement (`ohmyagi eval`) must not leave work in the owner's list —
   // what the agent would have asked is still printed, just not filed.
   const filed = verdict.effective.act === 1 && answered && !options.has("no-proposals") ? await fileAgentAsks(id, turnId, result.text, loaded.soul.person.inherits_from) : [];
@@ -605,6 +821,8 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
           heldMessages: cloudHistory.held,
           changed: change === undefined ? null : change === null ? "not-measured" : change,
           proposals: filed,
+          // D-149: what a caller must show beside the answer — the page and the app read it here, not off stderr.
+          notes,
           recall:
             attachment === undefined
               ? null
@@ -623,6 +841,7 @@ export async function cmdTurn(argv: readonly string[]): Promise<number> {
   // real to punish a bookkeeping failure — but the exit code is not 0, because
   // this turn happened and the ledger does not know about it.
   if (writeFailures.length > 0) {
+    took.unrecorded = true;
     for (const failure of writeFailures) console.error(`ohmyagi: ledger write failed: ${failure.message}`);
     console.error(
       `${writeFailures.length} turn(s) were sent and not recorded. The answer above is real; ` +

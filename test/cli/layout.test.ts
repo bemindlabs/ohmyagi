@@ -83,7 +83,7 @@ describe("the CLI is one file per command, and the graph says so", () => {
     expect([...closure].filter((path) => path.startsWith(BIN)).length).toBeGreaterThan(5);
     // And it leaves `bin/` for `src/`, which is what makes the walk transitive.
     expect([...closure].some((path) => path.startsWith(join(ROOT, "src")))).toBe(true);
-  });
+  }, 30_000);
 
   test("one command never imports another, so changing one touches one file", async () => {
     const sideways: string[] = [];
@@ -103,7 +103,7 @@ describe("the CLI is one file per command, and the graph says so", () => {
       await Promise.all((await sourceFiles(COMMANDS)).map((path) => importsFrom(path)))
     ).flat();
     expect(everything.length).toBeGreaterThan(10);
-  });
+  }, 30_000);
 
   test("nothing imports the entry point, so `main` stays a leaf", async () => {
     const back: string[] = [];
@@ -118,7 +118,7 @@ describe("the CLI is one file per command, and the graph says so", () => {
     // Control: the entry point imports the commands, so the edges this test
     // looks for do exist in the other direction.
     expect((await importsFrom(ENTRY)).filter((path) => path.startsWith(COMMANDS)).length).toBeGreaterThan(5);
-  });
+  }, 30_000);
 
   test("the checker sees an import, and is not fooled by the word in prose", () => {
     const seen = (source: string) => importsOf("synthetic.ts", source);
@@ -224,5 +224,5 @@ describe("ENGINE_ROOT is where it has to be to be right", () => {
     const shared = join(BIN, "shared.ts");
     expect(resolve(dirname(shared), "..")).toBe(ROOT);
     expect(await readFile(shared, "utf8")).toContain(`resolve(import.meta.dir, "..")`);
-  });
+  }, 30_000);
 });

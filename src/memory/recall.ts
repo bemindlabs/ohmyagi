@@ -76,6 +76,11 @@ export interface RecallHit {
   readonly text: string;
   readonly score: number;
   readonly via: readonly ("fts" | "vector")[];
+  /**
+   * The vector half's cosine for this piece, when that half found it (D-152). The fused score above reads only
+   * ranks, so it cannot say "nothing here is close"; an ask needs to, and reads this.
+   */
+  readonly cosine?: number;
 }
 
 /** A recall, and which halves answered. */
@@ -111,30 +116,33 @@ export async function recall(
     }
   }
 
-  const merged = new Map<string, { hit: Omit<RecallHit, "score" | "via">; score: number; via: ("fts" | "vector")[] }>();
-  const add = (list: readonly { id: string; path: string; heading: string; text: string }[], via: "fts" | "vector"): void => {
+  const merged = new Map<string, { hit: Omit<RecallHit, "score" | "via" | "cosine">; score: number; via: ("fts" | "vector")[]; cosine?: number }>();
+  const add = (list: readonly { id: string; path: string; heading: string; text: string; score?: number }[], via: "fts" | "vector"): void => {
     list.forEach((hit, rank) => {
       const seen = merged.get(hit.id);
       const share = 1 / (RRF_K + rank + 1);
+      const cosine = via === "vector" && typeof hit.score === "number" ? hit.score : undefined;
       if (seen === undefined) {
         merged.set(hit.id, {
           hit: { id: hit.id, path: hit.path, heading: hit.heading, text: hit.text },
           score: share,
           via: [via],
+          ...(cosine === undefined ? {} : { cosine }),
         });
       } else {
         seen.score += share;
         seen.via.push(via);
+        if (cosine !== undefined) seen.cosine = cosine;
       }
     });
   };
-  add(text.filter((hit) => inScope(hit.path, scope)), "fts");
+  add(text.filter((hit) => inScope(hit.path, scope)).map(({ rank: _rank, ...hit }) => hit), "fts");
   add(semantic.filter((hit) => inScope(hit.path, scope)), "vector");
 
   const hits = [...merged.values()]
     .sort((a, b) => b.score - a.score || a.hit.path.localeCompare(b.hit.path))
     .slice(0, limit)
-    .map((entry) => ({ ...entry.hit, score: entry.score, via: entry.via }));
+    .map((entry) => ({ ...entry.hit, score: entry.score, via: entry.via, ...(entry.cosine === undefined ? {} : { cosine: entry.cosine }) }));
   const fts = (await Bun.file(ftsPath(agentDir)).exists()) ? "ok" : "absent";
   return { hits, fts, vector };
 }

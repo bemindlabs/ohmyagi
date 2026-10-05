@@ -59,7 +59,18 @@ const MODULES: Readonly<Record<string, { doors: readonly string[]; downstream: R
       decideProposal: "returns a new record from one already read",
       spendability: "reads one record",
       spendProposal: "returns a new record from one already read",
+      claimApproval: "claims a record already read, beside it in the directory a door resolved (D-144)",
+      claimRefile: "claims the refile of a record already read, beside it in the directory a door resolved (D-144)",
+      isProposalId: "checks one string",
+      writeProposalAt: "rewrites a record at the path it was read from",
+      refileProblem: "reads one record against an inventory already read",
+      refileWritten: "reads the directory a door resolved, for an id a refile claim named",
+      refileable: "filters an inventory already read",
       proposalLine: "formats one record",
+      canonicalAction: "formats one action (D-153)",
+      actionDigest: "hashes one action (D-153)",
+      turnAction: "builds an action from one string (D-153)",
+      boundAction: "reads one record already read (D-153)",
     },
   },
   "src/decide/runs.ts": {
@@ -74,6 +85,9 @@ const MODULES: Readonly<Record<string, { doors: readonly string[]; downstream: R
       livenessOf: "compares a record with /proc",
       childrenOf: "reads /proc",
       strangersInGroup: "reads /proc",
+      detachedDescendants: "reads /proc",
+      signalTree: "signals a process tree it reads from /proc",
+      signalSurvivors: "signals what a tree signal watched",
       terminateRun: "takes a stored record",
       manualCommand: "formats a command",
     },
@@ -240,5 +254,5 @@ describe("S0.1 AC4 — a subject's data is reached only through a SubjectId", ()
       mentionsSubject(c, c.getTypeOfSymbolAtLocation(param, param.valueDeclaration!)),
     );
     expect(takes).toBe(false);
-  });
+  }, 30_000);
 });

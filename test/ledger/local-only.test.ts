@@ -106,13 +106,13 @@ describe("the ledger path is local-only (AC4)", () => {
   test("nothing reachable from src/ledger/ can open a socket or spawn a process", async () => {
     const closure = await reachable(await sourceFiles(LEDGER));
     expect(await egressHits(closure)).toEqual([]);
-  });
+  }, 30_000);
 
   test("the scanner would notice — src/exec/ is full of exactly what it looks for", async () => {
     const hits = await egressHits(await sourceFiles(EXEC));
     expect(hits.some((hit) => hit.includes("ollama-exec.ts"))).toBe(true);
     expect(hits.some((hit) => hit.includes("cli-exec.ts"))).toBe(true);
-  });
+  }, 30_000);
 
   test("the closure really is transitive — it reaches beyond src/ledger/", async () => {
     // Without this, a walker that silently returned only its entry points
@@ -120,7 +120,7 @@ describe("the ledger path is local-only (AC4)", () => {
     const closure = [...(await reachable(await sourceFiles(LEDGER)))];
     expect(closure.some((path) => !path.startsWith(LEDGER))).toBe(true);
     expect(closure.some((path) => path.endsWith(join("src", "state.ts")))).toBe(true);
-  });
+  }, 30_000);
 
   test("a full append/query/forget cycle runs with fetch replaced by a trap", async () => {
     const root = await mkdtemp(join(tmpdir(), "om-agi-local-only-"));

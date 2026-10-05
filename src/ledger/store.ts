@@ -34,9 +34,14 @@
  * atomic on every filesystem worth supporting. Both append and forget take it.
  * Without it, a turn that finished during a `forget`'s rename would append to
  * a file that is about to be replaced, and the line would vanish — silently,
- * which is the failure mode this project is built to refuse. A lock that is
- * already held is reported with its path; om-agi does not guess that a lock is
- * stale, because the cost of guessing wrong is a lost record.
+ * which is the failure mode this project is built to refuse.
+ *
+ * A lock that is held is waited for, not refused: turns that finish together
+ * all reach this file, and the one that lost the race used to be the one that
+ * was sent and not recorded (D-145). om-agi does not guess that a lock is
+ * stale, because the cost of guessing wrong is a lost record — it breaks one
+ * only on evidence that its owner is gone, and it says who holds one it gave
+ * up waiting for. `src/ledger/lock.ts` has the rules and the numbers.
  */
 
 import { mkdir, open, readdir, rename, rmdir, unlink, writeFile } from "node:fs/promises";
@@ -44,6 +49,7 @@ import { join } from "node:path";
 import { mediaUndeletable, STATE_DIR_MODE, STATE_FILE_MODE, stateRoot } from "../state.ts";
 import type { SubjectId } from "../types.ts";
 import { formatLine, parseLine, type LedgerEntry } from "./entry.ts";
+import { LedgerLocked, LOCK_TIMING, withLock, type LockTiming, type ThisMachine } from "./lock.ts";
 
 /**
  * Everything the ledger is allowed to know about this machine.
@@ -56,6 +62,13 @@ export interface LedgerEnv {
   readonly home: string;
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly now: () => Date;
+  /**
+   * This machine's name and boot time, for the lock and nothing else (D-145):
+   * they are what let a writer tell a dead writer's lock from a live one.
+   * Optional so that a caller that only reads need not say; a writer without
+   * them judges every lock by its age alone, which errs toward waiting.
+   */
+  readonly machine?: ThisMachine;
 }
 
 /** `<state>/ledger/<subject>` — one directory per subject, never shared (I-3). */
@@ -79,30 +92,6 @@ async function monthFiles(dir: string): Promise<string[]> {
   }
 }
 
-const LOCK_DIR = ".lock";
-
-/**
- * Hold the subject's lock for the duration of `body`.
- *
- * @throws {Error} when the lock is held, naming the path so a human can look.
- */
-async function withLock<T>(dir: string, body: () => Promise<T>): Promise<T> {
-  const lock = join(dir, LOCK_DIR);
-  try {
-    await mkdir(lock, { mode: STATE_DIR_MODE });
-  } catch {
-    throw new Error(
-      `ledger is locked by another om-agi process (${lock}) — if you are certain none is ` +
-        `running, remove that directory by hand; om-agi will not decide that for you`,
-    );
-  }
-  try {
-    return await body();
-  } finally {
-    await rmdir(lock).catch(() => undefined);
-  }
-}
-
 /** Flush a path's own bytes, or a directory's list of names, to the device. */
 async function fsyncPath(path: string): Promise<void> {
   const handle = await open(path, "r");
@@ -116,7 +105,42 @@ async function fsyncPath(path: string): Promise<void> {
 /** Whether the ledger can be written, checked *before* a prompt is sent. */
 export type Writability =
   | { readonly ok: true; readonly dir: string }
-  | { readonly ok: false; readonly reason: string };
+  | {
+      readonly ok: false;
+      /**
+       * `locked`: somebody alive held the lock for longer than a writer waits — it passes, or clears by
+       * itself. `unwritable`: the directory cannot be made or written — a person has to fix a path.
+       */
+      readonly kind: "locked" | "unwritable";
+      /** What went wrong, naming the path. */
+      readonly reason: string;
+      /**
+       * What to do about it, for the person who ran the turn. Never "delete the ledger": it is the record
+       * of every turn, and neither kind is fixed by losing it (D-145).
+       */
+      readonly remedy: string;
+    };
+
+/** The advice for each kind of refusal. */
+function remedyFor(kind: "locked" | "unwritable", timing: LockTiming): string {
+  if (kind === "locked") {
+    return (
+      "Another turn is writing this agent's ledger — try again in a moment. If no ohmyagi process is running, " +
+      "the lock was left by one that was stopped, and the next turn clears it by itself: at once if its process " +
+      `is gone from this machine, and in any case once it is ${Math.round(timing.maxAgeMs / 60_000)} minutes old. ` +
+      "Deleting the ledger would not be a fix; it is the record of every turn."
+    );
+  }
+  return (
+    "A turn nobody can look back at is the thing S2.2 exists to prevent. Fix what the line above names — the " +
+    "directory's permissions, a file in its way, a full or read-only disk — and run the turn again. None of " +
+    "these needs the ledger deleted, and deleting it would lose the record of every turn so far."
+  );
+}
+
+function refused(kind: "locked" | "unwritable", reason: string, timing: LockTiming): Writability {
+  return { ok: false, kind, reason, remedy: remedyFor(kind, timing) };
+}
 
 /**
  * Can this subject's ledger be appended to right now?
@@ -124,14 +148,24 @@ export type Writability =
  * Called before the prompt goes out, not after. A turn that is sent and then
  * cannot be recorded has already spent the quota and already handed the text
  * to a vendor, and no later error can undo either. Finding out first costs one
- * `mkdir` and one probe write.
+ * `mkdir`, one probe write, and taking the lock once.
+ *
+ * The lock is taken the way {@link append} will take it — waiting as long,
+ * breaking a stale one — and let go at once. A lock somebody alive holds for
+ * longer than that wait would fail this turn's line after the send; found
+ * here, it refuses the turn before (D-145). And a lock a killed turn left
+ * behind is cleared here, so the turn after it starts clean.
  */
-export async function canAppend(env: LedgerEnv, subject: SubjectId): Promise<Writability> {
+export async function canAppend(
+  env: LedgerEnv,
+  subject: SubjectId,
+  timing: LockTiming = LOCK_TIMING,
+): Promise<Writability> {
   const dir = ledgerDir(env, subject);
   try {
     await mkdir(dir, { recursive: true, mode: STATE_DIR_MODE });
   } catch (cause) {
-    return { ok: false, reason: `cannot create ${dir}: ${String(cause)}` };
+    return refused("unwritable", `cannot create ${dir}: ${String(cause)}`, timing);
   }
 
   const probe = join(dir, `.writable-${process.pid}`);
@@ -139,7 +173,14 @@ export async function canAppend(env: LedgerEnv, subject: SubjectId): Promise<Wri
     await writeFile(probe, "", { mode: STATE_FILE_MODE });
     await unlink(probe);
   } catch (cause) {
-    return { ok: false, reason: `cannot write in ${dir}: ${String(cause)}` };
+    return refused("unwritable", `cannot write in ${dir}: ${String(cause)}`, timing);
+  }
+
+  try {
+    await withLock(dir, async () => undefined, timing, env.machine);
+  } catch (cause) {
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    return refused(cause instanceof LedgerLocked ? "locked" : "unwritable", reason, timing);
   }
   return { ok: true, dir };
 }
@@ -152,24 +193,43 @@ export async function canAppend(env: LedgerEnv, subject: SubjectId): Promise<Wri
  * happened and was recorded" survive a power cut in that order rather than the
  * other one.
  *
+ * The lock is waited for (D-145) — turns that finish together all land here
+ * at once — and `timing` is how long. The default is {@link LOCK_TIMING}'s
+ * five seconds, for a line written as a gate *before* something is sent: a
+ * chat message in or out, an A2A message delivered or sent. Waiting longer
+ * there stalls a reply, and outlasts an A2A sender's own timeout so that it
+ * reports a failure the receiver then delivers anyway. The one line written
+ * *after* a send — `RecordingExec`'s, once a backend has answered — passes
+ * {@link RECORD_TIMING}, a minute: by then the prompt has gone, and giving up
+ * loses the record of something that happened.
+ *
  * @throws {Error} when the line could not be written. The caller decides what
  *   that means; the ledger will not swallow it.
  */
-export async function append(env: LedgerEnv, entry: LedgerEntry): Promise<string> {
+export async function append(
+  env: LedgerEnv,
+  entry: LedgerEntry,
+  timing: LockTiming = LOCK_TIMING,
+): Promise<string> {
   const dir = ledgerDir(env, entry.subject);
   await mkdir(dir, { recursive: true, mode: STATE_DIR_MODE });
   const path = join(dir, monthFileName(new Date(entry.at)));
 
-  return withLock(dir, async () => {
-    const handle = await open(path, "a", STATE_FILE_MODE);
-    try {
-      await handle.write(formatLine(entry));
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-    return path;
-  });
+  return withLock(
+    dir,
+    async () => {
+      const handle = await open(path, "a", STATE_FILE_MODE);
+      try {
+        await handle.write(formatLine(entry));
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      return path;
+    },
+    timing,
+    env.machine,
+  );
 }
 
 /** A time window. Both ends optional, both inclusive of the instant given. */
@@ -274,6 +334,8 @@ export interface ForgetPlan {
    */
   readonly unreadable: number;
   readonly files: readonly string[];
+  /** The machine the plan was made on, so the commit judges the lock as a turn would (D-145). */
+  readonly machine: ThisMachine | undefined;
 }
 
 export interface ForgetResult {
@@ -348,6 +410,7 @@ export async function planForget(
     withContent,
     unreadable,
     files,
+    machine: env.machine,
   };
 }
 
@@ -433,7 +496,7 @@ export async function commitForget(plan: ForgetPlan): Promise<ForgetResult> {
       filesRemoved: emptied,
       dirRemoved: false,
     };
-  });
+  }, LOCK_TIMING, plan.machine);
 }
 
 /**

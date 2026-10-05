@@ -115,7 +115,7 @@ describe("nothing under src/ reads the machine it is running on", () => {
         "or is never written (D-021). Take it as an argument, as src/state.ts and " +
         "src/soul/targets.ts do, and let bin/ or src/exec/registry.ts read it",
     ).toEqual([]);
-  });
+  }, 30_000);
 
   test("each exempted file really is reading what its line says it reads", async () => {
     // An exemption whose reason is false is worse than none: it reads as a

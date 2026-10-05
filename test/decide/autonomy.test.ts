@@ -23,6 +23,9 @@
 import { describe, expect, test } from "bun:test";
 import {
   AUTONOMY_SCHEMA,
+  AUTONOMY_SCHEMA_V1,
+  OPERATE_MEANING,
+  operateLevel,
   CATEGORIES,
   CATEGORY_ENFORCEMENT,
   DEFAULT_DIAL,
@@ -42,7 +45,7 @@ import {
 
 /** A dial with every category at one level, for the cases that vary one thing. */
 function flat(level: Level, reach: ReachLevel = Math.min(level, 2) as ReachLevel): Dial {
-  return { read: level, write: level, run: level, reach, setBy: null, setAt: null };
+  return { read: level, write: level, run: level, reach, operate: 0, setBy: null, setAt: null };
 }
 
 describe("S5.1 AC2 (D-052) — set apart, acting together, and saying which one decides", () => {
@@ -60,7 +63,8 @@ describe("S5.1 AC2 (D-052) — set apart, acting together, and saying which one 
 
 describe("the defaults, which are AC3 and also today's behaviour", () => {
   test("every category starts at 1, and nothing starts at 3", () => {
-    for (const category of CATEGORIES) expect(levelOf(DEFAULT_DIAL, category)).toBe(1);
+    // D-153: except operate, the browser, which starts at 0 — there was no browser to reproduce.
+    for (const category of CATEGORIES) expect(levelOf(DEFAULT_DIAL, category)).toBe(category === "operate" ? 0 : 1);
     expect(actLevel(DEFAULT_DIAL)).toBe(1);
     // AC3's second half, as a property rather than four assertions: no category
     // of the default is 3, whatever categories there turn out to be.
@@ -93,7 +97,7 @@ describe("actLevel is a minimum, and the reason is I-6", () => {
     // maximum, `write = 3` would put the acting level at 3 and the egress
     // category would be at 3 with nothing having said so. Under a minimum it
     // cannot exceed reach, which is the property S8.3 AC2 needs.
-    const guarded: Dial = { read: 3, write: 3, run: 3, reach: 1, setBy: null, setAt: null };
+    const guarded: Dial = { read: 3, write: 3, run: 3, reach: 1, operate: 0, setBy: null, setAt: null };
     const maximum = Math.max(guarded.write, guarded.run, guarded.reach);
     expect(maximum).toBe(3);
     expect(actLevel(guarded)).toBe(1);
@@ -103,7 +107,7 @@ describe("actLevel is a minimum, and the reason is I-6", () => {
     for (const write of [0, 1, 2, 3] as const) {
       for (const run of [0, 1, 2, 3] as const) {
         for (const reach of [0, 1, 2] as const) {
-          const act = actLevel({ read: 3, write, run, reach, setBy: null, setAt: null });
+          const act = actLevel({ read: 3, write, run, reach, operate: 0, setBy: null, setAt: null });
           expect(act).toBeLessThanOrEqual(reach);
           expect(act).toBe(Math.min(write, run, reach) as Level);
         }
@@ -115,7 +119,7 @@ describe("actLevel is a minimum, and the reason is I-6", () => {
     // Including it would let a number that controls nothing veto turns — a
     // control surface that works in one direction only, which is worse than one
     // labelled as absent. The label is asserted here so it cannot quietly go.
-    const readSilent: Dial = { read: 0, write: 2, run: 2, reach: 2, setBy: null, setAt: null };
+    const readSilent: Dial = { read: 0, write: 2, run: 2, reach: 2, operate: 0, setBy: null, setAt: null };
     expect(actLevel(readSilent)).toBe(2);
     expect(CATEGORY_ENFORCEMENT.read).toContain("not separable");
     expect(CATEGORY_ENFORCEMENT.read).toContain("nothing in om-agi acts on it");
@@ -143,7 +147,7 @@ describe("reach is capped at 2 by the type, not by a check", () => {
 
     // …and the same at the whole-dial level, which is where it would be written.
     // @ts-expect-error — reach: 3 does not type-check on a Dial either
-    const dial: Dial = { read: 1, write: 1, run: 1, reach: 3, setBy: null, setAt: null };
+    const dial: Dial = { read: 1, write: 1, run: 1, reach: 3, operate: 0, setBy: null, setAt: null };
     void dial;
   });
 
@@ -257,5 +261,75 @@ describe("parseDial refuses rather than repairs", () => {
     );
     expect(parsed.ok).toBe(false);
     if (!parsed.ok) expect(parsed.issues.length).toBeGreaterThan(1);
+  });
+});
+
+describe("D-153 — operate, the browser", () => {
+  test("it is a category, defaults to 0, and is silent in SILENT_DIAL", () => {
+    expect(CATEGORIES).toContain("operate");
+    expect(DEFAULT_DIAL.operate).toBe(0);
+    expect(SILENT_DIAL.operate).toBe(0);
+    expect(levelOf({ ...flat(1), operate: 2 }, "operate")).toBe(2);
+    for (const level of [0, 1, 2, 3] as const) {
+      expect(OPERATE_MEANING[level].en).not.toBe("");
+      expect(OPERATE_MEANING[level].th).not.toBe("");
+    }
+    expect(OPERATE_MEANING[3].en).toContain("D-042");
+    expect(CATEGORY_ENFORCEMENT.operate).toContain("min(operate, reach)");
+  });
+
+  test("it is not in a turn's acting level: operate 0 silences no turn, operate 3 loosens none", () => {
+    expect(actLevel({ ...flat(2), operate: 0 })).toBe(2);
+    expect(actLevel({ ...flat(1), operate: 3 })).toBe(1);
+    expect(heldBy({ ...flat(2), operate: 0 })).toEqual([]);
+  });
+
+  test("the browser runs at min(operate, reach); 3 only when operate is 3 and reach is at its top", () => {
+    for (const operate of [0, 1, 2, 3] as const) {
+      for (const reach of [0, 1, 2] as const) {
+        const level = operateLevel({ ...flat(1), reach, operate });
+        expect(level).toBe(operate === 3 && reach === 2 ? 3 : (Math.min(operate, reach) as Level));
+        expect(level).toBeLessThanOrEqual(operate);
+      }
+    }
+  });
+
+  test("it round-trips at @2", () => {
+    const dial: Dial = { ...flat(2), operate: 2 };
+    const text = serializeDial(dial);
+    expect(text).toContain(`schema = "${AUTONOMY_SCHEMA}"`);
+    expect(AUTONOMY_SCHEMA).toBe("om-agi/autonomy@2");
+    expect(text).toContain("operate = 2");
+    const parsed = parseDial("autonomy.md", text);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) expect(parsed.value).toEqual(dial);
+  });
+
+  test("an @2 file without operate is refused like any missing category", () => {
+    const parsed = parseDial("autonomy.md", serializeDial(flat(1)).replace("operate = 0\n", ""));
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) expect(parsed.issues.some((issue) => issue.path === "operate")).toBe(true);
+  });
+
+  test("operate = 4 is refused, not rounded", () => {
+    const parsed = parseDial("autonomy.md", serializeDial(flat(1)).replace("operate = 0", "operate = 4"));
+    expect(parsed.ok).toBe(false);
+  });
+
+  test("an @1 file from before operate is read, with no browser — the migration", () => {
+    const v1 = `+++\nschema = "${AUTONOMY_SCHEMA_V1}"\n\nread = 2\nwrite = 2\nrun = 2\nreach = 2\n+++\n`;
+    const parsed = parseDial("autonomy.md", v1);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.value.operate).toBe(0);
+      expect(actLevel(parsed.value)).toBe(2);
+    }
+  });
+
+  test("an @1 file that names operate is refused: which reading was meant is not guessed", () => {
+    const v1 = `+++\nschema = "${AUTONOMY_SCHEMA_V1}"\n\nread = 1\nwrite = 1\nrun = 1\nreach = 1\noperate = 2\n+++\n`;
+    const parsed = parseDial("autonomy.md", v1);
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) expect(parsed.issues[0]!.message).toContain(AUTONOMY_SCHEMA);
   });
 });

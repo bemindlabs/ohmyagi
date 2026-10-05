@@ -21,23 +21,34 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import {
+  ORPHAN_TEMP_MS,
   PROPOSALS_DIR,
   PROPOSAL_SCHEMA,
+  REFILED_DIR,
+  REFILE_SCHEMA,
+  SPEND_SCHEMA,
+  SPENT_DIR,
   asProposal,
   blockingProposal,
+  claimApproval,
+  claimRefile,
   decideProposal,
   describeProposal,
   ensureProposalsDir,
   findProposal,
+  isProposalId,
   proposalKey,
   proposalLine,
   proposalPath,
   proposalsDir,
   readProposals,
+  refileProblem,
+  refileWritten,
+  refileable,
   refusedProposals,
   spendProposal,
   spendability,
@@ -51,6 +62,8 @@ import { networkEscapes, processEscapes, reachable, sourceFiles } from "../suppo
 const ROOT = resolve(import.meta.dir, "..", "..");
 const SUBJECT = subjectId("example");
 const OTHER = subjectId("somebody-else");
+/** Root is not stopped by a mode, so a test that needs a write refused cannot run as root. */
+const AS_ROOT = process.getuid?.() === 0;
 
 const scratch: string[] = [];
 afterEach(async () => {
@@ -76,6 +89,18 @@ function proposalOf(what: string, over: Partial<Proposal> = {}): Proposal {
     }),
     ...over,
   };
+}
+
+/** One filed and approved, ready to be spent. */
+function approvedOf(what: string): Proposal {
+  const decided = decideProposal(proposalOf(what), {
+    outcome: "approved",
+    at: "2026-09-29T11:00:00.000Z",
+    by: "the owner",
+    note: null,
+  });
+  if (typeof decided === "string") throw new Error(decided);
+  return decided;
 }
 
 // ---------------------------------------------------------------------------
@@ -174,7 +199,7 @@ describe("nothing on this path can reach a network or start a process (I-6)", ()
     // …and the closure really is transitive, rather than the one file.
     expect([...closure].some((path) => path.endsWith(join("guard", "personal.ts")))).toBe(true);
     expect((await sourceFiles(join(ROOT, "src", "decide"))).length).toBeGreaterThan(3);
-  });
+  }, 30_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -435,6 +460,268 @@ describe("an approval is good for one turn", () => {
     // The decision itself is untouched by being spent: what changed is that it
     // has been used, not what was decided.
     expect(spent.decision).toEqual(approved.decision);
+  });
+
+  test("ten claims at once on one reading: exactly one wins, and every other names its turn (D-144)", async () => {
+    // The race, without processes: every caller holds the same reading, taken
+    // before any of them claimed — which is what two `turn` processes that
+    // started together hold. Reading it again would not help any of them.
+    const { env } = await sandbox();
+    const dir = await ensureProposalsDir(env, SUBJECT);
+    if (!dir.ok) throw new Error(dir.reason);
+    const approved = approvedOf("delete the old logs");
+    await writeProposal(dir.path, approved);
+    const stored = findProposal(await readProposals(dir.path), approved.id)!;
+    expect(spendability(stored.proposal)).toEqual({ kind: "ready" });
+
+    const at = new Date("2026-09-29T12:00:00.000Z");
+    const claims = await Promise.all(
+      Array.from({ length: 10 }, (_, n) => claimApproval(stored, `turn-${n}`, at)),
+    );
+    const won = claims.filter((claim) => claim.ok);
+    expect(won).toHaveLength(1);
+    const winner = won[0]!;
+    if (!winner.ok) throw new Error("unreachable");
+    const turn = winner.proposal.usedByTurn!;
+    for (const claim of claims.filter((c) => !c.ok)) {
+      expect(claim).toEqual({ ok: false, turn, at: at.toISOString() });
+    }
+
+    // The record says so, the claim says so, and nothing half-written is left.
+    const after = findProposal(await readProposals(dir.path), approved.id)!;
+    expect(spendability(after.proposal)).toEqual({ kind: "spent", turn });
+    expect(await readdir(join(dir.path, SPENT_DIR))).toEqual([`${approved.id}.json`]);
+    const claim = JSON.parse(await readFile(join(dir.path, SPENT_DIR, `${approved.id}.json`), "utf8"));
+    expect(claim).toEqual({ schema: SPEND_SCHEMA, proposal: approved.id, turn, at: at.toISOString(), action: approved.actionDigest });
+
+    // And a later claim, from a reading that is stale by now, still loses.
+    expect(await claimApproval(stored, "turn-late", new Date())).toEqual({ ok: false, turn, at: at.toISOString() });
+  });
+
+  test("a claim is the spend, whether or not the record's own copy was written", async () => {
+    const { env } = await sandbox();
+    const dir = await ensureProposalsDir(env, SUBJECT);
+    if (!dir.ok) throw new Error(dir.reason);
+    const bare = approvedOf("delete the old logs");
+    const torn = { ...approvedOf("restart the service"), id: "torn" };
+    const copied = { ...approvedOf("rotate the keys now"), id: "copied" };
+    for (const p of [bare, torn, copied]) await writeProposal(dir.path, p);
+    await writeProposal(dir.path, spendProposal(copied, "turn-in-record", new Date("2026-09-29T09:00:00.000Z")));
+
+    // A process killed between the claim and the copy leaves exactly this: a
+    // claim, and a record that does not know. The claim wins.
+    await mkdir(join(dir.path, SPENT_DIR));
+    const spentAt = "2026-09-29T10:00:00.000Z";
+    await writeFile(join(dir.path, SPENT_DIR, `${bare.id}.json`), JSON.stringify({ schema: SPEND_SCHEMA, proposal: bare.id, turn: "turn-a", at: spentAt }));
+    // A claim somebody edited into nonsense is still a claim: it exists.
+    await writeFile(join(dir.path, SPENT_DIR, "torn.json"), "{not json");
+    // Where the record has its copy, the record's copy is what is read.
+    await writeFile(join(dir.path, SPENT_DIR, "copied.json"), JSON.stringify({ turn: "turn-in-claim", at: spentAt }));
+
+    const inventory = await readProposals(dir.path);
+    // `spent/` is a directory, so it is neither a record nor a broken one.
+    expect(inventory.unreadable).toEqual([]);
+    expect(inventory.proposals).toHaveLength(3);
+    const state = (id: string) => spendability(findProposal(inventory, id)!.proposal);
+    expect(state(bare.id)).toEqual({ kind: "spent", turn: "turn-a" });
+    expect(findProposal(inventory, bare.id)!.proposal.usedAt).toBe(spentAt);
+    expect(state("torn")).toEqual({ kind: "spent", turn: "unknown" });
+    expect(findProposal(inventory, "torn")!.proposal.usedAt).toBeNull();
+    expect(state("copied")).toEqual({ kind: "spent", turn: "turn-in-record" });
+    expect(proposalLine(findProposal(inventory, bare.id)!.proposal)).toContain("approved, spent");
+  });
+
+  // chmod does not stop root, so these two cannot be made to fail as root.
+  test.skipIf(AS_ROOT)("a record that cannot take its copy is still claimed; a claim that cannot be made throws", async () => {
+    const { env } = await sandbox();
+    const dir = await ensureProposalsDir(env, SUBJECT);
+    if (!dir.ok) throw new Error(dir.reason);
+    const approved = approvedOf("delete the old logs");
+    await writeProposal(dir.path, approved);
+    const stored = findProposal(await readProposals(dir.path), approved.id)!;
+
+    // `spent/` writable, the store itself not: the claim lands, the copy does not.
+    await mkdir(join(dir.path, SPENT_DIR), { mode: 0o700 });
+    await chmod(dir.path, 0o500);
+    try {
+      const claim = await claimApproval(stored, "turn-1", new Date());
+      expect(claim.ok).toBe(true);
+      if (!claim.ok) return;
+      expect(claim.copyFailed).toContain("EACCES");
+      expect(spendability(findProposal(await readProposals(dir.path), approved.id)!.proposal)).toEqual({ kind: "spent", turn: "turn-1" });
+    } finally {
+      await chmod(dir.path, 0o700);
+    }
+
+    // No claim can be written at all: thrown, so the caller sends nothing.
+    const other = { ...approvedOf("restart the service"), id: "other" };
+    await writeProposal(dir.path, other);
+    const otherStored = findProposal(await readProposals(dir.path), "other")!;
+    await chmod(join(dir.path, SPENT_DIR), 0o500);
+    try {
+      await expect(claimApproval(otherStored, "turn-2", new Date())).rejects.toThrow();
+    } finally {
+      await chmod(join(dir.path, SPENT_DIR), 0o700);
+    }
+    expect(spendability(findProposal(await readProposals(dir.path), "other")!.proposal)).toEqual({ kind: "ready" });
+  });
+
+  test("a hand-edited id cannot reach a path: the record is refused, and a rewrite goes where the record was read (D-144 review)", async () => {
+    const { home, env } = await sandbox();
+    const dir = await ensureProposalsDir(env, SUBJECT);
+    if (!dir.ok) throw new Error(dir.reason);
+
+    // An approved record whose id climbs out. It used to be read, found by that
+    // id, and rewritten — at `proposals/../../escaped.json`.
+    await writeFile(join(dir.path, "evil.json"), JSON.stringify({ ...approvedOf("delete the old logs"), id: "../../escaped" }));
+    const inventory = await readProposals(dir.path);
+    expect(inventory.proposals).toEqual([]);
+    expect(inventory.unreadable.map((bad) => bad.reason)).toEqual([`id "../../escaped" is not one plain file name`]);
+    expect(findProposal(inventory, "../../escaped")).toBeUndefined();
+    for (const bad of ["../x", "a/b", "a\\b", ".hidden", "..", "", "x".repeat(129), "nul\0"]) expect(isProposalId(bad)).toBe(false);
+    for (const good of [crypto.randomUUID(), "id-19", "a", "a.b_c-d"]) expect(isProposalId(good)).toBe(true);
+    expect(() => proposalPath(dir.path, "../../escaped")).toThrow("not a proposal id");
+
+    // A record whose file name and id differ is rewritten at its file, and its
+    // claim is under its id — nothing is created beside it under the id's name.
+    await rm(join(dir.path, "evil.json"));
+    await writeFile(join(dir.path, "on-disk-name.json"), JSON.stringify({ ...approvedOf("restart the service"), id: "the-id" }));
+    const stored = findProposal(await readProposals(dir.path), "the-id")!;
+    expect(stored.path).toBe(join(dir.path, "on-disk-name.json"));
+    const claim = await claimApproval(stored, "turn-1", new Date());
+    expect(claim.ok).toBe(true);
+    expect((await readdir(dir.path)).sort()).toEqual(["on-disk-name.json", SPENT_DIR]);
+    expect(await readdir(join(dir.path, SPENT_DIR))).toEqual(["the-id.json"]);
+    expect(JSON.parse(await readFile(join(dir.path, "on-disk-name.json"), "utf8")).usedByTurn).toBe("turn-1");
+    expect(await readdir(home)).toEqual(["data"]);
+  });
+
+  test("only `.json` names are records: a write in flight and a backup are not a second approval (D-144 review)", async () => {
+    const { env } = await sandbox();
+    const dir = await ensureProposalsDir(env, SUBJECT);
+    if (!dir.ok) throw new Error(dir.reason);
+    const approved = approvedOf("delete the old logs");
+    await writeProposal(dir.path, approved);
+    const record = await readFile(proposalPath(dir.path, approved.id), "utf8");
+    // The same record under the names a crash and a careful person leave behind.
+    await writeFile(join(dir.path, `${approved.id}.json.om-agi-4242.tmp`), record);
+    await writeFile(join(dir.path, `${approved.id}.json.bak`), record);
+    await writeFile(join(dir.path, "notes.txt"), "not a record");
+
+    const inventory = await readProposals(dir.path);
+    expect(inventory.unreadable).toEqual([]);
+    expect(inventory.proposals.map((stored) => stored.path)).toEqual([proposalPath(dir.path, approved.id)]);
+
+    // And a copy that *is* named `.json` shares the one claim its id has:
+    // spent once between them, whichever of the two a turn found.
+    await writeFile(join(dir.path, "a-copy.json"), record);
+    const both = (await readProposals(dir.path)).proposals;
+    expect(both).toHaveLength(2);
+    const claims = await Promise.all(both.map((stored, n) => claimApproval(stored, `turn-${n}`, new Date())));
+    expect(claims.filter((claim) => claim.ok)).toHaveLength(1);
+    const after = (await readProposals(dir.path)).proposals.map((stored) => spendability(stored.proposal).kind);
+    expect(after).toEqual(["spent", "spent"]);
+  });
+
+  test("a claim's temporary file left by a killed process is swept; a live one is not (D-144 review)", async () => {
+    const { env } = await sandbox();
+    const dir = await ensureProposalsDir(env, SUBJECT);
+    if (!dir.ok) throw new Error(dir.reason);
+    const approved = approvedOf("delete the old logs");
+    await writeProposal(dir.path, approved);
+    const spent = join(dir.path, SPENT_DIR);
+    await mkdir(spent);
+    const orphan = join(spent, "gone.json.om-agi-1-x.tmp");
+    const live = join(spent, "busy.json.om-agi-2-y.tmp");
+    await writeFile(orphan, "{}");
+    await writeFile(live, "{}");
+    const old = new Date(Date.now() - ORPHAN_TEMP_MS - 60_000);
+    await utimes(orphan, old, old);
+
+    const stored = findProposal(await readProposals(dir.path), approved.id)!;
+    expect((await claimApproval(stored, "turn-1", new Date())).ok).toBe(true);
+    expect((await readdir(spent)).sort()).toEqual(["busy.json.om-agi-2-y.tmp", `${approved.id}.json`]);
+  });
+
+  test("filed again only when the turn that spent it sent nothing, and only once (D-144 §2)", async () => {
+    const { env } = await sandbox();
+    const dir = await ensureProposalsDir(env, SUBJECT);
+    if (!dir.ok) throw new Error(dir.reason);
+    const at = new Date("2026-09-29T12:00:00.000Z");
+    const pending = { ...proposalOf("a question still waiting"), id: "pending" };
+    const ready = { ...approvedOf("approved and not run yet"), id: "ready" };
+    const ran = { ...spendProposal(approvedOf("a turn ran it, or may have"), "turn-ran", at), id: "ran" };
+    const unsent = { ...spendProposal(approvedOf("the turn sent nothing"), "turn-unsent", at), id: "unsent", sentNothing: true as const };
+    const done = { ...spendProposal(approvedOf("sent nothing and filed again"), "turn-done", at), id: "done", sentNothing: true as const };
+    const again = { ...proposalOf("sent nothing and filed again"), id: "again", supersedes: "done" };
+    for (const p of [pending, ready, ran, unsent, done, again]) await writeProposal(dir.path, p);
+
+    const inventory = await readProposals(dir.path);
+    // The flag round-trips, and only where it was written.
+    expect(findProposal(inventory, "unsent")!.proposal.sentNothing).toBe(true);
+    expect("sentNothing" in findProposal(inventory, "ran")!.proposal).toBe(false);
+    expect(refileable(inventory).map((p) => p.id)).toEqual(["unsent"]);
+    const problem = (id: string) => refileProblem(inventory, findProposal(inventory, id)!.proposal);
+    expect(problem("pending")?.kind).toBe("not-refileable");
+    expect(problem("ready")?.kind).toBe("not-refileable");
+    // A turn that ran it, or may have: never offered — a second yes would run it a second time.
+    expect(problem("ran")).toEqual({ kind: "not-refileable", reason: "turn turn-ran ran it or may have — only an approval whose turn sent nothing is filed again" });
+    expect(problem("done")).toEqual({ kind: "already", by: "again" });
+    expect(problem("unsent")).toBeUndefined();
+    expect(proposalLine(findProposal(inventory, "unsent")!.proposal)).toContain("approved, spent (sent nothing)");
+  });
+
+  test("a refile is claimed once among any number at once, and the claim alone says it was filed again (D-144 follow-up)", async () => {
+    const { env } = await sandbox();
+    const dir = await ensureProposalsDir(env, SUBJECT);
+    if (!dir.ok) throw new Error(dir.reason);
+    const at = new Date("2026-09-29T12:00:00.000Z");
+    const unsent = { ...spendProposal(approvedOf("the turn sent nothing"), "turn-unsent", at), id: "unsent", sentNothing: true as const };
+    await writeProposal(dir.path, unsent);
+    const stored = findProposal(await readProposals(dir.path), "unsent")!;
+    expect(refileProblem(await readProposals(dir.path), stored.proposal)).toBeUndefined();
+
+    // Ten at once, each from the same reading: one claim.
+    const claims = await Promise.all(Array.from({ length: 10 }, (_, n) => claimRefile(stored, `new-${n}`, at)));
+    const won = claims.findIndex((claim) => claim.ok);
+    expect(claims.filter((claim) => claim.ok)).toHaveLength(1);
+    for (const claim of claims.filter((c) => !c.ok)) expect(claim).toEqual({ ok: false, as: `new-${won}`, at: at.toISOString() });
+    expect(JSON.parse(await readFile(join(dir.path, REFILED_DIR, "unsent.json"), "utf8"))).toEqual({
+      schema: REFILE_SCHEMA, proposal: "unsent", as: `new-${won}`, at: at.toISOString(),
+    });
+
+    // No record for the new id was written — a crash between the claim and the
+    // write. The refile is used up all the same: folded in, never offered again.
+    const inventory = await readProposals(dir.path);
+    expect(inventory.unreadable).toEqual([]);
+    expect(findProposal(inventory, "unsent")!.proposal.refiledAs).toBe(`new-${won}`);
+    expect(refileProblem(inventory, findProposal(inventory, "unsent")!.proposal)).toEqual({ kind: "already", by: `new-${won}` });
+    expect(refileable(inventory)).toEqual([]);
+
+    // A refile claim somebody edited into nonsense is still a claim.
+    const other = { ...spendProposal(approvedOf("another that sent nothing"), "turn-other", at), id: "other", sentNothing: true as const };
+    await writeProposal(dir.path, other);
+    await writeFile(join(dir.path, REFILED_DIR, "other.json"), "{not json");
+    const after = await readProposals(dir.path);
+    expect(refileProblem(after, findProposal(after, "other")!.proposal)).toEqual({ kind: "already", by: "unknown" });
+  });
+
+  test("a refile claim names a proposal that was written, one being written, or one that never will be", async () => {
+    const { env } = await sandbox();
+    const dir = await ensureProposalsDir(env, SUBJECT);
+    if (!dir.ok) throw new Error(dir.reason);
+    await writeProposal(dir.path, { ...proposalOf("already written"), id: "written" });
+    expect(await refileWritten(dir.path, "written", 0)).toBe(true);
+
+    // Claimed and never written — a crash between the two: absent once the wait is over.
+    const began = Date.now();
+    expect(await refileWritten(dir.path, "never", 150)).toBe(false);
+    expect(Date.now() - began).toBeGreaterThanOrEqual(150);
+
+    // The winner of a race writes right after its claim; a loser looking in between waits for it.
+    const late = Bun.sleep(100).then(() => writeProposal(dir.path, { ...proposalOf("written a moment later"), id: "late" }));
+    expect(await refileWritten(dir.path, "late")).toBe(true);
+    await late;
   });
 
   test("the one-line form says pending, the outcome, and whether it was spent", () => {

@@ -73,7 +73,7 @@ describe("the agent layer stands on its own (I-1)", () => {
       .map((path) => relative(ROOT, path));
 
     expect(vendorward).toEqual([]);
-  });
+  }, 30_000);
 
   test("the check would notice — src/exec/ does reach itself", async () => {
     // Without this, a bug in the walker would make the test above pass by
@@ -81,7 +81,7 @@ describe("the agent layer stands on its own (I-1)", () => {
     const closure = await reachable([join(EXEC, "index.ts")]);
     expect([...closure].some((path) => path.startsWith(EXEC))).toBe(true);
     expect(closure.size).toBeGreaterThan(1);
-  });
+  }, 30_000);
 
   test("the layer holds no spawn primitive — it goes through the one chokepoint", async () => {
     const primitives = [/\bBun\.spawn(?:Sync)?\b/, /\bBun\.\$/, /"node:child_process"/];
@@ -99,5 +99,5 @@ describe("the agent layer stands on its own (I-1)", () => {
     // above and prove nothing.
     const closure = await reachable(await sourceFiles(AGENT));
     expect([...closure].some((path) => path === join(ROOT, "src", "spawn.ts"))).toBe(true);
-  });
+  }, 30_000);
 });

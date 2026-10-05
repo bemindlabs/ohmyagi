@@ -41,6 +41,7 @@
 
 import {
   blockingProposal,
+  claimRefile,
   decideProposal,
   describeProposal,
   ensureProposalsDir,
@@ -49,16 +50,20 @@ import {
   proposalLine,
   proposalsDir,
   readProposals,
+  refileProblem,
+  refileWritten,
   refusedProposals,
   writeProposal,
+  writeProposalAt,
   type Decision,
   type Proposal,
   type ProposalInventory,
+  type StoredProposal,
 } from "../../src/decide/index.ts";
 import { loadSoul } from "../../src/soul/index.ts";
 import { subjectId, type SubjectId } from "../../src/types.ts";
 import { readTriage, triageLabel, TRIAGE_NOTE } from "../../src/decide/triage.ts";
-import { dialEnv, whoIsSetting } from "../dial.ts";
+import { DIAL_REFUSED, dialEnv, whoIsSetting } from "../dial.ts";
 import { triageAndStore, triageIfEnabled } from "../triage.ts";
 import { ERR, OUT, parseArgs, report, usageError, type Sink } from "../shared.ts";
 
@@ -66,6 +71,7 @@ const PROPOSAL_USAGE =
   "usage: ohmyagi proposal new <dir> --subject <id>\n" +
   "                          (--what <text> --why <text> --impact <text> | --from <path|->)\n" +
   "                          [--changed <text>]\n" +
+  "       ohmyagi proposal new <dir> --subject <id> --refile <proposal-id>\n" +
   "       ohmyagi proposal decide <proposal-id> <dir> --subject <id> (--approve | --refuse) [--note <text>]\n" +
   "       ohmyagi proposal list <dir> --subject <id> [--json]\n" +
   "       ohmyagi proposal show <proposal-id> <dir> --subject <id> [--json]\n" +
@@ -229,20 +235,81 @@ async function textsFrom(
   return { ok: true, what, why, impact, changed: changed === "" ? null : changed };
 }
 
+/**
+ * `--refile <id>` (D-144 §2): the three fields from a spent approval's own record, never from the command line.
+ *
+ * Only for an approval whose turn sent nothing ({@link refileProblem}), and once. What is filed is a new
+ * proposal — pending, needing a new yes — that names the old one in `supersedes` and says why in `changed`, and
+ * keeps who first filed it (`filedBy`, `fromTurn`): the text is still the agent's, or the person's, words.
+ */
+/** Why a refile was refused as used up — naming the new proposal only when there is one to find. */
+async function filedAgainAlready(dir: string, id: string, as: string): Promise<string> {
+  return (await refileWritten(dir, as))
+    ? `ohmyagi: ${id} was filed again already, as ${as}. Nothing was filed.`
+    : `ohmyagi: the refile of ${id} was used up by an attempt that did not finish; file the same text with ` +
+        "`ohmyagi proposal new`. Nothing was filed.";
+}
+
+async function refileTexts(
+  dir: string,
+  inventory: ProposalInventory,
+  id: string,
+  subject: SubjectId,
+): Promise<
+  | {
+      readonly ok: true;
+      readonly what: string;
+      readonly why: string;
+      readonly impact: string;
+      readonly changed: string;
+      readonly from: StoredProposal;
+    }
+  | { readonly ok: false; readonly code: number }
+> {
+  const stored = findProposal(inventory, id);
+  if (stored === undefined) {
+    return { ok: false, code: usageError(`no proposal ${JSON.stringify(id)} for subject ${subject}; nothing was filed`) };
+  }
+  const problem = refileProblem(inventory, stored.proposal);
+  if (problem?.kind === "already") {
+    ERR.line(await filedAgainAlready(dir, id, problem.by));
+    return { ok: false, code: PROPOSAL_REPEATED };
+  }
+  if (problem !== undefined) {
+    ERR.line(`ohmyagi: ${id} cannot be filed again from its record: ${problem.reason}. Nothing was filed.`);
+    ERR.line(`  ${proposalLine(stored.proposal)}`);
+    return { ok: false, code: DIAL_REFUSED };
+  }
+  const { what, why, impact, usedByTurn } = stored.proposal;
+  return { ok: true, what, why, impact, changed: `filed again: turn ${usedByTurn} took its approval and sent nothing`, from: stored };
+}
+
 async function cmdNew(argv: readonly string[]): Promise<number> {
   const { positional, options } = parseArgs(argv, PROPOSAL_BOOLEANS);
   const place = await placeOf(positional, options, 0);
   if (!place.ok) return place.code;
 
-  const texts = await textsFrom(options);
-  if (!texts.ok) return texts.code;
+  const refile = options.get("refile");
+  if (refile !== undefined && (refile === "" || ["what", "why", "impact", "from", "changed"].some((key) => options.has(key)))) {
+    return usageError("--refile takes the id of a spent proposal, and its text comes from that record — pass no --what, --why, --impact, --from or --changed");
+  }
+  const typed = refile === undefined ? await textsFrom(options) : undefined;
+  if (typed !== undefined && !typed.ok) return typed.code;
 
   const read = await inventoryFor(place.subject);
   if (!read.ok) return read.code;
 
+  const refiled = typed === undefined ? await refileTexts(read.dir, read.inventory, refile!, place.subject) : undefined;
+  if (refiled !== undefined && !refiled.ok) return refiled.code;
+  // Both are the ok case by here: each failure returned above.
+  const texts = typed ?? refiled!;
+  const from = refiled?.ok === true ? refiled.from : undefined;
+
   const key = proposalKey(texts.what);
   const blocking = blockingProposal(read.inventory, key);
-  if (blocking !== undefined && texts.changed === null) {
+  // A refile never goes past a twin that is waiting or refused: its `changed` is a fact about the old turn, not
+  // something new about the question.
+  if (blocking !== undefined && (texts.changed === null || refile !== undefined)) {
     ERR.line(
       `ohmyagi: this subject has already had that asked. Nothing was filed.\n` +
         `  ${proposalLine(blocking)}`,
@@ -273,15 +340,40 @@ async function cmdNew(argv: readonly string[]): Promise<number> {
     what: texts.what,
     why: texts.why,
     impact: texts.impact,
-    supersedes: blocking?.id ?? null,
+    supersedes: refile !== undefined ? refile : (blocking?.id ?? null),
     changed: texts.changed,
+    // Who first filed it, carried over: a refile is the same words asked again, not a person's new ones.
+    ...(from === undefined ? {} : { filedBy: from.proposal.filedBy, fromTurn: from.proposal.fromTurn }),
   });
+
+  // D-144 follow-up — a refile is claimed before its record is written, so of any number of processes filing the
+  // same approval again at once, one does. A crash between the two uses the refile up (the same what can still
+  // be filed by hand); it never files two.
+  if (from !== undefined) {
+    let claim;
+    try {
+      claim = await claimRefile(from, proposal.id, new Date());
+    } catch (error) {
+      ERR.line(`ohmyagi: the refile could not be claimed: ${error instanceof Error ? error.message : String(error)}. Nothing was filed.`);
+      return 1;
+    }
+    if (!claim.ok) {
+      ERR.line(await filedAgainAlready(dir.path, from.proposal.id, claim.as));
+      return PROPOSAL_REPEATED;
+    }
+  }
 
   let path: string;
   try {
     path = await writeProposal(dir.path, proposal);
   } catch (error) {
     ERR.line(`ohmyagi: the proposal could not be written: ${String(error)}`);
+    if (from !== undefined) {
+      ERR.line(
+        `  The refile of ${from.proposal.id} is used up by this attempt (D-144); file the same what with ` +
+          `\`ohmyagi proposal new\` to ask again.`,
+      );
+    }
     return 1;
   }
 
@@ -290,7 +382,10 @@ async function cmdNew(argv: readonly string[]): Promise<number> {
   await triageIfEnabled(dir.path, proposal, place.subject);
 
   ERR.line(`filed: ${path}`);
-  if (blocking !== undefined) {
+  if (from !== undefined) {
+    const first = from.proposal.filedBy === "agent" ? ` First filed by the agent${from.proposal.fromTurn === null ? "" : ` (turn ${from.proposal.fromTurn})`}.` : "";
+    ERR.line(`  filed again from ${refile}, whose turn sent nothing. It waits for a yes of its own; nothing was approved or run.${first}`);
+  } else if (blocking !== undefined) {
     ERR.line(
       `  supersedes ${blocking.id} — ${blocking.decision === null ? "pending" : blocking.decision.outcome} ` +
         `— because --changed says: ${texts.changed}`,
@@ -350,7 +445,8 @@ async function cmdDecide(argv: readonly string[]): Promise<number> {
   }
 
   try {
-    await writeProposal(read.dir, decided);
+    // Where it was read from — never a path built from the id inside the file (D-144 review).
+    await writeProposalAt(stored.path, decided);
   } catch (error) {
     ERR.line(`ohmyagi: the decision could not be written: ${String(error)}`);
     return 1;
@@ -359,8 +455,8 @@ async function cmdDecide(argv: readonly string[]): Promise<number> {
   OUT.line(`${decided.id} ${decision.outcome} by ${decision.by} at ${decision.at}`);
   if (decision.outcome === "approved") {
     ERR.line(
-      `  Good for one turn: \`ohmyagi turn <dir> --subject ${place.subject} --proposal ` +
-        `${decided.id} …\`. An approval is spent when a turn takes it, so a second turn needs a ` +
+      `  Good for one turn, and for this action only (${decided.actionDigest}): \`ohmyagi turn <dir> --subject ` +
+        `${place.subject} --proposal ${decided.id}\` runs its what. An approval is spent when a turn takes it, so a second turn needs a ` +
         `second approval — "I allowed it once" must not quietly become "it has done that ever ` +
         `since".`,
     );
@@ -416,6 +512,8 @@ function sayProposal(out: Sink, proposal: Proposal): void {
   out.line(`  what    ${proposal.what}`);
   out.line(`  why     ${proposal.why}`);
   out.line(`  impact  ${proposal.impact}`);
+  // D-153: what an approval runs, and the digest the approval is bound to.
+  out.line(`  action  ${proposal.action.kind} — its what, as the prompt · ${proposal.actionDigest}`);
   if (proposal.supersedes !== null) out.line(`  after   ${proposal.supersedes}`);
   if (proposal.changed !== null) out.line(`  changed ${proposal.changed}`);
   if (proposal.decision === null) {
@@ -425,6 +523,11 @@ function sayProposal(out: Sink, proposal: Proposal): void {
       `  status  ${proposal.decision.outcome} by ${proposal.decision.by} at ${proposal.decision.at}`,
     );
     if (proposal.decision.note !== null) out.line(`  note    ${proposal.decision.note}`);
+    out.line(
+      proposal.decision.actionDigest === undefined
+        ? `  bound   no action named — it will not run; approve it again as a new proposal`
+        : `  bound   ${proposal.decision.actionDigest}${proposal.decision.actionDigest === proposal.actionDigest ? "" : " — NOT the action the record now holds; it will not run"}`,
+    );
   }
   out.line(
     proposal.usedByTurn === null

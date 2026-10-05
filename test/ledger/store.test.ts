@@ -14,13 +14,14 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   append,
   canAppend,
   commitForget,
   ledgerDir,
+  LOCK_TIMING,
   monthFileName,
   planForget,
   query,
@@ -148,15 +149,27 @@ describe("append", () => {
 
     const writable = await canAppend(env, A);
     expect(writable.ok).toBe(false);
-    if (!writable.ok) expect(writable.reason).toContain("alpha");
+    if (!writable.ok) {
+      expect(writable.reason).toContain("alpha");
+      // D-145: a path for a person to fix — and never by deleting the record of every turn.
+      expect(writable.kind).toBe("unwritable");
+      expect(writable.remedy).toContain("Fix what the line above names");
+      expect(writable.remedy).toContain("None of these needs the ledger deleted");
+      expect(writable.remedy).not.toMatch(/delete the ledger directory|fresh one/);
+    }
   });
 
-  test("a held lock is refused by name, never assumed stale", async () => {
+  test("a held lock is waited for, then refused by name — never assumed stale", async () => {
     const env = await makeEnv();
     await append(env, entry());
+    // A live owner: this process. `test/ledger/lock.test.ts` has the rest of the lock (D-145).
     await mkdir(join(ledgerDir(env, A), ".lock"));
+    await writeFile(
+      join(ledgerDir(env, A), ".lock", `owner.${crypto.randomUUID()}.json`),
+      JSON.stringify({ pid: process.pid, host: hostname(), started: new Date().toISOString() }),
+    );
 
-    await expect(append(env, entry())).rejects.toThrow(/locked/);
+    await expect(append(env, entry(), { ...LOCK_TIMING, waitMs: 200 })).rejects.toThrow(/locked/);
     // And the line that could not be written is not silently dropped from the
     // caller's point of view: the throw is the report.
     expect((await query(env, A)).entries.length).toBe(1);

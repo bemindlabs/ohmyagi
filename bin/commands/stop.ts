@@ -12,6 +12,8 @@
  * 3. **End the turns that are running.** Read the run records, check that each
  *    pid is still the process the record was written about, signal what can be
  *    identified, and **print the command for what cannot**.
+ * 4. **`docker kill` every browser task** of this state root (D-151), recorded
+ *    or not — a container is identified by its labels, never by a guess.
  *
  * Each step reports separately and a failure in one does not skip the next,
  * because the person running this does not get to choose which failure they are
@@ -39,6 +41,7 @@ import {
   type StoredRun,
   type TerminationReport,
 } from "../../src/decide/index.ts";
+import { sweepBrowsers } from "../../src/browser/runtime.ts";
 import { subjectId } from "../../src/types.ts";
 import { decideDial, dialEnv, whoIsSetting, writeDial } from "../dial.ts";
 import { ERR, OUT, parseArgs, usageError } from "../shared.ts";
@@ -83,8 +86,17 @@ function sayTermination(report: TerminationReport, stored: StoredRun): void {
     );
   }
 
+  // D-149 review: run from inside the turn (the agent, or a script it ran), this
+  // command is part of the tree it stops, and it is the one process left alone.
+  if (report.spared !== undefined) {
+    OUT.line(
+      `    pid ${report.spared} is this stop command, running inside the turn it stopped. It was not ` +
+        `signalled, so that it could finish; it ends when it exits.`,
+    );
+  }
+
   if (report.survivors.length === 0) {
-    OUT.line(`    everything this record named is gone.`);
+    OUT.line(`    everything this record named is gone${report.spared === undefined ? "" : ", but this command"}.`);
     void removeRunRecord(stored.path);
     return;
   }
@@ -175,6 +187,7 @@ export async function cmdStop(argv: readonly string[]): Promise<number> {
           write: 0,
           run: 0,
           reach: 0,
+          operate: 0,
           setBy: await whoIsSetting(dir),
           setAt: new Date().toISOString(),
         });
@@ -232,6 +245,25 @@ export async function cmdStop(argv: readonly string[]): Promise<number> {
         } satisfies TerminationReport);
     sayTermination(report, stored);
     if (report.survivors.length > 0 || report.refusal !== undefined) failures += 1;
+  }
+
+  // --- 4. browser tasks (D-151) ---------------------------------------------
+  // After the turns, so no turn starts a container this step has already passed.
+  OUT.line("");
+  OUT.line(OUT.bold("4. browser tasks"));
+  const browsers = await sweepBrowsers(env, { all: true });
+  if (browsers.error !== undefined) {
+    OUT.line(`  docker could not be asked (${browsers.error}); if a browser task is running, end it with:`);
+    OUT.line(`    docker kill $(docker ps -q --filter label=dev.om-agi.browser=1)`);
+  } else if (browsers.actions.length === 0) {
+    OUT.line("  none running.");
+  }
+  for (const action of browsers.actions) {
+    OUT.line(
+      `  ${action.container}${action.task === null ? "" : ` (task ${action.task})`}: ` +
+        (action.ok ? action.detail : `NOT ended: ${action.detail} — docker kill ${action.container}`),
+    );
+    if (!action.ok) failures += 1;
   }
 
   // --- what it did not do ---------------------------------------------------

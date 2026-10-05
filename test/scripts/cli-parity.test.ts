@@ -927,9 +927,13 @@ describe("the controls are run, not just described", () => {
       // what is not. The controls above are the deterministic part; this number
       // is not, so it goes to the reader with the load beside it.
       //
-      // The ceiling that remains is this test's own 20 s timeout, which is
-      // there to catch a structural change — a control that started spawning
-      // the whole matrix — rather than a busy machine.
+      // The ceiling that remains is this test's own timeout, which is there to
+      // catch a structural change — a control that started spawning the whole
+      // matrix — rather than a busy machine. It was 20 s; on 2026-10-05 the
+      // mini-run took 8.8 s on an idle machine (the tree it copies per side has
+      // grown to ~550 files), which left a loaded CI runner under coverage no
+      // room. 120 s: still far below "the whole matrix", and the slowdown itself
+      // is reported, not hidden — the number printed below is the measurement.
       const load = (await import("node:os")).loadavg()[0] ?? 0;
       console.log(
         `  mini-selftest: ${seconds.toFixed(2)}s (G4-2 budget 5s, measured on a quiet ` +
@@ -941,7 +945,7 @@ describe("the controls are run, not just described", () => {
       // to the directory a run started by hand would be using.
       expect(await Bun.file(join(work, "out", "base", "02-unknown.txt")).exists()).toBe(true);
     },
-    20_000,
+    120_000,
   );
 });
 

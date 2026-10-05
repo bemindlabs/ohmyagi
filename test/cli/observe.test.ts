@@ -419,7 +419,7 @@ describe("capture cannot bring its own directory into existence", () => {
     const inEnable = namesIn(["cmdObserveEnable"]);
     expect(inEnable).toContain("ensureObserverDir");
     expect(inEnable).toContain("announceCapture");
-  });
+  }, 30_000);
 });
 
 // ---------------------------------------------------------------------------

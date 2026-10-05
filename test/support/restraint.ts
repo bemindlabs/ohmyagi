@@ -28,6 +28,7 @@ export function atLevel(level: Level): Restraint {
         write: level,
         run: level,
         reach: Math.min(level, 2) as ReachLevel,
+        operate: 0,
         setBy: null,
         setAt: null,
       },
@@ -46,3 +47,27 @@ export const RESTRAINED: Restraint = atLevel(1);
 
 /** The loosened one: no read-only flag at all. Used only where that is the point. */
 export const LOOSENED: Restraint = atLevel(2);
+
+/**
+ * Every category at `level`, `operate` included (D-153) — the restraint a turn handed a browser runs under.
+ * {@link atLevel} keeps `operate` at 0, which is what every turn that is not about a browser has.
+ */
+export function operating(level: Level): Restraint {
+  return restrain(
+    effectiveDial({
+      stored: {
+        read: level,
+        write: level,
+        run: level,
+        reach: Math.min(level, 2) as ReachLevel,
+        operate: level,
+        setBy: null,
+        setAt: null,
+      },
+      source: "file",
+      envValue: undefined,
+      stopped: false,
+      confirmedThree: ["read", "write", "run", "operate"],
+    }),
+  );
+}

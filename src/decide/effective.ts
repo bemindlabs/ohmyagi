@@ -38,11 +38,13 @@
  */
 
 import {
+  ACTING,
   CATEGORIES,
   DEFAULT_DIAL,
   SILENT_DIAL,
   actLevel,
   levelOf,
+  operateLevel,
   type Category,
   type Dial,
   type Level,
@@ -82,6 +84,8 @@ export interface EffectiveDial {
   readonly dial: Dial;
   /** `min(write, run, reach)` of {@link dial} — the level a turn actually runs at. */
   readonly act: Level;
+  /** {@link operateLevel} of {@link dial} — the level the browser runs at (D-153). */
+  readonly operate: Level;
   /** The environment ceiling in force, or `null` when the variable is unset. */
   readonly ceiling: Level | null;
   readonly stopped: boolean;
@@ -203,6 +207,7 @@ export function effectiveDial(input: EffectiveInput): EffectiveDial {
     write: lowest(vouched("write", stored.write)),
     run: lowest(vouched("run", stored.run)),
     reach: Math.min(lowest(stored.reach), 2) as ReachLevel,
+    operate: lowest(vouched("operate", stored.operate)),
     setBy: stored.setBy,
     setAt: stored.setAt,
   };
@@ -231,10 +236,8 @@ export function effectiveDial(input: EffectiveInput): EffectiveDial {
   // is a number somebody chose that changes nothing. Said here, so `set` can
   // say it at the moment of setting rather than a person discovering it later.
   const act = actLevel(dial);
-  const holding = (["write", "run", "reach"] as const).filter(
-    (category) => levelOf(dial, category) === act,
-  );
-  for (const category of ["write", "run", "reach"] as const) {
+  const holding = ACTING.filter((category) => levelOf(dial, category) === act);
+  for (const category of ACTING) {
     const level = levelOf(dial, category);
     if (level <= act) continue;
     clamps.push({
@@ -249,11 +252,27 @@ export function effectiveDial(input: EffectiveInput): EffectiveDial {
     });
   }
 
+  // D-153 — the browser runs at min(operate, reach), so an operate above reach
+  // is the same kind of number: chosen, and changing nothing. Level 3 stands
+  // when reach is at its top (2) — see operateLevel.
+  const operate = operateLevel(dial);
+  if (dial.operate > operate) {
+    clamps.push({
+      category: "operate",
+      set: dial.operate,
+      effective: operate,
+      why:
+        `the browser runs at min(operate, reach) = ${operate}, held there by reach. ` +
+        `Raise reach with it, or this number changes nothing (D-153).`,
+    });
+  }
+
   return {
     stored,
     source: input.source,
     dial,
     act,
+    operate,
     ceiling,
     stopped: input.stopped,
     clamps,

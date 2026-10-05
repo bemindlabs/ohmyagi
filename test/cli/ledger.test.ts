@@ -22,7 +22,7 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { validatePriceTable } from "../../src/pricing/table.ts";
 
@@ -67,8 +67,9 @@ async function makeHarness(): Promise<Harness> {
   return { home, state: join(home, "state"), bare, withClaude: `${stubs}:${bare}` };
 }
 
-/** The ollama daemon, as far as `OllamaExec` can tell. */
+/** The ollama daemon, as far as `OllamaExec` can tell. `prompts` is every prompt it was handed. */
 function serveOllama() {
+  const prompts: string[] = [];
   const server = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
@@ -78,6 +79,7 @@ function serveOllama() {
       if (url.pathname !== "/api/chat") return new Response("no", { status: 404 });
       const body = (await request.json()) as { messages: { role: string; content: string }[] };
       const prompt = body.messages.at(-1)?.content ?? "";
+      prompts.push(prompt);
       // The counts a real daemon puts at the top level beside the durations.
       return Response.json({
         message: { content: `echo:${prompt}` },
@@ -86,7 +88,7 @@ function serveOllama() {
       });
     },
   });
-  return { server, url: `http://127.0.0.1:${server.port}` };
+  return { server, url: `http://127.0.0.1:${server.port}`, prompts };
 }
 
 interface RunOptions {
@@ -628,10 +630,49 @@ describe("ohmyagi ledger", () => {
       expect(turn.code).toBe(1);
       expect(turn.stdout).toBe("");
       expect(turn.stderr).toContain("Nothing was sent");
+      // D-145: a path for a person to fix — and never by deleting the record of every turn.
+      expect(turn.stderr).toContain("Fix what the line above names");
+      expect(turn.stderr).not.toMatch(/delete the ledger directory|fresh one/);
+      expect(ollama.prompts).toEqual([]);
     } finally {
       await ollama.server.stop(true);
     }
   });
+
+  test("a ledger lock held past the wait stops the turn before it is sent — try again, never delete (D-145)", async () => {
+    const harness = await makeHarness();
+    const ollama = serveOllama();
+    const value = canary();
+    try {
+      // Held by a live process on this machine: this one.
+      const lock = join(harness.state, "om-agi", "ledger", "example", ".lock");
+      await mkdir(lock, { recursive: true });
+      await writeFile(
+        join(lock, `owner.${crypto.randomUUID()}.json`),
+        JSON.stringify({ pid: process.pid, host: hostname(), started: new Date().toISOString() }),
+      );
+      const args = ["turn", SOUL, "--subject", "example", "--prompt", value, "--backend", "ollama", "--model", "stub"];
+
+      const turn = await run(harness, args, { ollama: ollama.url });
+
+      expect(turn.code).toBe(1);
+      expect(turn.stdout).toBe("");
+      expect(turn.stderr).toContain(`ledger is locked (${lock}) by pid ${process.pid} on ${hostname()}`);
+      expect(turn.stderr).toContain("Nothing was sent. Another turn is writing this agent's ledger — try again in a moment.");
+      expect(turn.stderr).toContain("If no ohmyagi process is running");
+      expect(turn.stderr).toContain("the next turn clears it by itself");
+      expect(turn.stderr).not.toMatch(/delete the ledger directory|fresh one/);
+      expect(ollama.prompts).toEqual([]);
+
+      // And "try again" is the whole of it: once the holder lets go, the same turn runs and is recorded.
+      await rm(lock, { recursive: true });
+      const again = await run(harness, args, { ollama: ollama.url });
+      expect(again.code, again.stderr).toBe(0);
+      expect(ollama.prompts).toHaveLength(1);
+    } finally {
+      await ollama.server.stop(true);
+    }
+  }, 30_000);
 
   test("the help text says where the ledger is and which prompt route is safer", async () => {
     const harness = await makeHarness();

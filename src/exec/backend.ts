@@ -14,6 +14,7 @@
  */
 
 import type { Confidence, Evidence, SubjectId } from "../types.ts";
+import type { BrowserHands } from "../browser/mcp-config.ts";
 import type { FencePolicy } from "./fence.ts";
 import type { Restraint } from "./restraint.ts";
 
@@ -106,6 +107,17 @@ export interface TurnRequest {
    * is refused rather than run on the vendor's flags alone.
    */
   readonly fence?: FencePolicy;
+  /**
+   * A task's browser (D-151, D-155): the one MCP server this turn is handed,
+   * through a config file om-agi writes (`src/browser/mcp-config.ts`). A
+   * backend that cannot be handed *only* that server refuses the turn rather
+   * than run it without the browser it was asked to use. A local backend adds
+   * the container's port — and only that — to its fence.
+   *
+   * Nothing in `ohmyagi turn` sets this yet: the `operate` dial (D-153) is what
+   * will decide when a turn gets hands on a browser.
+   */
+  readonly browser?: BrowserHands;
 }
 
 /**

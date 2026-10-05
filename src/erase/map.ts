@@ -33,6 +33,7 @@
  */
 
 import { a2aDirFor } from "../a2a/peers.ts";
+import { browserDirFor } from "../browser/paths.ts";
 import { chatDirFor } from "../connectors/users.ts";
 import { basisDirFor } from "../consent/basis.ts";
 import { confirmationsDirFor } from "../decide/confirm.ts";
@@ -73,6 +74,7 @@ export type MapKey =
   | "confirmations"
   | "rag-marker"
   | "runs"
+  | "browser"
   | "triggers"
   | "a2a"
   | "chat"
@@ -195,6 +197,21 @@ export function subjectTrees(
       why:
         "turns in flight on this machine, by process id. A pid means nothing on another machine, " +
         "and `ohmyagi stop` there must not act on one",
+    },
+  });
+  // Browser tasks (D-151): each one's record (the container, its port and token, the allowlist) and the
+  // vendors' MCP config files pointing at it. The recording itself is under personal/. `erase` docker-kills
+  // the containers first (plan.ts).
+  trees.push({
+    key: "browser",
+    place: "ledger",
+    label: "browser task records and their MCP config (containers are docker-killed first)",
+    dir: browserDirFor(env, subject),
+    travel: {
+      kind: "stays",
+      why:
+        "a record names a container on this machine and a loopback port on it; there it means nothing, and " +
+        "`ohmyagi stop` there must not act on one",
     },
   });
   // When each scheduled trigger last fired (S5.3 AC6).

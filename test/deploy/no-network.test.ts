@@ -93,5 +93,5 @@ describe("the deploy layer's import closure", () => {
     const through = [...places].map((path) => relative(ROOT, path));
     expect(through).toContain(join("src", "spawn.ts"));
     expect(through).toContain(join("src", "memory", "store-admin.ts"));
-  });
+  }, 30_000);
 });

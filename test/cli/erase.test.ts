@@ -16,8 +16,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { sha256 } from "../../src/soul/block.ts";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { append, LEDGER_VERSION, ledgerDir, type LedgerEntry } from "../../src/ledger/index.ts";
+import { subjectId } from "../../src/types.ts";
 import { BUN } from "../support/bare-path.ts";
 
 const ROOT = join(import.meta.dir, "..", "..");
@@ -191,6 +193,32 @@ describe("ohmyagi erase", () => {
     // What was never this subject's to delete is still there, and git is intact.
     expect(await Bun.file(join(agent, "memory", "README.md")).exists()).toBe(true);
     expect(await Bun.file(join(agent, ".git", "HEAD")).exists()).toBe(true);
+  }, 60_000);
+
+  test("a turn killed while it held the ledger's lock does not stop an erase (D-145)", async () => {
+    const { home, agent } = await makeAgent();
+    const state = { home, env: { XDG_STATE_HOME: join(home, "state") }, now: () => new Date() };
+    await append(state, {
+      v: LEDGER_VERSION, kind: "turn", id: "one-line", turn: "one-turn", at: new Date().toISOString(),
+      subject: subjectId(SUBJECT), backend: "ollama", model: null, content: "full", prompt: "hello", prompt_bytes: 5,
+      text: "hi", text_bytes: 2, confidence: "confirmed", exit: 0, duration_ms: 1, cost: null, identity: "system", soul_sha: null,
+    } as LedgerEntry);
+    // Its owner names this machine, and its pid is gone: what `ohmyagi stop` during a turn's fsync leaves.
+    const dead = Bun.spawn([process.execPath, "-e", "0"], { stdout: "ignore", stderr: "ignore" });
+    await dead.exited;
+    const ledger = ledgerDir(state, subjectId(SUBJECT));
+    await mkdir(join(ledger, ".lock"), { recursive: true, mode: 0o700 });
+    await writeFile(
+      join(ledger, ".lock", `owner.${crypto.randomUUID()}.json`),
+      JSON.stringify({ pid: dead.pid, host: hostname(), started: new Date().toISOString() }),
+    );
+
+    // Before, the erase knew no machine, judged the lock by age alone, waited five seconds and failed.
+    const erased = await run(home, ["erase", SUBJECT, "--agent", agent, "--by", "a reviewer", "--yes"]);
+
+    expect(erased.code, erased.stderr).toBe(0);
+    expect(erased.stderr).not.toContain("locked");
+    expect(await Bun.file(ledger).exists()).toBe(false);
   }, 60_000);
 
   test("a block in a file a vendor also reads (kimi's home AGENTS.md) is stripped too, the owner's text kept", async () => {

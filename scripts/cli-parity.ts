@@ -1219,6 +1219,9 @@ export const SCENARIOS: readonly Scenario[] = [
       { argv: ["key"] },
       { argv: ["usage"] },
       { argv: ["usage", "wat"] },
+      // E17's (D-151), as usage errors only: a real `up` starts a container, and `status` asks docker.
+      { argv: ["browser"] },
+      { argv: ["browser", "wat"] },
       { argv: ["update", "wat"] },
       { argv: ["ledger", "wat"] },
       { argv: ["ledger"] },

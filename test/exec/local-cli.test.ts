@@ -319,3 +319,39 @@ describe("fail closed", () => {
     expect(fake.captures).toEqual([]);
   });
 });
+
+describe("a local turn handed a task's browser (D-155)", () => {
+  test("the fence gains exactly the container's port, and nothing else changes", async () => {
+    const box = await fixture();
+    const backend = new LocalCliExec("claude-local", { home: box.home, env: box.env, cwd: () => box.work });
+    const plain = backend.prepare({ subject: SUBJECT, prompt: "p", restraint: LOOSENED });
+    const handed = backend.prepare({
+      subject: SUBJECT,
+      prompt: "p",
+      restraint: LOOSENED,
+      browser: { port: 30_731, dir: box.home, token: "ab".repeat(32), operate: 1 },
+    });
+    expect(handed.fence?.tcpPorts).toEqual([10400, 30_731]);
+    expect(handed.fence?.writable).toEqual(plain.fence?.writable ?? []);
+  });
+
+  test("a port outside the browser band is refused before anything is read or written", async () => {
+    const box = await fixture();
+    const fake = harness();
+    const backend = new LocalCliExec("claude-local", {
+      home: box.home,
+      env: box.env,
+      cwd: () => box.work,
+      makeCli: fake.makeCli,
+    });
+    const result = await backend.run({
+      subject: SUBJECT,
+      prompt: "p",
+      restraint: LOOSENED,
+      browser: { port: 10_401, dir: box.home, token: "ab".repeat(32), operate: 1 },
+    });
+    expect(result.confidence).toBe("silent");
+    expect(result.evidence.raw).toContain("is not a browser task's");
+    expect(fake.captures).toHaveLength(0);
+  });
+});

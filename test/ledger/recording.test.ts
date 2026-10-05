@@ -13,12 +13,24 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Availability, ExecBackend, TurnRequest, TurnResult } from "../../src/exec/backend.ts";
 import { FallbackExec } from "../../src/exec/fallback.ts";
-import { query, RecordingExec, type LedgerEnv, type RecordingOptions } from "../../src/ledger/index.ts";
+import { messageEntry } from "../../src/a2a/message.ts";
+import { chatEntry, type ChatMessage } from "../../src/connectors/chat.ts";
+import {
+  append,
+  canAppend,
+  ledgerDir,
+  LedgerLocked,
+  LOCK_TIMING,
+  query,
+  RecordingExec,
+  type LedgerEnv,
+  type RecordingOptions,
+} from "../../src/ledger/index.ts";
 import { DEFAULT_PRICES, validatePriceTable, type PricesInForce, type PriceTable } from "../../src/pricing/table.ts";
 import { subjectId, type Usage } from "../../src/types.ts";
 import { RESTRAINED } from "../support/restraint.ts";
@@ -473,4 +485,57 @@ describe("RecordingExec", () => {
     expect(result.text).toBe("answer from ollama");
     expect(failures.length).toBe(1);
   });
+});
+
+describe("how long a line waits for the lock depends on whether its send has happened (D-145)", () => {
+  test("behind a 10 s hold, chat and A2A lines written before a send give up at about 5 s; a turn's line after its answer is recorded", async () => {
+    const env = await makeEnv();
+    const dir = ledgerDir(env, SUBJECT);
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    // A live holder in a process of its own, as another turn or a `forget` would be.
+    const holder = Bun.spawn([process.execPath, "run", join(import.meta.dir, "lock-child.ts"), "hold", dir, "10000"], {
+      env: { PATH: process.env["PATH"] ?? "", HOME: env.home, XDG_STATE_HOME: join(env.home, "state"), OM_AGI_QDRANT_URL: "http://127.0.0.1:9" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const reader = holder.stdout.getReader();
+    let seen = "";
+    while (!seen.split("\n").includes("held")) {
+      const chunk = await reader.read();
+      if (chunk.done) throw new Error(`the holder ended without taking the lock: ${seen}`);
+      seen += new TextDecoder().decode(chunk.value);
+    }
+    reader.releaseLock();
+
+    const began = performance.now();
+    const timed = <T>(work: Promise<T>) =>
+      work.then(
+        (value) => ({ ok: true as const, value, after: performance.now() - began }),
+        (error: unknown) => ({ ok: false as const, error, after: performance.now() - began }),
+      );
+    const message: ChatMessage = { platform: "telegram", chatId: "chat-1", userId: "user-1", messageId: "msg-1", text: "hello" };
+    const [chat, a2a, check, recorded] = await Promise.all([
+      // The gates, with append's default: chat records a message before it answers, A2A before it delivers.
+      timed(append(env, chatEntry({ subject: SUBJECT, direction: "in", message, text: "hello", at: new Date(), content: "full" }))),
+      timed(append(env, messageEntry({ subject: SUBJECT, direction: "in", peer: "a-peer", messageId: "a2a-1", text: "hello", at: new Date(), content: "full" }))),
+      timed(canAppend(env, SUBJECT)),
+      // After a send: the backend has answered, and its line must not be lost to the hold.
+      timed(new RecordingExec(new Fake("ollama", {}), options(env)).run({ restraint: RESTRAINED, subject: SUBJECT, prompt: "p", system: "s" })),
+    ]);
+
+    for (const gate of [chat, a2a]) {
+      expect(gate.ok).toBe(false);
+      if (!gate.ok) expect(gate.error).toBeInstanceOf(LedgerLocked);
+      expect(gate.after).toBeGreaterThanOrEqual(LOCK_TIMING.waitMs);
+      expect(gate.after).toBeLessThan(9_000);
+    }
+    expect(check.ok && !check.value.ok && check.value.kind).toBe("locked");
+    expect(check.after).toBeLessThan(9_000);
+    // `options` throws from onWriteFailure, so a run that resolved is a line that was written.
+    expect(recorded.ok).toBe(true);
+    expect(recorded.after).toBeGreaterThanOrEqual(9_000);
+    const { entries } = await query(env, SUBJECT);
+    expect(entries.map((entry) => entry.backend)).toEqual(["ollama"]);
+    expect(await holder.exited).toBe(0);
+  }, 40_000);
 });

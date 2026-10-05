@@ -18,6 +18,7 @@
 import type { ExecBackend, TurnRequest, TurnResult } from "../exec/backend.ts";
 import type { Availability, BackendKind, IdentityStrength } from "../exec/backend.ts";
 import { byteLength, LEDGER_VERSION, type LedgerContent, type LedgerEntry } from "./entry.ts";
+import { RECORD_TIMING } from "./lock.ts";
 import { append, type LedgerEnv } from "./store.ts";
 import { chargeTurn } from "../pricing/cost.ts";
 import type { PricesInForce } from "../pricing/table.ts";
@@ -133,7 +134,9 @@ export class RecordingExec implements ExecBackend {
     const result = await this.inner.run(request);
 
     try {
-      await append(this.options.ledger, this.entryFor(at, request, result));
+      // After the send: the prompt has gone, so the line waits a minute for the lock rather than the five
+      // seconds a gate gets — giving up now would lose the record of something that happened (D-145).
+      await append(this.options.ledger, this.entryFor(at, request, result), RECORD_TIMING);
     } catch (cause) {
       this.options.onWriteFailure(cause instanceof Error ? cause : new Error(String(cause)));
     }

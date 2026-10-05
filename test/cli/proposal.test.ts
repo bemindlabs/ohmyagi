@@ -16,8 +16,10 @@
  *
  * ## The second: an approval is spent once
  *
- * `turn --proposal <id>` marks the record before the prompt goes out, and a
- * second turn naming the same id is refused with 4. The alternative — an
+ * `turn --proposal <id>` claims the approval at the check, before anything else
+ * happens, and a second turn naming the same id is refused with 4 — including
+ * one started at the same moment, since the claim is one exclusive step across
+ * processes; and a turn that fails after its claim keeps it spent (D-144). The alternative — an
  * approval that keeps working — is how "I allowed it once" becomes "it has been
  * doing that ever since", and the owner decided against it on 2026-09-22.
  *
@@ -27,10 +29,11 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { PROPOSALS_DIR } from "../../src/decide/proposals.ts";
+import { PROPOSALS_DIR, PROPOSAL_SCHEMA, REFILED_DIR, REFILE_SCHEMA } from "../../src/decide/proposals.ts";
+import { monthFileName } from "../../src/ledger/store.ts";
 import { barePath, BUN, expectNoVendorOn } from "../support/bare-path.ts";
 import { serveOllama } from "../support/stub-ollama.ts";
 
@@ -73,6 +76,8 @@ async function sandbox(): Promise<Box> {
       // A port nothing answers on, so no probe can reach a model unless a case
       // hands over a stub's URL itself.
       OLLAMA_HOST: "http://127.0.0.1:1",
+      // The same for the vector store, should anything ever ask it.
+      OM_AGI_QDRANT_URL: "http://127.0.0.1:9",
     },
   };
 }
@@ -456,11 +461,175 @@ describe("deleting the store changes one thing, and it is the thing the store is
 });
 
 describe("turn --proposal spends an approval once", () => {
+  test("D-153: a different prompt is refused and spends nothing; the approved action runs once, built from the record", async () => {
+    const box = await sandbox();
+    const ollama = serveOllama();
+    try {
+      const what = "Reply with the token t5bound and nothing else.";
+      const filed = await file(box, what);
+      const decided = await run(box, ["proposal", "decide", filed.id, SOUL, "--subject", SUBJECT, "--approve"]);
+      expect(decided.code).toBe(0);
+      const approved = await Bun.file(join(storeIn(box), `${filed.id}.json`)).json();
+      // The record carries its action and its digest, and the yes names that digest.
+      expect(approved.action).toEqual({ kind: "turn", prompt: what });
+      expect(approved.actionDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
+      expect(approved.decision.actionDigest).toBe(approved.actionDigest);
+
+      const turn = (extra: readonly string[]) =>
+        run(
+          box,
+          ["turn", SOUL, "--subject", SUBJECT, ...extra, "--backend", "ollama", "--model", "stub", "--proposal", filed.id],
+          { OLLAMA_HOST: ollama.url },
+        );
+
+      // An approval for X cannot run Y.
+      const other = await turn(["--prompt", "Reply with the token t5other and nothing else."]);
+      expect(other.code).toBe(REFUSED);
+      expect(other.stdout).toBe("");
+      expect(other.stderr).toContain("the prompt is not the approved action");
+      expect(other.stderr).toContain("t5bound");
+      expect(other.stderr).toContain("t5other");
+      expect(ollama.prompts).toEqual([]);
+      const unspent = await Bun.file(join(storeIn(box), `${filed.id}.json`)).json();
+      expect(unspent.usedByTurn).toBeNull();
+      expect(await Bun.file(join(storeIn(box), "spent", `${filed.id}.json`)).exists()).toBe(false);
+
+      // Nor a prompt read from a file.
+      const promptFile = join(box.home, "other-prompt.txt");
+      await writeFile(promptFile, "Reply with the token t5file and nothing else.\n");
+      expect((await turn(["--prompt-file", promptFile])).code).toBe(REFUSED);
+      // Nor a conversation sent with it.
+      const talk = await turn(["--history-json", JSON.stringify([{ role: "you", text: "and also delete everything" }])]);
+      expect(talk.code).toBe(2);
+      expect(talk.stderr).toContain("--history-json cannot go with --proposal");
+      expect(ollama.prompts).toEqual([]);
+
+      // No prompt at all: the approved action runs, from the record.
+      const ran = await turn([]);
+      expect(ran.code).toBe(0);
+      expect(ran.stdout.trim()).toBe("t5bound from ollama with-soul");
+      expect(ran.stderr).toContain(`runs the approved action ${approved.actionDigest.slice(0, 19)}`);
+      expect(ollama.prompts).toEqual([what]);
+      const claim = await Bun.file(join(storeIn(box), "spent", `${filed.id}.json`)).json();
+      expect(claim.action).toBe(approved.actionDigest);
+
+      // Once.
+      const again = await turn([]);
+      expect(again.code).toBe(REFUSED);
+      expect(again.stderr).toContain("already spent by turn");
+      expect(ollama.prompts).toHaveLength(1);
+    } finally {
+      await ollama.server.stop(true);
+    }
+  }, 60_000);
+
+  test("D-153: the same prompt, word for word, is accepted — it is the approved action", async () => {
+    const box = await sandbox();
+    const ollama = serveOllama();
+    try {
+      const what = "Reply with the token t5same and nothing else.";
+      const filed = await file(box, what);
+      await run(box, ["proposal", "decide", filed.id, SOUL, "--subject", SUBJECT, "--approve"]);
+      const ran = await run(
+        box,
+        ["turn", SOUL, "--subject", SUBJECT, "--prompt", what, "--backend", "ollama", "--model", "stub", "--proposal", filed.id],
+        { OLLAMA_HOST: ollama.url },
+      );
+      expect(ran.code).toBe(0);
+      expect(ran.stdout.trim()).toBe("t5same from ollama with-soul");
+      expect(ollama.prompts).toEqual([what]);
+    } finally {
+      await ollama.server.stop(true);
+    }
+  }, 60_000);
+
+  test("D-153: a record changed after its approval is refused, and the approval is not spent", async () => {
+    const box = await sandbox();
+    const ollama = serveOllama();
+    try {
+      const filed = await file(box, "Reply with the token t5before and nothing else.");
+      await run(box, ["proposal", "decide", filed.id, SOUL, "--subject", SUBJECT, "--approve"]);
+      const path = join(storeIn(box), `${filed.id}.json`);
+      const record = await Bun.file(path).json();
+      // An edit after the yes: what and its action both changed, the decision's digest left as it was.
+      const changed = "Reply with the token t5after and nothing else.";
+      await writeFile(path, JSON.stringify({ ...record, what: changed, action: { kind: "turn", prompt: changed } }));
+
+      const result = await run(
+        box,
+        ["turn", SOUL, "--subject", SUBJECT, "--backend", "ollama", "--model", "stub", "--proposal", filed.id],
+        { OLLAMA_HOST: ollama.url },
+      );
+      expect(result.code).toBe(REFUSED);
+      expect(result.stderr).toContain("changed after the yes");
+      expect(ollama.prompts).toEqual([]);
+      expect(await Bun.file(join(storeIn(box), "spent", `${filed.id}.json`)).exists()).toBe(false);
+    } finally {
+      await ollama.server.stop(true);
+    }
+  }, 60_000);
+
+  test("D-153: an approval that names no action is refused — an old one, or an edit with its digest stripped (review of #18)", async () => {
+    const box = await sandbox();
+    const ollama = serveOllama();
+    try {
+      const store = storeIn(box);
+      await mkdir(store, { recursive: true, mode: 0o700 });
+      const id = "5a1e0c3d-2b4f-4e6a-8c9d-0e1f2a3b4c5d";
+      const what = "Reply with the token t5legacy and nothing else.";
+      await writeFile(
+        join(store, `${id}.json`),
+        JSON.stringify({
+          schema: PROPOSAL_SCHEMA, id, subject: SUBJECT, at: "2026-09-29T08:00:00.000Z",
+          what, why: "because", impact: "nothing", supersedes: null, changed: null,
+          decision: { outcome: "approved", at: "2026-09-29T09:00:00.000Z", by: "the owner", note: null },
+          usedByTurn: null, usedAt: null,
+        }),
+      );
+      const other = await run(
+        box,
+        ["turn", SOUL, "--subject", SUBJECT, "--prompt", "Reply with the token t5sneak and nothing else.", "--backend", "ollama", "--model", "stub", "--proposal", id],
+        { OLLAMA_HOST: ollama.url },
+      );
+      expect(other.code).toBe(REFUSED);
+      const ran = await run(
+        box,
+        ["turn", SOUL, "--subject", SUBJECT, "--backend", "ollama", "--model", "stub", "--proposal", id],
+        { OLLAMA_HOST: ollama.url },
+      );
+      expect(ran.code).toBe(REFUSED);
+      expect(ran.stderr).toContain("Approve it again");
+      expect(ollama.prompts).toEqual([]);
+      expect(await Bun.file(join(store, "spent", `${id}.json`)).exists()).toBe(false);
+      void what;
+
+      // The review's measurement: approve properly, then edit what, delete action and the decision's digest.
+      const filed = await file(box, "Reply with the token t5good and nothing else.");
+      await run(box, ["proposal", "decide", filed.id, SOUL, "--subject", SUBJECT, "--approve"]);
+      const path = join(store, `${filed.id}.json`);
+      const record = await Bun.file(path).json();
+      delete record.action;
+      delete record.decision.actionDigest;
+      record.what = "Reply with the token EVIL edited";
+      await writeFile(path, JSON.stringify(record));
+      const evil = await run(
+        box,
+        ["turn", SOUL, "--subject", SUBJECT, "--backend", "ollama", "--model", "stub", "--proposal", filed.id],
+        { OLLAMA_HOST: ollama.url },
+      );
+      expect(evil.code).toBe(REFUSED);
+      expect(evil.stderr).toContain("the approval names no action");
+      expect(ollama.prompts).toEqual([]);
+    } finally {
+      await ollama.server.stop(true);
+    }
+  }, 60_000);
+
   test("approved runs and is spent; the same id a second time is refused", async () => {
     const box = await sandbox();
     const ollama = serveOllama();
     try {
-      const filed = await file(box, "delete the old logs");
+      const filed = await file(box, "Reply with the token t5spend and nothing else.");
       await run(box, ["proposal", "decide", filed.id, SOUL, "--subject", SUBJECT, "--approve"]);
 
       const turn = (id: string) =>
@@ -468,7 +637,6 @@ describe("turn --proposal spends an approval once", () => {
           box,
           [
             "turn", SOUL, "--subject", SUBJECT,
-            "--prompt", "Reply with the token t5spend and nothing else.",
             "--backend", "ollama", "--model", "stub", "--proposal", id,
           ],
           { OLLAMA_HOST: ollama.url },
@@ -490,6 +658,424 @@ describe("turn --proposal spends an approval once", () => {
       expect(ollama.prompts).toHaveLength(1);
     } finally {
       await ollama.server.stop(true);
+    }
+  }, 60_000);
+
+  test("three turns at once on one approval: exactly one runs, the others are refused and send nothing (D-144)", async () => {
+    // The race the review of ohmyagi-app#19 found: two taps on "Do it now", or
+    // "Run now" in the app, start two `turn --proposal` processes at once. Both
+    // used to read the approval as unspent and both ran it. The spend is now one
+    // exclusive step at the check, so the order the processes arrive in does not
+    // matter: one takes it, and every other one is told whose turn it went to.
+    const box = await sandbox();
+    const ollama = serveOllama();
+    try {
+      const filed = await file(box, "Reply with the token t5race and nothing else.");
+      await run(box, ["proposal", "decide", filed.id, SOUL, "--subject", SUBJECT, "--approve"]);
+
+      const turn = () =>
+        run(
+          box,
+          [
+            "turn", SOUL, "--subject", SUBJECT,
+            "--backend", "ollama", "--model", "stub", "--proposal", filed.id,
+          ],
+          { OLLAMA_HOST: ollama.url },
+        );
+
+      const results = await Promise.all([turn(), turn(), turn()]);
+      const ran = results.filter((r) => r.code === 0);
+      const refused = results.filter((r) => r.code === REFUSED);
+      expect(ran).toHaveLength(1);
+      expect(refused).toHaveLength(2);
+      expect(ran[0]!.stdout.trim()).toBe("t5race from ollama with-soul");
+      // One prompt reached the backend, not three.
+      expect(ollama.prompts).toHaveLength(1);
+
+      const record = await Bun.file(join(storeIn(box), `${filed.id}.json`)).json();
+      expect(record.usedByTurn).toMatch(/^[0-9a-f-]{36}$/);
+      expect(ran[0]!.stderr).toContain(`is spent on this turn (${record.usedByTurn})`);
+      for (const loser of refused) {
+        expect(loser.stdout).toBe("");
+        expect(loser.stderr).toContain("nothing was sent");
+        // Named: the turn that did take it, which is the one the record names.
+        expect(loser.stderr).toContain(`already spent by turn ${record.usedByTurn}`);
+      }
+    } finally {
+      await ollama.server.stop(true);
+    }
+  }, 60_000);
+
+  test("a turn that claimed the approval and sent nothing leaves it spent and says so; `--refile` files it again, once, and runs nothing (D-144 §2)", async () => {
+    const box = await sandbox();
+    const ollama = serveOllama();
+    try {
+      const filed = await file(box, "Reply with the token t5fail and nothing else.");
+      await run(box, ["proposal", "decide", filed.id, SOUL, "--subject", SUBJECT, "--approve"]);
+
+      const turn = (id: string, host: string) =>
+        run(
+          box,
+          [
+            "turn", SOUL, "--subject", SUBJECT,
+            "--backend", "ollama", "--model", "stub", "--proposal", id,
+          ],
+          { OLLAMA_HOST: host },
+        );
+
+      // The backend is down: the turn took the approval as its last step, and
+      // then no backend was there to be handed the prompt. It is not handed
+      // back (D-144 §2, the owner's decision) — and the turn says so, last,
+      // where the web page's error line reads it.
+      const failed = await turn(filed.id, "http://127.0.0.1:1");
+      expect(failed.code).toBe(1);
+      expect(failed.stderr).toContain("no backend answered");
+      const record = await Bun.file(join(storeIn(box), `${filed.id}.json`)).json();
+      expect(record.usedByTurn).toMatch(/^[0-9a-f-]{36}$/);
+      const last = failed.stderr.trimEnd().split("\n").at(-1)!;
+      expect(last).toContain(`proposal ${filed.id} stays spent — turn ${record.usedByTurn} took its approval and nothing was sent`);
+      expect(last).toContain(`file it again — \`ohmyagi proposal new <dir> --subject ${SUBJECT} --refile ${filed.id}\``);
+      // Marked, which is what lets it be filed again from its own record.
+      expect(record.sentNothing).toBe(true);
+
+      // The backend is back; the approval is not.
+      const again = await turn(filed.id, ollama.url);
+      expect(again.code).toBe(REFUSED);
+      expect(again.stderr).toContain(`already spent by turn ${record.usedByTurn}`);
+      // This one took nothing, so it has nothing to say about keeping it.
+      expect(again.stderr).not.toContain("stays spent");
+      expect(ollama.prompts).toEqual([]);
+
+      // Asking again is the way: filed again from its own record, as a new
+      // proposal that waits — nothing approved, nothing run.
+      const refile = (id: string, extra: readonly string[] = []) =>
+        run(box, ["proposal", "new", SOUL, "--subject", SUBJECT, "--refile", id, ...extra]);
+      const refiled = await refile(filed.id);
+      expect(refiled.code).toBe(0);
+      const newId = refiled.stdout.trim();
+      expect(newId).toMatch(/^[0-9a-f-]{36}$/);
+      expect(newId).not.toBe(filed.id);
+      expect(refiled.stderr).toContain("nothing was approved or run");
+      const fresh = await Bun.file(join(storeIn(box), `${newId}.json`)).json();
+      expect(fresh).toMatchObject({
+        what: "Reply with the token t5fail and nothing else.",
+        why: "because the disk is full",
+        impact: "files older than a year",
+        decision: null,
+        usedByTurn: null,
+        supersedes: filed.id,
+        changed: `filed again: turn ${record.usedByTurn} took its approval and sent nothing`,
+        filedBy: "person",
+      });
+      expect(ollama.prompts).toEqual([]);
+
+      // Once: the second click finds it filed again, and files nothing.
+      const twice = await refile(filed.id);
+      expect(twice.code).toBe(5);
+      expect(twice.stderr).toContain(`was filed again already, as ${newId}`);
+      // Nothing but the record: an unknown id, and text from the command line.
+      expect((await refile("00000000-0000-4000-8000-000000000000")).code).toBe(2);
+      expect((await refile(filed.id, ["--what", "something else"])).code).toBe(2);
+      expect((await readdir(storeIn(box))).filter((name) => name.endsWith(".json")).sort()).toEqual(
+        [`${filed.id}.json`, `${newId}.json`].sort(),
+      );
+
+      // Approved — a new yes — it runs once.
+      await run(box, ["proposal", "decide", newId, SOUL, "--subject", SUBJECT, "--approve"]);
+      const ran = await turn(newId, ollama.url);
+      expect(ran.code).toBe(0);
+      expect(ran.stdout.trim()).toBe("t5fail from ollama with-soul");
+      expect(ran.stderr).not.toContain("stays spent");
+      expect(ollama.prompts).toHaveLength(1);
+    } finally {
+      await ollama.server.stop(true);
+    }
+  }, 60_000);
+
+  test("a turn that stops before its claim — here, an unwritable ledger — spends nothing (D-144 review)", async () => {
+    // The claim is the last step before the prompt goes, so everything that
+    // does not depend on the proposal is asked first. A ledger that cannot be
+    // written stops the turn with the approval still ready — as it did before
+    // D-144 — and the turn has nothing to say about an approval it never took.
+    const box = await sandbox();
+    const ollama = serveOllama();
+    try {
+      const filed = await file(box, "Reply with the token t5early and nothing else.");
+      await run(box, ["proposal", "decide", filed.id, SOUL, "--subject", SUBJECT, "--approve"]);
+      const turn = (over: Record<string, string>) =>
+        run(
+          box,
+          [
+            "turn", SOUL, "--subject", SUBJECT,
+            "--backend", "ollama", "--model", "stub", "--proposal", filed.id,
+          ],
+          { OLLAMA_HOST: ollama.url, ...over },
+        );
+
+      // A file where the ledger's directory should be: the ledger cannot be made,
+      // and nothing else the turn reads (the dial, the brake) is in the way.
+      const ledgers = join(box.home, "state", "om-agi", "ledger");
+      await mkdir(join(box.home, "state", "om-agi"), { recursive: true });
+      await writeFile(ledgers, "");
+      const stopped = await turn({});
+      expect(stopped.code).toBe(1);
+      expect(stopped.stderr).toContain("Nothing was sent");
+      expect(stopped.stderr).not.toContain("is spent on this turn");
+      expect(stopped.stderr).not.toContain("stays spent");
+      const record = await Bun.file(join(storeIn(box), `${filed.id}.json`)).json();
+      expect(record.usedByTurn).toBeNull();
+      expect(await Bun.file(join(storeIn(box), "spent", `${filed.id}.json`)).exists()).toBe(false);
+      expect(ollama.prompts).toEqual([]);
+
+      // The ledger fixed, the same approval runs — once.
+      await rm(ledgers);
+      const ran = await turn({});
+      expect(ran.code).toBe(0);
+      expect(ran.stdout.trim()).toBe("t5early from ollama with-soul");
+      expect(ollama.prompts).toHaveLength(1);
+    } finally {
+      await ollama.server.stop(true);
+    }
+  }, 60_000);
+
+  test("a turn whose backend answered but whose ledger line failed says it ran — and does not say to file it again (D-144 review)", async () => {
+    // Following "file it again" here would run the action a second time. The
+    // ledger's month file is a directory, so the line cannot be appended after
+    // the answer arrives — without depending on how the ledger's lock behaves.
+    const box = await sandbox();
+    const ollama = serveOllama();
+    try {
+      const filed = await file(box, "Reply with the token t5ran and nothing else.");
+      await run(box, ["proposal", "decide", filed.id, SOUL, "--subject", SUBJECT, "--approve"]);
+      const ledger = join(box.home, "state", "om-agi", "ledger", SUBJECT);
+      const now = new Date();
+      for (const at of [now, new Date(now.getTime() + 86_400_000)]) {
+        await mkdir(join(ledger, monthFileName(at)), { recursive: true });
+      }
+
+      const result = await run(
+        box,
+        [
+          "turn", SOUL, "--subject", SUBJECT,
+          "--backend", "ollama", "--model", "stub", "--proposal", filed.id,
+        ],
+        { OLLAMA_HOST: ollama.url },
+      );
+      expect(result.code).toBe(1);
+      expect(result.stdout.trim()).toBe("t5ran from ollama with-soul");
+      expect(result.stderr).toContain("were sent and not recorded");
+      const record = await Bun.file(join(storeIn(box), `${filed.id}.json`)).json();
+      const last = result.stderr.trimEnd().split("\n").at(-1)!;
+      expect(last).toBe(
+        `ohmyagi: proposal ${filed.id} was spent by this turn (${record.usedByTurn}) and it ran — ollama answered, ` +
+          `and the ledger did not record it. Do not file it again to retry: that would run it a second time.`,
+      );
+      expect(result.stderr).not.toContain("file it again (");
+      expect(result.stderr).not.toContain("stays spent");
+      expect(ollama.prompts).toHaveLength(1);
+      // It ran, so it is not offered to be filed again.
+      expect(record.sentNothing).toBeUndefined();
+      const refused = await run(box, ["proposal", "new", SOUL, "--subject", SUBJECT, "--refile", filed.id]);
+      expect(refused.code).toBe(4);
+      expect(refused.stderr).toContain("ran it or may have");
+    } finally {
+      await ollama.server.stop(true);
+    }
+  }, 60_000);
+
+  test("six `--refile` at once file one new proposal; five are told it was filed already — and it keeps who first filed it (D-144 follow-up)", async () => {
+    // A bulk "File it again", or a page and a terminal: every process read the
+    // store before any of them wrote, so each found the approval not yet filed
+    // again, and six filed six. The refile is now claimed before it is written.
+    const box = await sandbox();
+    const store = storeIn(box);
+    await mkdir(store, { recursive: true, mode: 0o700 });
+    const old = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+    // Filed by the agent in a level-1 turn, approved, and spent by a turn that sent nothing.
+    await writeFile(
+      join(store, `${old}.json`),
+      JSON.stringify({
+        schema: PROPOSAL_SCHEMA, id: old, subject: SUBJECT, at: "2026-09-29T08:00:00.000Z",
+        what: "delete the old logs", why: "because the disk is full", impact: "files older than a year",
+        supersedes: null, changed: null,
+        decision: { outcome: "approved", at: "2026-09-29T09:00:00.000Z", by: "the owner", note: null },
+        usedByTurn: "turn-that-sent-nothing", usedAt: "2026-09-29T10:00:00.000Z", sentNothing: true,
+        filedBy: "agent", fromTurn: "turn-that-asked",
+      }),
+    );
+
+    const results = await Promise.all(
+      Array.from({ length: 6 }, () => run(box, ["proposal", "new", SOUL, "--subject", SUBJECT, "--refile", old])),
+    );
+    const filed = results.filter((r) => r.code === 0);
+    const told = results.filter((r) => r.code === REPEATED);
+    expect(filed).toHaveLength(1);
+    expect(told).toHaveLength(5);
+    const newId = filed[0]!.stdout.trim();
+    for (const r of told) {
+      expect(r.stdout).toBe("");
+      expect(r.stderr).toContain(`${old} was filed again already, as ${newId}. Nothing was filed.`);
+    }
+    const records = (await readdir(store)).filter((name) => name.endsWith(".json")).sort();
+    expect(records).toEqual([`${old}.json`, `${newId}.json`].sort());
+    expect(await Bun.file(join(store, "refiled", `${old}.json`)).json()).toMatchObject({ proposal: old, as: newId });
+
+    // The new one: the same words, waiting, and still the agent's.
+    const fresh = await Bun.file(join(store, `${newId}.json`)).json();
+    expect(fresh).toMatchObject({
+      what: "delete the old logs", decision: null, usedByTurn: null, supersedes: old,
+      filedBy: "agent", fromTurn: "turn-that-asked",
+    });
+    expect(filed[0]!.stderr).toContain("First filed by the agent (turn turn-that-asked).");
+
+    // And later, one at a time, it is still once.
+    const again = await run(box, ["proposal", "new", SOUL, "--subject", SUBJECT, "--refile", old]);
+    expect(again.code).toBe(REPEATED);
+    expect(again.stderr).toContain(`was filed again already, as ${newId}`);
+  }, 60_000);
+
+  test("a refile claimed by an attempt that never wrote its proposal says so, and names no proposal nobody can find", async () => {
+    // A crash between the refile claim and the new record: the claim names an id that is in no record.
+    const box = await sandbox();
+    const store = storeIn(box);
+    await mkdir(join(store, REFILED_DIR), { recursive: true, mode: 0o700 });
+    const old = "3f2c1a9e-5b7d-4e8f-9a0b-1c2d3e4f5a6b";
+    const never = "9d8c7b6a-5f4e-4d3c-8b2a-1f0e9d8c7b6a";
+    await writeFile(
+      join(store, `${old}.json`),
+      JSON.stringify({
+        schema: PROPOSAL_SCHEMA, id: old, subject: SUBJECT, at: "2026-09-29T08:00:00.000Z",
+        what: "rotate the logs", why: "the disk is full", impact: "files older than a year",
+        supersedes: null, changed: null,
+        decision: { outcome: "approved", at: "2026-09-29T09:00:00.000Z", by: "the owner", note: null },
+        usedByTurn: "turn-that-sent-nothing", usedAt: "2026-09-29T10:00:00.000Z", sentNothing: true,
+      }),
+    );
+    await writeFile(
+      join(store, REFILED_DIR, `${old}.json`),
+      JSON.stringify({ schema: REFILE_SCHEMA, proposal: old, as: never, at: "2026-09-29T11:00:00.000Z" }),
+    );
+
+    const result = await run(box, ["proposal", "new", SOUL, "--subject", SUBJECT, "--refile", old]);
+
+    expect(result.code).toBe(REPEATED);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain(
+      `ohmyagi: the refile of ${old} was used up by an attempt that did not finish; file the same text with ` +
+        "`ohmyagi proposal new`. Nothing was filed.",
+    );
+    expect(result.stderr).not.toContain("filed again already");
+    expect(result.stderr).not.toContain(never);
+    expect((await readdir(store)).filter((name) => name.endsWith(".json"))).toEqual([`${old}.json`]);
+  }, 60_000);
+
+  test("a turn that answered and then threw says it ran, not that it may have (D-144 follow-up)", async () => {
+    // The answer is known the moment the backend's `run` returns it. Anything
+    // that throws after that — here the after-snapshot a level-2 turn takes,
+    // made to throw by a plugin preloaded into the CLI — must not turn "it ran"
+    // into "it may have run": the owner would check for an action that did happen
+    // as if it might not have.
+    const box = await sandbox();
+    const ollama = serveOllama();
+    try {
+      const agent = join(box.home, "agent", "soul");
+      await cp(SOUL, agent, { recursive: true });
+      const work = join(box.home, "work");
+      await mkdir(work, { recursive: true });
+      for (const category of ["write", "run", "reach"]) {
+        const set = await run(box, ["autonomy", "set", category, "2", agent, "--subject", SUBJECT]);
+        expect(set.code, set.stderr).toBe(0);
+      }
+      const filed = await run(box, [
+        "proposal", "new", agent, "--subject", SUBJECT,
+        "--what", "Reply with the token t5threw and nothing else.", "--why", "because the disk is full", "--impact", "files older than a year",
+      ]);
+      const id = filed.stdout.trim();
+      await run(box, ["proposal", "decide", id, agent, "--subject", SUBJECT, "--approve"]);
+
+      const preload = join(box.home, "snapshot-throws.ts");
+      await writeFile(
+        preload,
+        `import { plugin } from "bun";
+plugin({
+  name: "the second snapshot throws",
+  setup(build) {
+    build.onLoad({ filter: /[\\\\/]src[\\\\/]decide[\\\\/]report\\.ts$/ }, async (args) => {
+      const text = await Bun.file(args.path).text();
+      const contents =
+        text.replace("export async function snapshotTree(", "async function realSnapshotTree(") +
+        "\\nlet snapshotCalls = 0;\\nexport async function snapshotTree(...args) { snapshotCalls += 1; " +
+        "if (snapshotCalls === 2) throw new Error('the after-snapshot failed (test)'); return realSnapshotTree(...args); }\\n";
+      return { contents, loader: "ts" };
+    });
+  },
+});
+`,
+      );
+      const child = Bun.spawn(
+        [BUN, "run", "--preload", preload, BIN, "turn", agent, "--subject", SUBJECT,
+          "--backend", "ollama", "--model", "stub", "--proposal", id],
+        { cwd: work, env: { ...box.env, OLLAMA_HOST: ollama.url }, stdin: "ignore", stdout: "pipe", stderr: "pipe" },
+      );
+      const stderr = await new Response(child.stderr).text();
+      await new Response(child.stdout).text();
+      await child.exited;
+
+      // The plugin took: the snapshot really threw after the answer arrived.
+      expect(stderr).toContain("the after-snapshot failed (test)");
+      expect(child.exitCode).not.toBe(0);
+      expect(ollama.prompts).toHaveLength(1);
+      const record = await Bun.file(join(storeIn(box), `${id}.json`)).json();
+      expect(stderr).toContain(`proposal ${id} was spent by this turn (${record.usedByTurn}) and it ran — ollama answered.`);
+      expect(stderr).not.toContain("may have run");
+      expect(record.sentNothing).toBeUndefined();
+    } finally {
+      await ollama.server.stop(true);
+    }
+  }, 60_000);
+
+  test("a turn whose request reached a backend that did not answer says it may have run (D-144 review)", async () => {
+    const box = await sandbox();
+    let asked = 0;
+    // Up, and failing the one request it is handed — a vendor CLI that crashed
+    // mid-turn looks the same from here, and may have acted before it did.
+    const failing = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname === "/api/tags") return Response.json({ models: [{ name: "stub" }] });
+        asked += 1;
+        return new Response("boom", { status: 500 });
+      },
+    });
+    try {
+      const filed = await file(box, "Reply with the token t5maybe and nothing else.");
+      await run(box, ["proposal", "decide", filed.id, SOUL, "--subject", SUBJECT, "--approve"]);
+      const result = await run(
+        box,
+        [
+          "turn", SOUL, "--subject", SUBJECT,
+          "--backend", "ollama", "--model", "stub", "--proposal", filed.id,
+        ],
+        { OLLAMA_HOST: `http://127.0.0.1:${failing.port}` },
+      );
+      expect(result.code).toBe(1);
+      expect(asked).toBe(1);
+      const record = await Bun.file(join(storeIn(box), `${filed.id}.json`)).json();
+      const last = result.stderr.trimEnd().split("\n").at(-1)!;
+      expect(last).toBe(
+        `ohmyagi: proposal ${filed.id} was spent by this turn (${record.usedByTurn}) and it may have run — the request ` +
+          `reached ollama before the turn failed. Check what it did before asking for it again: a second approval would run it again.`,
+      );
+      expect(result.stderr).not.toContain("file it again (");
+      // It may have run, so it is not offered to be filed again either.
+      expect(record.sentNothing).toBeUndefined();
+      const refused = await run(box, ["proposal", "new", SOUL, "--subject", SUBJECT, "--refile", filed.id]);
+      expect(refused.code).toBe(4);
+      expect((await readdir(storeIn(box))).filter((name) => name.endsWith(".json"))).toEqual([`${filed.id}.json`]);
+    } finally {
+      await failing.stop(true);
     }
   }, 60_000);
 

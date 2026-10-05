@@ -30,6 +30,7 @@ import { cmdEval } from "./commands/eval.ts";
 import { cmdBasis } from "./commands/basis.ts";
 import { cmdAutonomy } from "./commands/autonomy.ts";
 import { cmdBackends } from "./commands/backends.ts";
+import { cmdBrowser } from "./commands/browser.ts";
 import { cmdDeploy } from "./commands/deploy.ts";
 import { cmdDoctor } from "./commands/doctor.ts";
 import { cmdErase } from "./commands/erase.ts";
@@ -102,7 +103,7 @@ async function main(rawArgv: readonly string[]): Promise<number> {
   //
   // `help` itself is excluded so that `ohmyagi help --help` is still the whole
   // help text rather than the one line describing `help`.
-  if (command !== "help" && asksForHelp(rest)) {
+  if (command !== "help" && asksForHelp(rest, command)) {
     const block = helpFor(USAGE, command);
     if (block !== undefined) {
       console.log(block);
@@ -205,6 +206,9 @@ async function main(rawArgv: readonly string[]): Promise<number> {
 
     case "stop":
       return cmdStop(rest);
+
+    case "browser":
+      return cmdBrowser(rest);
 
     case "help":
     case "--help":

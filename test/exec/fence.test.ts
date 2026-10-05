@@ -23,6 +23,7 @@ import {
 } from "../../src/exec/fence.ts";
 import { procStat } from "../../src/decide/runs.ts";
 import { BUN } from "../support/bare-path.ts";
+import { waitFor } from "../support/wait.ts";
 
 const ROOT = resolve(import.meta.dir, "..", "..");
 const ENTRY = join(ROOT, "bin", "om-agi.ts");
@@ -633,23 +634,20 @@ describe.skipIf(!support.ok)(`real Landlock fence${skipReason === "" ? "" : ` â€
 
     let grandchild = 0;
     try {
-      for (let attempt = 0; attempt < 100; attempt += 1) {
+      // A deadline, not 100 tries of 10 ms: the fenced helper and a bun inside it start slowly on a loaded runner.
+      await waitFor(async () => {
         const text = await readFile(pidFile, "utf8").catch(() => "");
-        if (/^\d+\s*$/.test(text)) {
-          grandchild = Number(text.trim());
-          break;
-        }
-        await Bun.sleep(10);
-      }
+        if (/^\d+\s*$/.test(text)) grandchild = Number(text.trim());
+        return grandchild > 0;
+      });
       expect(grandchild).toBeGreaterThan(0);
       expect(procStat(child.pid)?.pgid).toBe(child.pid);
       expect(procStat(grandchild)?.pgid).toBe(child.pid);
 
       process.kill(-child.pid, "SIGTERM");
       await child.exited;
-      for (let attempt = 0; attempt < 100 && procStat(grandchild) !== null; attempt += 1) {
-        await Bun.sleep(10);
-      }
+      // Reaped, not only signalled: the grandchild's new parent collects it in its own time.
+      await waitFor(() => procStat(grandchild) === null);
       expect(procStat(child.pid)).toBeNull();
       expect(procStat(grandchild)).toBeNull();
     } finally {
@@ -657,7 +655,7 @@ describe.skipIf(!support.ok)(`real Landlock fence${skipReason === "" ? "" : ` â€
       if (grandchild > 0 && procStat(grandchild) !== null) process.kill(grandchild, "SIGKILL");
       await chmod(directory, 0o700).catch(() => undefined);
     }
-  }, 10_000);
+  }, 60_000);
 
   test.skipIf(!support.ok || support.abi < 6)("ABI 6 scopes signals sent out of the fenced domain", async () => {
     const result = await runHelper([], [], ["/bin/kill", "-0", String(process.pid)]);

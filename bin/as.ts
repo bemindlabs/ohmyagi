@@ -19,7 +19,7 @@ import {
 } from "./commands/soul.ts";
 import { TURN_BOOLEANS } from "./commands/turn.ts";
 import { WORN_BOOLEANS } from "./commands/worn.ts";
-import { parseArgs, report, usageError } from "./shared.ts";
+import { parseArgs, report, takesVerbatimAfterDashes, usageError } from "./shared.ts";
 
 /**
  * What `--as` has to supply for one command, and how to read that command's
@@ -136,6 +136,12 @@ export async function expandAs(argv: readonly string[]): Promise<AsExpansion> {
   const rest: string[] = [];
   for (let index = 0; index < argv.length; index++) {
     const token = argv[index]!;
+    // For `memory ask` only, a bare `--` ends the options: `--as=…` after it is its question (D-152). Every
+    // other command reads `--as` wherever it sits, as it always has.
+    if (token === "--" && takesVerbatimAfterDashes(argv[0] ?? "", argv[1])) {
+      rest.push(...argv.slice(index));
+      break;
+    }
     if (token === "--as") {
       const value = argv[index + 1];
       if (value === undefined || value.startsWith("--")) {

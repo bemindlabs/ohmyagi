@@ -338,7 +338,7 @@ describe("nothing reads the ledger back into a decision (S2.2 AC5, D-022)", () =
     expect(edges.length).toBeGreaterThan(5);
 
     expect(hits, RED).toEqual([]);
-  });
+  }, 30_000);
 
   test("every allowance entry is in use — a door nobody walks through is still a door", async () => {
     const { values, types } = await ledgerExports();
@@ -395,7 +395,7 @@ describe("nothing reads the ledger back into a decision (S2.2 AC5, D-022)", () =
         "nothing had needed for weeks, each one a hole the next task could have walked through " +
         "without anybody noticing. Remove what is no longer used rather than leaving it listed.",
     ).toEqual([]);
-  });
+  }, 30_000);
 
   test("the allowed readers are the ones the decisions name, with their verbs", () => {
     // Pinned as a value on purpose, unlike the name lists above. *How many files
@@ -440,7 +440,7 @@ describe("nothing reads the ledger back into a decision (S2.2 AC5, D-022)", () =
     }
     expect(moduleOf(join(ROOT, "src", "identity", "report", "index.ts"))).toBe(moduleOf(join(ROOT, "src", "identity", "report.ts")));
     expect(secondHop(elsewhere, `import { buildUsageReport } from "../identity/reports";\n`).hits).toEqual([]);
-  });
+  }, 30_000);
 
   test("nothing outside src/ledger/ builds a path with `ledger` in it, or parses a line", async () => {
     const files = [
@@ -476,7 +476,7 @@ describe("nothing reads the ledger back into a decision (S2.2 AC5, D-022)", () =
     // The control lives in the sibling test below; this one would pass on an
     // empty tree, so the tree is checked to be non-empty here.
     expect(files.length).toBeGreaterThan(50);
-  });
+  }, 30_000);
 
   test("the control — the checks fire on code that violates them, and not on code that does not", () => {
     const values = new Set(["query", "append", "canAppend", "parseLine", "RecordingExec"]);

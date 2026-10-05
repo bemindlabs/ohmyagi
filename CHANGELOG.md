@@ -1,5 +1,287 @@
 # Changelog
 
+## 0.10.0 — 2026-10-05
+
+An approved proposal runs once, even when two turns start together, and a spent approval can be filed again
+only when nothing was sent (D-144, refile). Turns that finish together are all recorded, and a killed turn's
+ledger lock no longer stops every turn after it (D-145). You can ask your memory a question and get a summary
+with its sources, never the file pasted back (D-152). A real-backend e2e suite proves the agent acts — writes,
+runs, levels, the fence and `stop` — and the stop-inside-the-turn case holds on a slow, loaded machine. The dial
+gains an `operate` category with a fixed sensitive-actions list, and an approval is bound to the action it was
+given for (D-153). The E17 browser runtime — a per-task browser container and one Playwright MCP for every CLI —
+ships as internal plumbing, not yet reachable from turns; tasks will use it next (D-151, D-155). And the suite is
+stable on a slow CI runner: tests wait on conditions, and process tests carry explicit timeouts.
+
+### Fixed — the browser runtime, after its review (PR #19)
+- **A page's dialogs are judged before they are accepted.**
+  - A password-like `prompt` is held.
+  - Accepting a `confirm` is held: it commits whatever the page asked.
+  - `alert` and leaving the page are not held.
+  - A held dialog is dismissed, and dismissing always works.
+- **Only web URLs are opened.**
+  - `browser_navigate` and `browser_tabs` take `http:`, `https:` or `about:blank` and nothing else. This happens at
+    the guard, and again at `page.goto` in the container.
+  - A `javascript:` URL could run page code, and a `data:` page could post to an allowed origin.
+  - The action log keeps a URL's origin only.
+- **The container's guard enforces the operate level.** `browser up --operate 1|2` (default 1) sets it. At 1 the
+  guard serves only the look tools, to any caller.
+- **A login form's submit is held whatever its button says.** This adds a `credentials.login-submit` rule to
+  D-153's list.
+- **`up` waits for the browser behind the guard,** not just for the guard.
+- **Only om-agi can drive a task's browser.**
+  - Playwright MCP moved behind a guard that needs a per-task bearer token. claude gets the token through its MCP
+    config's `headers`, in a file of mode 600.
+  - The container takes the guard's port only from the docker gateway. Another container on the bridge reaches
+    neither port.
+  - The guard serves 21 tools. `browser_run_code_unsafe`, `browser_evaluate`, `browser_file_upload` and
+    `browser_drop` are refused and hidden.
+- **The operate level decides the tools.** `Restraint` now carries the turn's operate level (D-153). Operate 1
+  approves look tools only, 2 adds click and type, and 0 is refused. Tools are approved one by one.
+- **Sensitive actions are held in the container.** D-153's list (`src/decide/sensitive.ts`) is bundled into the
+  image as `sensitive.cjs`, and a test keeps the two equal. It is asked before every click, keystroke, select or
+  upload. Paying, sending, deleting, credentials and accepting terms do not happen, and the model is told why
+  (`held.jsonl`).
+- **The deadline holds.** It runs as root with KILL only (plus what dropping needs), so the browser's uid cannot stop
+  it. Every `up` and `status` also ends a record past its deadline.
+- **`erase` reaches browser tasks.** Their records and wiring live under the subject. `erase` docker-kills the
+  subject's containers first and counts a refused kill as a failure.
+- **No typed password in the recording.**
+  - A password field is held before a keystroke, and a context's trace stops before any.
+  - Playwright MCP's session log is off. The guard's action log keeps lengths, not values.
+  - Files are 600 and directories 700. Each context gets its own trace name.
+- **Smaller fixes.**
+  - `up` refuses while the brake is on.
+  - Records are created exclusively, and a lost port race moves on to the next port.
+  - Only `docker-init` and the deadline keep any capability, measured.
+  - The proxy has upstream timeouts and documents its limits (CONNECT host and port only; the first address).
+
+### Added — a per-task browser container and one Playwright MCP for every CLI: the runtime only, not yet reachable from turns (E17, D-151, D-155)
+- **`docker/browser/`: one task's browser.**
+  - Headless Chromium and the pinned Playwright MCP (`@playwright/mcp@0.0.83`).
+  - It runs as the owner's uid with every capability dropped, `no-new-privileges`, a read-only root, and memory,
+    pid and CPU limits.
+  - The MCP port is published on `127.0.0.1` only (30730–30749).
+  - The one host mount is the task's output directory.
+  - Chromium runs `--no-sandbox`, because the container is the fence; the Dockerfile says why.
+  - The image is built on this machine and never pushed. Its tag carries a digest of the directory, so an edit
+    means a rebuild.
+- **Egress only to the task's origins.**
+  - A proxy in the container lets through `scheme://host:port` origins from the allowlist and nothing else.
+  - It refuses a public name that resolves to a private, loopback, link-local, CGNAT or multicast address.
+  - Every decision is logged.
+  - The container's own firewall drops every packet not sent by the proxy's group, so a socket opened around the
+    proxy goes nowhere.
+  - Allowlist entries are origins only: no paths, no wildcards, default ports written out (`src/browser/allowlist.ts`).
+- **Recording** goes to the subject's `personal/browser/<task>/`, so `erase` reaches it:
+  - a live Playwright trace, which survives a kill;
+  - a screenshot after every page load;
+  - Playwright MCP's session log;
+  - the egress log.
+  - It is kept until the owner erases it.
+- **`ohmyagi browser up|down|status|mcp-config`** (internal).
+  - A record is written before `docker run`.
+  - `ohmyagi stop` gained step 4: `docker kill` on every browser task of this state root.
+  - A sweep on every `up` and `status` ends a container whose owner process is gone (pid and start time), a container
+    nothing records, and a record whose container is gone.
+  - The container's own deadline (`--ttl`, default 30 min) ends it if nothing sweeps.
+- **One MCP server per turn, from om-agi's own config** (`src/browser/mcp-config.ts`, D-155).
+  - `TurnRequest.browser` makes `CliExec` hand claude and claude-local `--mcp-config <om-agi file>`
+    (`--strict-mcp-config` stays on) and approve that server's tools.
+  - The local chain's fence gains exactly the container's port.
+  - grok and grok-local, kimi and codex are refused, each with the reason measured on this machine.
+    grok-local's reason: it offers MCP only through the meta-tools D-119 removes.
+  - Nothing in `ohmyagi turn` sets `browser` yet: the `operate` dial (D-153) will decide when.
+- **Real-backend e2e:** `OM_AGI_E2E_BROWSER=1 bun run e2e:browser` (`notes/2026-10-05_browser-runtime-e2e.md`).
+  - A claude-local turn in the fence read a random heading from a page the test served, and was refused the
+    forbidden one (7/7).
+  - Cloud claude (haiku) did the same.
+  - Proxy and kernel refusals were checked without a model.
+  - `stop` killed the container, and a SIGKILLed owner's container was swept.
+  - Nothing was left in `docker ps -a`.
+### Added — the `operate` dial category, a fixed sensitive-actions list, and approvals bound to the action (E17, D-153)
+- **`operate`, the browser.** A fifth dial category, beside read, write, run and reach. It runs at
+  `min(operate, reach)`: 0 no browser · 1 looks, then proposes · 2 acts only on the task's allowed sites, recorded
+  and reported · 3 any site, confirmed by the typed phrase at a terminal on this machine (D-042; in force when reach
+  is at its top, as D-047 reads level 3 for files). It is not part of a turn's acting level, so its default of 0
+  silences nothing. Shown by `ohmyagi autonomy`, on the web page (Home and Settings) and in `/api/state` and
+  `/api/settings`, in English and Thai. Nothing drives a browser yet (S17.7–S17.8).
+- **Dial files migrate by being read.** `autonomy.md` is now `om-agi/autonomy@2` with `operate` required; an `@1`
+  file is read as written with operate 0, and the next `autonomy set` writes it back at `@2`.
+- **`src/decide/sensitive.ts`.** Paying, sending a message or e-mail, deleting, entering a credential and accepting
+  terms wait for a yes at every level. The list is frozen, its classifier takes the action and nothing else, and
+  `test/decide/sensitive.test.ts` holds every category and rule that has shipped — removing one fails it. Not wired
+  to a browser yet.
+- **An approval runs exactly what it approved** (e2e finding 6). A proposal records its action (`{kind: "turn",
+  prompt: what}`) and its digest; `proposal decide --approve` writes the digest into the decision; `turn --proposal
+  <id>` builds the prompt from the record. A different `--prompt` or `--prompt-file`, a `--history-json`, or a
+  record changed after the yes is refused (exit 4) with nothing sent and the approval unspent. `/api/turn` passes
+  only the id, and the page sends only the id. D-144's once-only claim is unchanged; the claim now names the
+  action digest.
+- **An approval that names no action is refused**, with "approve it again" — one given before this, or one whose
+  digest was stripped. A "legacy" path would have let an edit (what changed, `action` and the digest deleted) run
+  as an old approval (review of PR #18, measured). **What the digest is:** it catches a record that changed after
+  the yes; it does not stop somebody determined to edit the record — it is a plain sha256 in the same file, and
+  anything that can write the state root (a vendor CLI runs as the owner) can recompute it. The same limit D-042
+  states for level-3 confirmations.
+- **Steps that commit without saying what pause too:** a generic submit, Enter (or a chord with Enter) or typing
+  that submits, and Confirm/OK/Proceed — unless the context is a search (a search box, or a form whose role is
+  `search`). OAuth allow/authorize/grant is a credentials rule. Patterns are held as source strings and compiled
+  fresh per call: a frozen `RegExp` is not enough in Bun, where `compile()` swaps the pattern before the frozen
+  `lastIndex` write throws.
+- **Level 3 of `operate`** is said as "operate 3, confirmed at a terminal, with reach at its top", never as a
+  minimum of 3 (the owner confirmed this reading, D-153 amended 2026-10-05).
+
+### Fixed — ask your memory: a question covered in part is answered in part, `--` is `memory ask`'s alone, and each ask's recall is kept as numbers (D-152 follow-up)
+- **Partial answers.** `NOT_IN_MEMORY` is now for a question the excerpts say nothing about; covered in part, the
+  part is answered and the gap named. A reply that opens with the token and then answers (80+ letters, or a handed
+  path) is read as an answer; an inline token becomes "not in memory" / "ไม่มีใน memory" — no "Retention: ." is left.
+  A closing reminder after the pieces names the question's language. Measured: the Thai two-part question went from
+  4/8 to 5/5 on qwen3.8 27B (5/5 on claude-local throughout); 69/70 asks over five full e2e runs, the canary never read.
+- **`ohmyagi stop -- --help` does nothing again.** Only `memory ask` reads the words after a bare `--` as a value
+  (its question); every other command still answers `--help`/`-h` and reads `--as` wherever they sit.
+- **Each ask's recall, in numbers** — `<personal dir>/ask/recall.jsonl`: how many pieces were recalled, kept and
+  handed, the best vector cosine, the floor, and whether a model was asked. No text. So the 0.50 cosine floor can be
+  re-checked on a real memory.
+- **Thai terms are words.** The full-text half's "two terms of the question" rule counts Thai words cut by ICU
+  (`Intl.Segmenter`), less question words, instead of overlapping 4-character windows.
+
+### Added — ask your memory: a summary with its sources, never the file pasted back (D-152)
+- **`ohmyagi memory ask <agent-dir> --subject <id> [--scope all|memory|knowledge] [--json] [--] <question…>`.** The
+  owner, 2026-10-04: RAG in the app should answer with a summary, not by quoting files back. The question gets an
+  answer the agent writes from what recall finds — the same recall a turn makes — in the question's language, then
+  a list of sources (file and section). The model is told to summarize, quote at most a short phrase, cite its
+  sources, and answer with a token when the pieces do not cover the question; the engine then says "There is
+  nothing in memory about this." / "ใน memory ไม่มีเรื่องนี้" itself. After `--` the question is words, never a flag.
+- **Accounted for as a turn is.** The same route rule and D-095 split (a backend on this machine is handed every
+  piece, a cloud backend only the pieces the egress filter passes — a cloud CLI every piece is held from is not
+  asked at all), the same egress door and block log, one ledger line per backend handed the question (priced as a
+  turn), and a run record so `ohmyagi stop` reaches an ask in progress.
+- **No tools at all, at any dial level, and no proposal.** Only backends whose read-only flags leave no tool —
+  claude's empty `--tools ""`, so claude and claude-local — and ollama (no tools by construction) answer. grok and
+  grok-local keep read_file/grep/list_dir even read-only, and a memory note could point them at `~/.secrets`, so
+  they are left out until an empty grok tool list is measured. A vendor whose only identity channel is a file
+  (codex, gemini, copilot, kimi) could not be handed the pieces and is left out too; both are said.
+- **Only pieces about the question are handed over.** A piece only the vector half found needs a bge-m3 cosine of
+  0.50 (calibrated: on-topic 0.562–0.713, off-topic 0.255–0.467 on the e2e set); a full-text piece needs two of the
+  question's terms. Nothing left = no model, no ledger line. Recall hits now carry the vector cosine; a turn's
+  recall is otherwise unchanged.
+- **Sources are what the answering backend was handed**, one per file and section in recall's order — never parsed
+  from the model's text; when the answer names handed files by path, only those are listed. Nothing recalled: no model is asked and nothing is recorded. Exit 2 for an empty question or
+  one over 2000 characters, exit 3 when neither index could be searched. The model step has 3 minutes
+  (`ASK_TIMEOUT_MS`, sized for a model on this machine); an answer is cut at 8000 characters.
+- **`POST /api/memory-ask {question, scope?}` → `{ok, answer, sources: [{path, title?, section?}], found, backend,
+  model}`**, plus `local`, `held`, `pieces` (excerpts, for a "show the pieces" toggle) and `searched`. The same key
+  and Host checks as every route; the question is handed over after `--`; one ask per agent at a time, held until
+  the child has exited even when the asker stopped waiting (a second is 409); the child is ended after
+  `MEMORY_ASK_TIMEOUT_MS` (4 minutes, 504) — SIGTERM to its group, SIGKILL 10 s later if it is still there; inside, a
+  vendor that ignores its stop is ended by `CliExec`'s own SIGKILL round (PR #12). `/api/memory-search` stays for the views that show raw pieces.
+- **The web page's "Search by meaning"** now asks: "Searching your memory…", then the summary, where it came from,
+  and each source as a link that opens the file in Read. The pieces it read are behind "Show the pieces it read",
+  closed by default. `/search` in the chat asks too, and says its sources as text (D-086).
+- **A bare `--` ends the options everywhere it is read first:** `--help`/`-h` and `--as=…` after it are words a
+  command was handed, not a request for help or an identity.
+- **Proved on a real model on this machine** (`OM_AGI_E2E_MEMORY_ASK=1 bun run e2e:memory-ask`, D-149): ollama
+  (qwen3.8 27B through LiteLLM) and claude-local (`local-coder`), English and Thai, plus a canary in `~/.secrets`
+  that a memory note asks for — 10 of 10, the canary never read. See
+  `notes/2026-10-04_memory-ask-e2e.md`.
+### Added — a real-backend e2e that proves the agent acts, and two fixes it found (D-149)
+- **`bun run e2e:actions`** (with `OM_AGI_E2E_ACTIONS=1`) runs `test/e2e/actions.e2e.ts` against the backends this
+  machine really has. The cases are: write and run at level 2, propose then approve-once at level 1, refusal at
+  level 0, the kernel fence on local backends (a write outside the work directory, and connects to two listeners
+  the test opens), and `ohmyagi stop` on a running action. Each case checks the real outcome: the file, the
+  command's output, the listener's count, the process table, D-043's report and the ledger line. Every backend
+  gets a throwaway agent in a temporary state root. `bun test` and CI never discover the file. The results of
+  2026-10-04 are in `notes/2026-10-04_e2e-actions.md`, and the survey of what each backend and model could do
+  next (computer use, tasks) is in `notes/2026-10-04_capability-survey.md`.
+- **Fixed: `ohmyagi stop` now stops a vendor tool's shell that runs in a session of its own.** grok runs every
+  shell command under `setsid`. `stop` signalled the vendor's group, said "everything this record named is gone",
+  and the command finished its action afterwards. Measured: `sleep 37 && printf late > file` wrote the file after
+  `stop` exited 0. `stop` now reads the whole process tree of the turn before signalling anything. Each group in
+  the tree is signalled when that is safe, and whatever no group signal reached is signalled one process at a time.
+  Every process in the tree is watched for D-044's SIGKILL, so a member that ignores SIGTERM after its leader died
+  is killed too. A `stop` run from inside the turn (by the agent or a script) is never signalled, and its group is
+  never addressed as a group. It finishes and says it was spared. A turn that times out or is cancelled ends the
+  same tree the same way. A pid whose parent started after it is not counted as that parent's child.
+- `turn --json` has a `notes` list (today: the no-tools note below), and `/api/turn` passes it on in `notes`.
+- **Fixed: a backend with no tools no longer looks as if it acted.** At level 2, ollama answered "done" to "create
+  a file", and the turn exited 0 with nothing done. The turn now says that ollama has no tools, and that nothing
+  it says it did was done.
+
+### Fixed — turns that finish together are all recorded, and a killed turn's ledger lock no longer stops every turn after it (D-145)
+- **The ledger's lock refused instead of waiting.** Every turn appends after its answer has come back, and the
+  lock threw the moment it was taken, so of two turns that finished together one exited "sent and not recorded".
+  Measured on 0.9.0: two real turns at once lost a line in every round; eight lost 21 of 24. And a turn killed
+  while holding the lock (`ohmyagi stop` during the fsync) left `.lock` behind, after which every turn was sent
+  and not recorded until somebody removed it by hand.
+- **It waits now** — up to 5 s, backing off from 5 to 50 ms — and only for a lock that is held; any other error
+  is reported as itself. Eight turns at once, six rounds: 48 of 48 recorded.
+- **The lock names its owner** (`.lock/owner.<uuid>.json`: pid, host, start time) **and a dead owner's lock is
+  broken — only on evidence**: its process is gone from this machine or started before its last boot, or the
+  lock is more than 10 minutes old. An ownerless `.lock`, which is how an older om-agi holds it, after 2 s.
+  Breaking removes that owner's file by name and then the empty directory, so two waiters cannot both break it
+  and both go in, and nothing is ever removed recursively.
+- **`turn` finds out before sending.** Its ledger check takes the lock once with the same wait: a lock somebody
+  alive holds past it refuses the turn with nothing sent — under `--proposal`, before the approval is claimed —
+  and a killed turn's lock is cleared there, so the next turn starts clean.
+- **A refused turn no longer tells anyone to delete the ledger.** It used to end every ledger refusal with "…or
+  delete the ledger directory if you want a fresh one", which loses the record of every turn and does not help
+  with a lock at all. A held lock now says another turn is writing — try again in a moment, and that a lock left
+  by a stopped turn clears by itself. A path that cannot be written says to fix what it names (permissions,
+  something in the way, a full or read-only disk). Something in the lock's way that om-agi did not make is named
+  at once instead of being waited on as if it were a lock.
+- **After the send, a turn's line waits a minute for the lock, not five seconds.** `canAppend` still gives up
+  after 5 s, before anything is sent; a lock that becomes held between that check and the line written once a
+  backend has answered (a `forget`, a slow disk) is waited out for 60 s, because giving up then loses the record of
+  something that happened. Only that line: the chat and A2A lines written *before* a reply or a delivery keep
+  5 s, since a longer wait there only stalls the reply, or outlasts an A2A sender's 30 s timeout so that it reports
+  a failure the receiver then delivers anyway.
+- **`erase` knows which machine it is on.** It judged every lock by age alone: a killed turn's lock could stop
+  an erase for ten minutes, and a killed erase left a lock naming no machine that refused every turn for as long.
+  Both are now cleared at once once their process is gone.
+- **A long hold is not mistaken for an abandoned one.** A holder touches its owner file while it holds the lock,
+  and the ten-minute rule counts from the last touch, so a `forget` of a big ledger is never broken mid-way; a
+  process that is stopped or wedged stops touching it and is broken as before.
+
+### Fixed — an approved proposal runs once, even when two turns start together (D-144)
+- **Two taps on "Do it now" ran the approved action twice.** `turn --proposal <id>` checked that the approval
+  was unspent at the start and marked it spent much later, with nothing between the two; two turns started
+  together (two taps on the web page, or the app's "Run now" beside it) both found it unspent and both ran it.
+  Measured on the old code: three turns at once, two prompts reached the backend.
+- **Checked and claimed in one step, as the last step before the prompt goes.** The approval is still read
+  early (missing, pending, refused or spent stops the turn before anything is written). Then the ledger, the
+  model and route, recall and the price file are all asked, and only then is the approval read again and claimed:
+  `proposals/spent/<id>.json` is created with `link(2)` from a claim written whole and synced, so exactly one
+  process succeeds on any number of them and every other is refused (exit 4, nothing sent) with the turn that has
+  it. A turn that stops for anything that is not about the proposal — an unwritable ledger, a model or route it
+  cannot use — spends nothing. There is no lock to go stale: the claim is the spend. Every reader of the store
+  folds the claims in. A filesystem without hard links is named as the reason nothing was claimed.
+- **A turn that fails after its claim keeps the approval spent (the owner's decision), and says what happened,**
+  as its last line: it **ran** (a backend answered — do not file it again), it **may have run** (the request
+  reached a backend that did not answer — check what it did), or **nothing was sent**. Only in the last case can
+  it be asked for again: **`proposal new --refile <id>`**, or **"File it again"** on the web page, files a new
+  proposal from the old one's own record — same what, why and impact, a new id, waiting for a new yes. Nothing is
+  approved or run by filing it, and it can be filed again once.
+- **`ohmyagi web`:** one turn per proposal at a time — a second `/api/turn` for a proposal still running is
+  answered **409** "Already running" and starts no CLI. A proposal id that is not one is **400**, not an ordinary
+  turn with the same prompt. A turn under an approval that failed with no answer returns why as its `error`, and
+  the page shows a failed turn's notes beside its answer. "Do it now" is off from the click until the turn
+  returns, also across the page's redraws; "File it again" likewise, and it sends only the id.
+- **The proposal store** rewrites a record at the file it was read from, never at a path built from the `id`
+  inside it, and refuses a record whose id is not one plain file name (a hand-edited `../../escaped` used to be
+  written outside `proposals/`). It reads only `*.json` names, so a write in flight or a `.bak` copy is not a
+  second record to spend.
+
+### Fixed — filing a spent approval again is once across processes too; "it ran" is known when the answer arrives (D-144)
+- **Six `--refile` at once filed six proposals** — each process read the store before any wrote. The refile is now
+  claimed like a spend, `proposals/refiled/<old id>.json` linked into place before the new record is written: six
+  at once file one, and five exit 5 ("filed again already, as <id>"; 409 on the page). A crash between the claim
+  and the write uses the refile up rather than ever filing two; the same what can still be filed by hand — and
+  asking again then says exactly that ("used up by an attempt that did not finish; file the same text with
+  `ohmyagi proposal new`") instead of "filed again already, as" an id no record has.
+- **A turn that answered and then threw said "it may have run".** The answer is now recorded the moment a
+  backend's run returns it, so anything failing afterwards leaves "it ran — <backend> answered".
+- **A refile keeps who first filed it:** `filedBy` and `fromTurn` come over from the old record.
+
 ## 0.9.0 — 2026-09-28
 
 The agent's own signing key, and the first thing it signs: a usage report (S15.8, D-108, D-106, D-138). Then

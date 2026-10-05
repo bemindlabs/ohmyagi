@@ -21,6 +21,7 @@ import { chatDirFor } from "../../src/connectors/users.ts";
 import { pushDirFor } from "../../src/web/push-dir.ts";
 import { identityDirFor } from "../../src/identity/dir.ts";
 import { basisDirFor } from "../../src/consent/basis.ts";
+import { browserDirFor } from "../../src/browser/paths.ts";
 import { dataMap, subjectTrees } from "../../src/erase/map.ts";
 import { planErase } from "../../src/erase/plan.ts";
 import { backupTree } from "../../src/erase/soul.ts";
@@ -41,6 +42,7 @@ describe("S7.1 — every place om-agi keeps a subject's data is in the erase pla
         "backups (soul apply)": backupTree(env, SUBJECT),
         "level-3 confirmations (D-042)": confirmationsDirFor(env, SUBJECT),
         "run records (S5.4)": runsDirFor(env, SUBJECT),
+        "browser task records and their MCP config (D-151)": browserDirFor(env, SUBJECT),
         "trigger fire times (S5.3)": triggersDirFor(env, SUBJECT),
         "A2A peers (D-063)": a2aDirFor(env, SUBJECT),
         "chat allowlist (D-066)": chatDirFor(env, SUBJECT),
@@ -132,6 +134,7 @@ describe("the data map is one list, and erase and deploy read the same one", () 
       confirmations: "stays",
       "rag-marker": "rebuilt",
       runs: "stays",
+      browser: "stays",
       triggers: "stays",
       a2a: "copied",
       chat: "copied",

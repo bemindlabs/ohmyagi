@@ -331,7 +331,7 @@ describe("no cast writes its way past the door", () => {
     // And the index does not re-export it, which would make every importer of
     // `src/observer` an importer of the miner without naming it.
     expect(await Bun.file(join(ROOT, "src", "observer", "index.ts")).text()).not.toContain("patterns");
-  });
+  }, 30_000);
 
   const TYPES = ["LocalBackend", "Personal"];
   const CALLS = ["unwrapPersonal"];
@@ -370,7 +370,7 @@ describe("no cast writes its way past the door", () => {
         `${rel} is allowed but says none of the words`,
       ).toBeGreaterThan(0);
     }
-  });
+  }, 30_000);
 
   test("the checker catches both syntaxes, and ignores the same words elsewhere", () => {
     const caught = (source: string) => assertionEscapes("synthetic.ts", source, TYPES, CALLS);

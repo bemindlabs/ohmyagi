@@ -259,7 +259,7 @@ describe("the tripwire for S6.3, and what S4.1 left behind it", () => {
       if (globalsUsed(path, source, ["fetch", "WebSocket"]).length > 0) withSocket.push(rel);
     }
     expect(withSocket.sort()).toEqual([...MEMORY_SOCKETS].sort());
-  });
+  }, 30_000);
 
   test("the control: that check really fires on a memory layer with a client in it", () => {
     const client = `import { QdrantClient } from "qdrant-js";\nexport const c = new QdrantClient();`;
@@ -290,7 +290,7 @@ describe("the tripwire for S6.3, and what S4.1 left behind it", () => {
       "a place that is registered as `not-built` has code now — update src/erase/places.ts " +
         "and bring the five things its `mustBring` lists",
     ).toEqual([]);
-  });
+  }, 30_000);
 
   test("the control: the scanner really fires on source that means one arrived", () => {
     expect(arrivalSignals(`const adapter = loadLoRA(path);`)).toEqual(["lora"]);

@@ -13,6 +13,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { stateRoot, STATE_DIR_MODE, STATE_FILE_MODE } from "../state.ts";
 import { notLoopbackLiteral } from "../loopback.ts";
+import { browserFence, browserPortProblem } from "../browser/mcp-config.ts";
 import type { Availability, ExecBackend, IdentityStrength, TurnRequest, TurnResult } from "./backend.ts";
 import { CliExec, extractUsage } from "./cli-exec.ts";
 import { vendor, type GrantSpec, type VendorSpec } from "./registry.ts";
@@ -446,11 +447,13 @@ export class LocalCliExec implements ExecBackend {
     const cwd = request.cwd ?? this.currentDirectory();
     const writable = [this.paths.home, this.paths.scratch];
     if (request.restraint.loosened) writable.push(cwd);
+    const fence = { writable, tcpPorts: [this.port] };
     return {
       ...request,
       cwd,
       env: {},
-      fence: { writable, tcpPorts: [this.port] },
+      // D-155: a turn with a task's browser may also connect to that one port.
+      fence: request.browser === undefined ? fence : browserFence(fence, request.browser.port),
     };
   }
 
@@ -474,6 +477,9 @@ export class LocalCliExec implements ExecBackend {
     if (loopbackProblem !== undefined || this.port < 1 || this.port > 65_535) {
       return refuse(`refused local backend: ${loopbackProblem ?? "the LiteLLM URL has no usable TCP port"}`);
     }
+
+    const browserProblem = request.browser === undefined ? undefined : browserPortProblem(request.browser.port);
+    if (browserProblem !== undefined) return refuse(`refused local backend: ${browserProblem}`);
 
     const keyPath = liteLLMKeyFile(this.ownerHome, this.environment);
     if (!isAbsolute(keyPath)) {

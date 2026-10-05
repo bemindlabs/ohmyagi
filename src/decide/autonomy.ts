@@ -56,8 +56,20 @@
 import { parseFrontmatter } from "../soul/frontmatter.ts";
 import type { SoulIssue, Validated } from "../soul/schema.ts";
 
-/** Schema tag `autonomy.md` must carry. Bumped when the shape changes. */
-export const AUTONOMY_SCHEMA = "om-agi/autonomy@1";
+/**
+ * Schema tag `autonomy.md` is written with. Bumped when the shape changes.
+ *
+ * `@2` added `operate` (D-153). A file still at {@link AUTONOMY_SCHEMA_V1} is
+ * read, and its missing `operate` is **0** — no browser. That is the one
+ * default this file allows, because it is the lowest level there is: a file
+ * written before the category existed cannot have meant to hand the agent a
+ * browser, and reading it as 0 loosens nothing. The next `autonomy set` writes
+ * the file back at `@2`, with every category named.
+ */
+export const AUTONOMY_SCHEMA = "om-agi/autonomy@2";
+
+/** The schema before `operate` existed. Read, never written. */
+export const AUTONOMY_SCHEMA_V1 = "om-agi/autonomy@1";
 
 /** Filename holding the dial, at the root of an agent repository. */
 export const AUTONOMY_FILE = "autonomy.md";
@@ -82,11 +94,23 @@ export type Level = 0 | 1 | 2 | 3;
  */
 export type ReachLevel = 0 | 1 | 2;
 
-/** The four AC2 asks for, in the order every report prints them. */
-export type Category = "read" | "write" | "run" | "reach";
+/**
+ * The four AC2 asks for, in the order every report prints them, and `operate`
+ * (D-153): whether the agent may use a browser, and how far.
+ *
+ * `operate` is **not** one of the categories a turn's acting level is the
+ * minimum of ({@link actLevel}). It governs a different hand — the browser the
+ * engine gives a task (D-150, D-151, D-155) — and its own effective level is
+ * {@link operateLevel}, `min(operate, reach)`. Folding it into `actLevel` would
+ * have made its default of 0 silence every turn an existing agent runs.
+ */
+export type Category = "read" | "write" | "run" | "reach" | "operate";
 
-/** Every category, in AC2's order. Closed, so a fifth is a `tsc` error. */
-export const CATEGORIES: readonly Category[] = ["read", "write", "run", "reach"];
+/** Every category, in print order. Closed, so a sixth is a `tsc` error. */
+export const CATEGORIES: readonly Category[] = ["read", "write", "run", "reach", "operate"];
+
+/** The categories a turn's acting level is the minimum of. `read` is not one (see {@link actLevel}). */
+export const ACTING: readonly ["write", "run", "reach"] = ["write", "run", "reach"];
 
 /** What each level means, in the backlog's own words plus what om-agi does. */
 export const LEVEL_MEANING: Readonly<Record<Level, string>> = Object.freeze({
@@ -94,6 +118,28 @@ export const LEVEL_MEANING: Readonly<Record<Level, string>> = Object.freeze({
   1: "เสนอ — the turn runs carrying the vendor's read-only flag",
   2: "ทำแล้วรายงาน — the turn runs with the read-only flag taken off",
   3: "ทำเลย — the turn runs with the read-only flag taken off",
+});
+
+/**
+ * What each `operate` level means (D-153), in English and in Thai, because the
+ * owner reads both and the page and the CLI print both.
+ *
+ * Level 3 is "any origin", and it needs the phrase at a terminal on this
+ * machine, the same as every 3 (D-042). Every level, 3 included, still stops
+ * for a yes before anything on the sensitive-actions list
+ * (`src/decide/sensitive.ts`): payment, sending, deleting, credentials, terms.
+ */
+export const OPERATE_MEANING: Readonly<Record<Level, { readonly en: string; readonly th: string }>> = Object.freeze({
+  0: { en: "no browser", th: "ไม่ใช้เบราว์เซอร์" },
+  1: { en: "looks, then proposes — it does not click or type (D-045)", th: "ดูแล้วเสนอ — ไม่คลิก ไม่พิมพ์" },
+  2: {
+    en: "acts only on the task's allowed sites, recorded and reported (D-043)",
+    th: "ทำได้เฉพาะเว็บที่งานอนุญาต บันทึกและรายงาน",
+  },
+  3: {
+    en: "acts on any site — confirmed by a typed phrase at a terminal on this machine (D-042)",
+    th: "ทำได้ทุกเว็บ — ต้องพิมพ์ยืนยันที่ terminal บนเครื่องนี้",
+  },
 });
 
 /**
@@ -117,6 +163,10 @@ export const CATEGORY_ENFORCEMENT: Readonly<Record<Category, string>> = Object.f
   reach:
     "the same one bit for a turn, plus the egress notice, which has no off switch at any level " +
     "(src/exec/egress.ts). Capped at 2 by its type: see ReachLevel.",
+  operate:
+    "nothing yet — no browser is wired to a turn (E17 S17.7–S17.8). The level is recorded, " +
+    "shown, and read by operateLevel(), which is what the browser layer will ask. It is " +
+    "min(operate, reach), so reach is the door here too.",
 });
 
 /** Who set a level, and when. Both null until somebody sets one. */
@@ -140,6 +190,8 @@ export interface Dial extends DialProvenance {
   readonly write: Level;
   readonly run: Level;
   readonly reach: ReachLevel;
+  /** D-153 — the browser. 0 for every agent until somebody raises it. */
+  readonly operate: Level;
 }
 
 /**
@@ -156,6 +208,9 @@ export const DEFAULT_DIAL: Dial = Object.freeze({
   write: 1,
   run: 1,
   reach: 1,
+  // D-153: no browser until somebody says so. The other four reproduce what
+  // om-agi did before the dial; this one has no "before" to reproduce.
+  operate: 0,
   setBy: null,
   setAt: null,
 } as const);
@@ -173,6 +228,7 @@ export const SILENT_DIAL: Dial = Object.freeze({
   write: 0,
   run: 0,
   reach: 0,
+  operate: 0,
   setBy: null,
   setAt: null,
 } as const);
@@ -203,6 +259,8 @@ export function levelOf(dial: Dial, category: Category): Level {
       return dial.run;
     case "reach":
       return dial.reach;
+    case "operate":
+      return dial.operate;
   }
 }
 
@@ -234,10 +292,28 @@ export function actLevel(dial: Dial): Level {
  * reads as a setting om-agi ignored.
  */
 export function heldBy(dial: Dial): readonly Category[] {
-  const acting = ["write", "run", "reach"] as const;
   const act = actLevel(dial);
-  if (acting.every((category) => dial[category] === act)) return [];
-  return acting.filter((category) => dial[category] === act);
+  if (ACTING.every((category) => dial[category] === act)) return [];
+  return ACTING.filter((category) => dial[category] === act);
+}
+
+/**
+ * The level the browser runs at (D-153): `min(operate, reach)`, with level 3
+ * read the way D-047 reads it for files.
+ *
+ * `reach` can never be 3 ({@link ReachLevel}, I-6), so a bare minimum could
+ * never reach 3 either, and "any origin" would be a level nobody could set.
+ * The answer is the one `restrain()` already gives for `unfenced`: level 3 is
+ * in force when `operate` itself is 3 — which {@link import("./effective.ts")
+ * .effectiveDial} only lets stand once it was confirmed at a terminal on this
+ * machine (D-042) — and `reach` is at its top. Below that, it is the minimum.
+ *
+ * Give it the **effective** dial, never the stored one: the confirmation, the
+ * ceiling and the brake are applied there.
+ */
+export function operateLevel(dial: Dial): Level {
+  const floor = Math.min(dial.operate, dial.reach) as Level;
+  return floor === 2 && dial.operate === 3 ? 3 : floor;
 }
 
 /**
@@ -259,6 +335,7 @@ export function serializeDial(dial: Dial, body = ""): string {
     `write = ${dial.write}`,
     `run = ${dial.run}`,
     `reach = ${dial.reach}`,
+    `operate = ${dial.operate}`,
   ];
   if (dial.setBy !== null) lines.push("", `set_by = ${JSON.stringify(dial.setBy)}`);
   if (dial.setAt !== null) {
@@ -310,7 +387,9 @@ export function parseDial(file: string, text: string): Validated<Dial> {
   const issues: SoulIssue[] = [];
 
   const schema = table["schema"];
-  if (schema !== AUTONOMY_SCHEMA) {
+  // A file from before `operate` (D-153) is read, with no browser. See AUTONOMY_SCHEMA.
+  const v1 = schema === AUTONOMY_SCHEMA_V1;
+  if (schema !== AUTONOMY_SCHEMA && !v1) {
     issues.push({
       file,
       line: lineOf("schema"),
@@ -322,6 +401,21 @@ export function parseDial(file: string, text: string): Validated<Dial> {
   const levels: Partial<Record<Category, number>> = {};
   for (const category of CATEGORIES) {
     const raw = table[category];
+    if (v1 && category === "operate") {
+      if (raw !== undefined) {
+        issues.push({
+          file,
+          line: lineOf(category),
+          path: category,
+          message:
+            `operate is not a key of ${AUTONOMY_SCHEMA_V1}. A file that names it says ` +
+            `schema = ${JSON.stringify(AUTONOMY_SCHEMA)}, so it is plain which reading was meant.`,
+        });
+        continue;
+      }
+      levels.operate = 0;
+      continue;
+    }
     if (raw === undefined) {
       issues.push({
         file,
@@ -384,6 +478,7 @@ export function parseDial(file: string, text: string): Validated<Dial> {
       write: levels.write as Level,
       run: levels.run as Level,
       reach: levels.reach as ReachLevel,
+      operate: levels.operate as Level,
       setBy,
       setAt,
     },

@@ -32,6 +32,7 @@ import {
   CATEGORIES,
   CATEGORY_ENFORCEMENT,
   LEVEL_MEANING,
+  OPERATE_MEANING,
   confirmationsPath,
   disarm,
   isLevel,
@@ -59,7 +60,7 @@ import { ERR, OUT, parseArgs, readPhrase, usageError, type Sink } from "../share
 
 const AUTONOMY_USAGE =
   "usage: ohmyagi autonomy show [<dir> --subject <id>]\n" +
-  "       ohmyagi autonomy set <read|write|run|reach> <0-3> <dir> --subject <id>\n" +
+  "       ohmyagi autonomy set <read|write|run|reach|operate> <0-3> <dir> --subject <id>\n" +
   "       ohmyagi autonomy resume";
 
 /**
@@ -77,9 +78,10 @@ export function sayDial(out: Sink, verdict: DialVerdict, vendors: readonly Vendo
   for (const category of CATEGORIES) {
     const set = levelOf(verdict.stored, category);
     const now = levelOf(effective.dial, category);
+    const meaning = category === "operate" ? `${OPERATE_MEANING[now].en} · ${OPERATE_MEANING[now].th}` : LEVEL_MEANING[now];
     out.line(
-      `  ${category.padEnd(6)} set ${set}   in force ${now}` +
-        `${set === now ? "  " : " ← lowered"}   ${LEVEL_MEANING[now]}`,
+      `  ${category.padEnd(7)} set ${set}   in force ${now}` +
+        `${set === now ? "  " : " ← lowered"}   ${meaning}`,
     );
     out.line(out.dim(`         enforced by: ${CATEGORY_ENFORCEMENT[category]}`));
   }
@@ -93,13 +95,26 @@ export function sayDial(out: Sink, verdict: DialVerdict, vendors: readonly Vendo
           ? " — no turn will run at all."
           : " — the vendor's read-only flag is sent, which is what om-agi has always done."),
   );
+  // Level 3 is not a minimum — reach never passes 2 (I-6) — so it is said as what it is (D-153, as D-047).
+  out.line(
+    (effective.operate === 3
+      ? `  the browser runs at 3 — operate 3, confirmed at a terminal, with reach at its top (2) — `
+      : `  the browser runs at min(operate, reach) = ${effective.operate} — `) +
+      `${OPERATE_MEANING[effective.operate].en} · ${OPERATE_MEANING[effective.operate].th}`,
+  );
+  out.line(
+    out.dim(
+      "  at every level it stops for a yes before paying, sending a message or e-mail, deleting, " +
+        "entering a credential, or accepting terms (src/decide/sensitive.ts).",
+    ),
+  );
 
   if (effective.clamps.length > 0) {
     out.line("");
     out.line(out.bold("Numbers that do not mean what they say:"));
     for (const clamp of effective.clamps) {
       out.line(
-        `  ${(clamp.category ?? "every category").padEnd(6)} set ${clamp.set}, in force ` +
+        `  ${(clamp.category ?? "every category").padEnd(7)} set ${clamp.set}, in force ` +
           `${clamp.effective} — ${clamp.why}`,
       );
     }
@@ -270,7 +285,7 @@ async function cmdSet(argv: readonly string[]): Promise<number> {
           `where you can type: ${phrase}`,
       );
     }
-    ERR.line(`Setting ${category} to 3 — ${LEVEL_MEANING[3]}.`);
+    ERR.line(`Setting ${category} to 3 — ${category === "operate" ? OPERATE_MEANING[3].en : LEVEL_MEANING[3]}.`);
     ERR.line("");
     sayDial(ERR, before);
     ERR.line("");
@@ -304,7 +319,11 @@ async function cmdSet(argv: readonly string[]): Promise<number> {
   }
   const after = await decideDial(dir, dialEnv(), place.subject);
 
-  OUT.line(`${path}: ${category} is now ${level} — ${LEVEL_MEANING[level as Level]}`);
+  const meaning =
+    category === "operate"
+      ? `${OPERATE_MEANING[level as Level].en} · ${OPERATE_MEANING[level as Level].th}`
+      : LEVEL_MEANING[level as Level];
+  OUT.line(`${path}: ${category} is now ${level} — ${meaning}`);
   OUT.line(
     `recorded as set by ${next.setBy} at ${next.setAt} (AC4). It is in git: \`git diff\` shows ` +
       `the change and \`git clone\` carries it.`,

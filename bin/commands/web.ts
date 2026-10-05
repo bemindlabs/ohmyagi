@@ -6,15 +6,16 @@
  */
 
 import { firedPath, nextDue, parseTriggers, readFired, triggersDirFor, TRIGGERS_FILE } from "../../src/decide/triggers.ts";
-import { proposalsDir, readProposals } from "../../src/decide/proposals.ts";
+import { proposalsDir, readProposals, refileable } from "../../src/decide/proposals.ts";
 import { readTriage, typesafeKey } from "../../src/decide/triage.ts";
 import { engineCommand } from "../../src/guard/hooks.ts";
 import { query } from "../../src/ledger/store.ts";
 import { loadSoul } from "../../src/soul/load.ts";
 import { runGuarded } from "../../src/spawn.ts";
+import { runWithDeadline } from "../../src/web/deadline.ts";
 import { subjectId, type SubjectId } from "../../src/types.ts";
 import { startWeb, tailnetNames } from "../../src/web/server.ts";
-import { ago, excerpt, levelSentence, remoteForPage, triageChips, type AgentInfo, type PrivacyState, type SettingsState, type ViewState } from "../../src/web/view.ts";
+import { ago, excerpt, levelSentence, operateSentence, remoteForPage, triageChips, type AgentInfo, type PrivacyState, type SettingsState, type ViewState } from "../../src/web/view.ts";
 import { basisDirFor, readBasis, recordState } from "../../src/consent/basis.ts";
 import { listMemories, memoryGraph, readMemoryFile, whoMentions } from "../../src/web/memories.ts";
 import { keyPrint, loadOrCreateKey, replaceKey } from "../../src/web/key.ts";
@@ -96,10 +97,16 @@ async function gather(dir: string, id: SubjectId, options: ReadonlyMap<string, s
       subject: id,
       dir,
     },
-    autonomy: { ...level, levels: { read: verdict.effective.dial.read, write: verdict.effective.dial.write, run: verdict.effective.dial.run, reach: verdict.effective.dial.reach } },
+    autonomy: {
+      ...level,
+      levels: { read: verdict.effective.dial.read, write: verdict.effective.dial.write, run: verdict.effective.dial.run, reach: verdict.effective.dial.reach, operate: verdict.effective.dial.operate },
+      operate: operateSentence(verdict.effective.operate),
+    },
     stopped: verdict.effective.stopped,
     waiting,
     approved,
+    // D-144 §2 — the rule is the store's (`refileProblem`), the same one `proposal new --refile` asks.
+    refileable: refileable(inventory).map((p) => ({ id: p.id, what: p.what, spent: p.usedAt === null ? "" : ago(p.usedAt, now) })),
     triggers,
     recent,
     canTriage: (await typesafeKey(process.env)) !== undefined,
@@ -274,7 +281,8 @@ async function gatherSettings(dir: string, id: SubjectId, options: ReadonlyMap<s
   const backends = await Promise.all(allBackends().map(async (b) => ({ id: b.id, available: (await b.available()).ok })));
   const check = await readCheck(stateRoot(homedir(), process.env));
   return {
-    levels: { read: dial.read, write: dial.write, run: dial.run, reach: dial.reach },
+    levels: { read: dial.read, write: dial.write, run: dial.run, reach: dial.reach, operate: dial.operate },
+    operate: operateSentence(verdict.effective.operate),
     stopped: verdict.effective.stopped,
     backends,
     defaultTurn: { backend: options.get("backend") ?? null, model: options.get("model") ?? null },
@@ -405,9 +413,14 @@ export async function cmdWeb(argv: readonly string[]): Promise<number> {
         count: async (key) => (await subscriptionsFor(pushDir, key)).length,
         clear: (key) => forgetEverything(pushDir, key, relayFetch),
       },
-      run: async (args) => {
-        const out = await runGuarded([...engineCommand().argv, ...args]);
-        return { code: out.code, stdout: new TextDecoder().decode(out.stdout), stderr: out.stderr };
+      run: async (args, runOptions) => {
+        if (runOptions?.timeoutMs === undefined) {
+          const out = await runGuarded([...engineCommand().argv, ...args]);
+          return { code: out.code, stdout: new TextDecoder().decode(out.stdout), stderr: out.stderr };
+        }
+        // D-152: a deadline — SIGTERM to the child's group, SIGKILL after the grace (src/web/deadline.ts).
+        const out = await runWithDeadline([...engineCommand().argv, ...args], runOptions.timeoutMs);
+        return { code: out.code, stdout: out.stdout, stderr: out.stderr, timedOut: out.timedOut };
       },
     },
     {

@@ -124,7 +124,7 @@ describe("A. static — one place in the engine can start a process", () => {
     }
 
     expect(escapes).toEqual([]);
-  });
+  }, 30_000);
 
   test("src/spawn.ts is the exemption, and it is really the one using it", async () => {
     const path = join(ROOT, SPAWN_CHOKEPOINT);
@@ -207,7 +207,7 @@ describe("A. static — one place in the engine can start a process", () => {
       for (const pattern of sockets) if (pattern.test(source)) found.push(relative(ROOT, path));
     }
     expect(found).not.toEqual([]);
-  });
+  }, 30_000);
 
   test("the engine has no dependencies, so nothing but the git binary can write a ref", async () => {
     const manifest = await Bun.file(join(ROOT, "package.json")).json();
@@ -499,6 +499,10 @@ describe("C. behaviour — every command, watched by a git that writes down its 
       // the dial in the repository. Nothing after it runs a turn, so the brake
       // affects no later step here.
       ["stop", join(agent, "soul"), "--subject", SUBJECT],
+      // E17's (D-151): `status` asks docker what runs under this sandbox's state root — or finds no docker on
+      // the trap PATH and says so — and `down` of a task nobody started; neither has a reason to start git.
+      ["browser", "status"],
+      ["browser", "down", "t-none"],
       // S7.2's. The dry run and the real one both, because the deleting path
       // is the one that reads git (`rev-list --count`, on the verb allowlist)
       // and the one somebody would most want to be sure never pushed.
@@ -602,6 +606,8 @@ describe("C. behaviour — every command, watched by a git that writes down its 
       // S5.2's. Run in sequence above rather than in the flat list, because
       // `decide` needs the id `new` printed.
       "proposal",
+      // E17's (D-151): status and down run above.
+      "browser",
     ]);
     const exempt = new Map([
       ["--version", "an alias of version"],

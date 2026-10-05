@@ -23,10 +23,12 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CliExec, extractReply, extractUsage, reportedModels, unfinished } from "../../src/exec/cli-exec.ts";
+import { procStat, type ProcStat } from "../../src/decide/runs.ts";
 import { modelArgs, restraintArgs, vendor, type ModelSpec, type ReadOnlySpec, type VendorSpec } from "../../src/exec/registry.ts";
 import { subjectId } from "../../src/types.ts";
 import { BUN } from "../support/bare-path.ts";
-import { atLevel, LOOSENED, RESTRAINED } from "../support/restraint.ts";
+import { ended, ignores, procState, waitFor } from "../support/wait.ts";
+import { atLevel, LOOSENED, operating, RESTRAINED } from "../support/restraint.ts";
 
 /** Level 0 — the dial says do not run this turn at all. */
 const SILENT = atLevel(0);
@@ -64,6 +66,16 @@ if (mode === "unauthenticated") {
 
 // Alive until somebody kills it.
 if (mode === "hang") {
+  setTimeout(() => process.exit(0), 600000);
+} else if (mode === "detach") {
+  // A tool's command in a session of its own, the way grok runs every shell
+  // command (setsid, D-149 e2e) — then alive until somebody kills it.
+  const tool = Bun.spawn(
+    ["setsid", "sh", "-c", (process.env["OM_AGI_STUB_DEAF"] ? "trap '' TERM; " : "") + 'sleep "$OM_AGI_STUB_SLEEP"; echo late > "$OM_AGI_STUB_LATE"'],
+    { stdin: "ignore", stdout: "ignore", stderr: "ignore", env: process.env },
+  );
+  require("node:fs").writeFileSync(process.env["OM_AGI_STUB_PIDFILE"], String(tool.pid));
+  tool.unref();
   setTimeout(() => process.exit(0), 600000);
 } else {
   const seen = {
@@ -760,6 +772,66 @@ describe("CliExec.run", () => {
     expect(result.text).toBe("");
     expect(result.evidence.raw).toContain("timed out after 250ms");
   }, 10_000);
+
+  test.skipIf(Bun.which("setsid") === null).each([
+    ["dies on SIGTERM", false],
+    ["ignores SIGTERM, and gets SIGKILL before run returns (D-044)", true],
+  ] as const)(
+    "a timed-out turn ends what its vendor started in a session of its own, which %s (D-149 review)",
+    async (_name, deaf) => {
+      // Longer than the 1.5 s timeout plus the 4 s grace when it ignores SIGTERM, so that its file appearing
+      // could only mean the SIGKILL never came.
+      const nap = deaf ? 7 : 4;
+      // The grok shape: the vendor's tool runs its command under setsid, so it
+      // leads a group of its own, and a signal to the vendor's group misses it.
+      // Before the fix it outlived the timeout, re-parented to init, and wrote
+      // its file after the turn had come back as timed out.
+      const home = await tempHome();
+      const pidFile = join(home, "tool.pid");
+      const late = join(home, "late.txt");
+      const running = new CliExec(stubSpec(binary)).run({
+        restraint: RESTRAINED,
+        subject: SUBJECT,
+        prompt: "anything",
+        timeoutMs: 1_500,
+        env: { HOME: home, OM_AGI_STUB_MODE: "detach", OM_AGI_STUB_PIDFILE: pidFile, OM_AGI_STUB_LATE: late, OM_AGI_STUB_SLEEP: String(nap), ...(deaf ? { OM_AGI_STUB_DEAF: "1" } : {}) },
+      });
+
+      // The stub writes the pid as soon as it has spawned `setsid sh -c …`, which is before setsid has made the
+      // session and before the shell has run its `trap`. So wait for the shape itself — its own group, and SIGTERM
+      // ignored when that is the case — rather than for the file, and give up only at a deadline: the turn's own
+      // 1.5 s timeout ends the wait sooner if the tool never gets there.
+      let tool: ProcStat | null = null;
+      let settled = false;
+      void running.finally(() => (settled = true));
+      await waitFor(async () => {
+        const text = await readFile(pidFile, "utf8").catch(() => "");
+        const now = /^\d+$/.test(text) ? procStat(Number(text)) : null;
+        if (now === null || now.pgid !== now.pid) return settled;
+        if (deaf && !ignores(now.pid, 15)) return settled;
+        tool = now;
+        return true;
+      });
+      // The shape this case is about, checked rather than assumed: its own group.
+      expect(tool, "the tool never led a session of its own before the turn timed out").not.toBeNull();
+      expect(tool!.pgid).toBe(tool!.pid);
+
+      const result = await running;
+      expect(result.confidence).toBe("silent");
+      expect(result.evidence.raw).toContain("timed out after 1500ms");
+
+      // Ended by the time run() returned — gone, reused, a zombie its new parent has not reaped yet, or with
+      // SIGKILL already pending in the kernel. Asked at once and not polled: a SIGKILL left to a timer after
+      // `turn` exits is a SIGKILL never sent. (It used to sleep 100 ms and ask whether the /proc entry was gone,
+      // which a slow reaper fails and a late timer could pass.)
+      expect(ended(tool!.pid, tool!.startTicks), JSON.stringify(procState(tool!.pid))).toBe(true);
+      // And its action never happens: the sleep it was waiting on is over by now.
+      await Bun.sleep(nap * 1_000);
+      expect(await readFile(late, "utf8").catch(() => null)).toBeNull();
+    },
+    // 1.5 s timeout + 4 s grace + a 7 s nap is 12.5 s of timers before any load; 20 s left a loaded runner no room.
+    60_000,
+  );
 
   test("an aborted turn comes back rather than hanging on the timeout", async () => {
     const controller = new AbortController();
@@ -1478,5 +1550,76 @@ describe("reportedModels — what a CLI's output says it ran (D-142)", () => {
     expect(reportedModels(spec, out({}))).toEqual([]);
     // A notice line before the document is still read past, as for the reply.
     expect(reportedModels(spec, `update available\n${out({ "claude-opus-5": {} })}`)).toEqual(["claude-opus-5"]);
+  });
+});
+
+const TOKEN = "ab".repeat(32);
+
+describe("a turn handed a task's browser (D-155)", () => {
+  test("claude gets the one-server config with the task's token, the strict switch, and operate 1's look tools only", async () => {
+    const dir = await tempHome();
+    const exec = new CliExec(stubSpec(binary, { id: "claude" }));
+    const result = await exec.run({
+      subject: subjectId("browser-wired"),
+      prompt: "open the page",
+      restraint: operating(1),
+      browser: { port: 30_735, dir, token: TOKEN, operate: 2 },
+    });
+    expect(result.confidence).toBe("confirmed");
+    const argv = seen(result.text).argv;
+    const config = join(dir, "claude-mcp.json");
+    expect(argv.slice(-2)).toEqual(["--mcp-config", config]);
+    expect(argv).toContain("--strict-mcp-config");
+    const allowed = argv[argv.indexOf("--allowedTools") + 1]!.split(",");
+    expect(allowed).toContain("mcp__om-agi-browser__browser_navigate");
+    expect(allowed).not.toContain("mcp__om-agi-browser__browser_click");
+    expect(allowed).not.toContain("mcp__om-agi-browser");
+    expect(JSON.parse(await readFile(config, "utf8"))).toEqual({
+      mcpServers: {
+        "om-agi-browser": { type: "http", url: "http://127.0.0.1:30735/mcp", headers: { Authorization: `Bearer ${TOKEN}` } },
+      },
+    });
+    expect(argv.join(" ")).not.toContain(TOKEN);
+    expect((await stat(config)).mode & 0o777).toBe(0o600);
+  });
+
+  test("a vendor with no measured way to take only om-agi's server is refused, and nothing runs", async () => {
+    const dir = await tempHome();
+    const result = await new CliExec(stubSpec(binary, { id: "kimi" })).run({
+      subject: subjectId("browser-refused"),
+      prompt: "open the page",
+      restraint: operating(1),
+      browser: { port: 30_735, dir, token: TOKEN, operate: 2 },
+    });
+    expect(result.confidence).toBe("silent");
+    expect(result.evidence.raw).toContain("refused: no browser for kimi");
+    expect(await readdir(dir)).toEqual([]);
+  });
+
+  test("a config that cannot be written refuses the turn", async () => {
+    const home = await tempHome();
+    const blocker = join(home, "a-file");
+    await writeFile(blocker, "x");
+    const result = await new CliExec(stubSpec(binary, { id: "claude" })).run({
+      subject: subjectId("browser-unwritable"),
+      prompt: "open the page",
+      restraint: operating(1),
+      browser: { port: 30_735, dir: join(blocker, "below"), token: TOKEN, operate: 2 },
+    });
+    expect(result.confidence).toBe("silent");
+    expect(result.evidence.raw).toContain("the browser's MCP config could not be written");
+  });
+
+  test("a turn whose operate level is 0 gets no browser, and nothing runs", async () => {
+    const dir = await tempHome();
+    const result = await new CliExec(stubSpec(binary, { id: "claude" })).run({
+      subject: subjectId("browser-operate-0"),
+      prompt: "open the page",
+      restraint: RESTRAINED,
+      browser: { port: 30_735, dir, token: TOKEN, operate: 2 },
+    });
+    expect(result.confidence).toBe("silent");
+    expect(result.evidence.raw).toContain("operate is 0");
+    expect(await readdir(dir)).toEqual([]);
   });
 });

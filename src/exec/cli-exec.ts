@@ -23,8 +23,9 @@ import { dirname, isAbsolute } from "node:path";
 import { expandPath, modelProblem, type ReadOnlySpec, type UsageSpec, type VendorSpec } from "./registry.ts";
 import { restraintRefusal } from "./restraint.ts";
 import { fencedArgv, fenceSupport, type FencePolicy, type FenceSupport } from "./fence.ts";
-import { procStat } from "../decide/runs.ts";
+import { procStat, signalSurvivors, signalTree, type ProcStat } from "../decide/runs.ts";
 import { spawnGuarded } from "../spawn.ts";
+import { browserWiring, withBrowserArgs, writeBrowserWiring } from "../browser/mcp-config.ts";
 import { tokenCount, UNREPORTED_USAGE, USAGE_FIELDS, type TurnModel, type Usage, type UsageField } from "../types.ts";
 
 /** Wall-clock ceiling for one turn when the caller names none. */
@@ -338,30 +339,38 @@ export function extractUsage(spec: VendorSpec, stdout: string, stderr: string): 
   return usage.shape === "json" ? jsonUsage(usage, stream) : textUsage(usage, stream);
 }
 
+/** How long a timed-out or cancelled turn's processes get after SIGTERM before SIGKILL — D-044's grace. */
+const KILL_AFTER_MS = 4_000;
+
 /**
- * End a turn that has run out of time or been cancelled — and reach its
- * grandchildren, which `child.kill()` does not.
+ * End a turn that has run out of time or been cancelled — and reach everything
+ * it started, which `child.kill()` does not.
  *
  * Measured 2026-09-22: `Subprocess.kill()` signals the direct child only. A
  * vendor CLI that has started something of its own survives it with its parent
  * reassigned to init, which is a timeout that reports a stopped turn and leaves
- * a running one. Since {@link CliExec.run} now spawns detached, the child is its
- * own group leader and the whole group can be addressed — but only after that is
- * *checked*, because a negative pid sent to a group om-agi does not lead is the
- * accident this whole change exists to avoid.
+ * a running one. Since {@link CliExec.run} spawns detached, the child is its own
+ * group leader and the whole group can be addressed — but a group is not the
+ * tree: grok runs every shell command under `setsid` (D-149 e2e), so a tool's
+ * command leads a group of its own and outlived the timeout, re-parented to
+ * init, with no run record left to find it. So the tree is signalled the way
+ * `ohmyagi stop` signals it ({@link signalTree}: every group in it, each checked
+ * before it is addressed, and what no group reached one by one), and whatever is
+ * still the same process {@link KILL_AFTER_MS} later gets SIGKILL (D-044).
  */
-function endTurn(child: Bun.Subprocess<"ignore", "pipe", "pipe">): void {
-  const stat = procStat(child.pid);
-  if (stat !== null && stat.pgid === child.pid) {
-    try {
-      process.kill(-child.pid, "SIGTERM");
-      return;
-    } catch {
-      // Gone between the check and the signal, or not permitted. Fall through
-      // to the narrow form, which is never worse than doing nothing.
-    }
+async function endTurn(child: Bun.Subprocess<"ignore", "pipe", "pipe">): Promise<void> {
+  const tree = signalTree(child.pid, "SIGTERM");
+  if (tree.signalled.length === 0) {
+    // Not in `/proc` (gone already, or no `/proc`): the narrow form is never worse than nothing.
+    child.kill();
+    return;
   }
-  child.kill();
+  // Waited out here, and awaited by `run` before it returns: a timer left to fire later does not fire at all
+  // once `turn` exits, and a child that ignores SIGTERM then outlives the timeout (measured in the re-verify
+  // of PR #12). The wait ends early when everything the tree held is gone.
+  const sameProcess = (stat: ProcStat) => procStat(stat.pid)?.startTicks === stat.startTicks;
+  for (let waited = 0; waited < KILL_AFTER_MS && tree.watched.some(sameProcess); waited += 25) await new Promise<void>((resolve) => setTimeout(resolve, 25));
+  if (tree.watched.some(sameProcess)) signalSurvivors(tree, "SIGKILL");
 }
 
 /** A vendor CLI reached as a subprocess. */
@@ -504,7 +513,7 @@ export class CliExec implements ExecBackend {
       }
     }
 
-    const argv = [this.spec.binary, ...this.spec.headlessArgv(model === undefined ? request : { ...request, model })];
+    let argv = [this.spec.binary, ...this.spec.headlessArgv(model === undefined ? request : { ...request, model })];
 
     // Only two vendors accept a system prompt as a flag. For the rest the
     // identity has to already be on disk, and the result says so rather than
@@ -512,6 +521,20 @@ export class CliExec implements ExecBackend {
     const appendFlag = this.spec.identity.appendPromptFlag;
     const carriedAsFlag = request.system !== undefined && appendFlag !== undefined;
     if (carriedAsFlag) argv.push(appendFlag, request.system!);
+
+    // D-155. The task's browser, as the one MCP server this turn is handed — or
+    // no turn: a vendor that cannot be told *only this server* is refused, and
+    // one asked to use a browser does not run without it.
+    if (request.browser !== undefined) {
+      const wiring = browserWiring(this.spec.id, request.browser, request.restraint);
+      if (wiring.status !== "wired") return nothingRan(`refused: no browser for ${this.spec.id}: ${wiring.reason}`);
+      try {
+        await writeBrowserWiring(wiring);
+      } catch (cause) {
+        return nothingRan(`refused: the browser's MCP config could not be written (${String(cause)})`);
+      }
+      argv = withBrowserArgs(argv, wiring);
+    }
 
     let spawnArgv = argv;
     if (request.fence !== undefined) {
@@ -551,12 +574,16 @@ export class CliExec implements ExecBackend {
         detached: true,
       });
 
+      // Kept so `run` returns only after the ending is over, SIGKILL included (D-044).
+      let ending: Promise<void> | undefined;
       const kill = setTimeout(() => {
         timedOut = true;
-        endTurn(child);
+        ending ??= endTurn(child);
       }, timeoutMs);
 
-      const onAbort = () => endTurn(child);
+      const onAbort = () => {
+        ending ??= endTurn(child);
+      };
       request.signal?.addEventListener("abort", onAbort, { once: true });
 
       try {
@@ -569,6 +596,7 @@ export class CliExec implements ExecBackend {
       } finally {
         clearTimeout(kill);
         request.signal?.removeEventListener("abort", onAbort);
+        if (ending !== undefined) await ending;
       }
     } catch (cause) {
       // Spawn itself failed — the binary vanished between `available()` and

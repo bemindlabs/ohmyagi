@@ -29,7 +29,7 @@ import {
 import { dataRoot, stateRoot } from "../../src/state.ts";
 import { subjectId } from "../../src/types.ts";
 import { VERSION } from "../../src/version.ts";
-import { ERR, OUT, parseArgs, printPlaceNotices, report, type Sink, usageError } from "../shared.ts";
+import { ERR, OUT, parseArgs, printPlaceNotices, report, thisMachine, type Sink, usageError } from "../shared.ts";
 
 /**
  * Every value of a repeatable flag, in the order they were typed.
@@ -233,7 +233,7 @@ export async function cmdErase(argv: readonly string[]): Promise<number> {
     ...new Set(instructionTargets.flatMap((target) => (target.kind === "file" ? [target.path, ...target.alsoReads.map((extra) => extra.path)] : []))),
   ];
 
-  const env: EraseEnv = { home, env: process.env, now: () => new Date() };
+  const env: EraseEnv = { home, env: process.env, now: () => new Date(), machine: thisMachine() };
   const plan = await planErase(env, {
     subject: id,
     agentDir,

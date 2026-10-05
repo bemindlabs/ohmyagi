@@ -25,13 +25,15 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { existsSync, realpathSync } from "node:fs";
+import { mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { loadavg, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   RUN_SCHEMA,
   childrenOf,
   describeRun,
+  detachedDescendants,
   livenessOf,
   manualCommand,
   procAvailable,
@@ -41,6 +43,7 @@ import {
   runRecordPath,
   runsDirFor,
   runsRoot,
+  signalTree,
   strangersInGroup,
   terminateRun,
   writeRunRecord,
@@ -48,6 +51,7 @@ import {
   type RunRecord,
 } from "../../src/decide/runs.ts";
 import { subjectId } from "../../src/types.ts";
+import { waitFor as deadline } from "../support/wait.ts";
 
 const SUBJECT = subjectId("example");
 const OTHER = subjectId("somebody-else");
@@ -107,13 +111,11 @@ function mine(pid: number): number {
   return pid;
 }
 
-/** Wait until `done()`, or give up. Bounded to catch a break, never timed. */
-async function until(done: () => boolean, attempts = 200): Promise<boolean> {
-  for (let i = 0; i < attempts && !done(); i += 1) {
-    await Bun.sleep(10);
-  }
-  return done();
-}
+/**
+ * Wait until `done()`, or give up at a deadline. Bounded to catch a break, never timed: 200 tries of 10 ms was a
+ * 2 s budget in disguise, and a loaded runner spends it oversleeping.
+ */
+const until = (done: () => boolean): Promise<boolean> => deadline(done, { every: 10 });
 
 const settle = () => Bun.sleep(10);
 
@@ -443,6 +445,9 @@ describe("terminateRun ends the turn, children first", () => {
       {
         settle,
         attempts: 1,
+        // The stop is somebody else here: this case is about how the turn is addressed, and the
+        // record naming the runner is only the way to have a real detached child under it.
+        stopper: 2 ** 31,
         io: {
           stat: (pid) => (pid === process.pid ? nonLeader : procStat(pid)),
           kill: (pid, signal) => {
@@ -511,6 +516,70 @@ describe("terminateRun ends the turn, children first", () => {
     expect(sent.filter((line) => line.startsWith("SIGKILL"))).toEqual(["SIGKILL -5001"]);
     expect(report.survivors).toEqual([]);
     expect(report.signalled.map((entry) => `${entry.signal} ${entry.pid}`)).toContain("SIGKILL 5001");
+  });
+
+  test("D-149: a vendor tool's shell in a session of its own is stopped too, before the vendor", async () => {
+    // Measured 2026-10-04 (D-149 e2e): grok runs every shell command as `bash`
+    // with setsid, so the shell leads a group of its own. A signal to the
+    // vendor's group missed it, and `sleep … && printf late > file` wrote its
+    // file after `ohmyagi stop` said everything was gone.
+    const env = await sandbox();
+    type Stat = { pid: number; ppid: number; pgid: number; startTicks: number };
+    const table = new Map<number, Stat>([
+      [7000, { pid: 7000, ppid: 1, pgid: 6900, startTicks: 1 }], // om-agi, not a leader
+      [7001, { pid: 7001, ppid: 7000, pgid: 7001, startTicks: 2 }], // the vendor, its own group
+      [7002, { pid: 7002, ppid: 7001, pgid: 7002, startTicks: 3 }], // the tool's shell, setsid
+      [7003, { pid: 7003, ppid: 7002, pgid: 7002, startTicks: 4 }], // the command it runs
+      [7004, { pid: 7004, ppid: 7001, pgid: 7001, startTicks: 5 }], // a helper in the vendor's group
+      [7100, { pid: 7100, ppid: 1, pgid: 7100, startTicks: 6 }], // somebody else's group leader
+    ]);
+    const io = {
+      stat: (pid: number) => (table.get(pid) as never) ?? null,
+      listPids: () => [...table.keys()],
+    };
+
+    // Below the children, own group, descended from the turn: the shell, and only the shell.
+    expect(detachedDescendants(7000, { ...io, kill: () => undefined }).map((stat) => stat.pid)).toEqual([7002]);
+
+    const record: RunRecord = {
+      schema: RUN_SCHEMA, turnId: "d1", subject: SUBJECT, backends: ["grok-local"],
+      pid: 7000, pgid: 6900, pidStart: 1, startedAt: new Date().toISOString(),
+    };
+    const sent: string[] = [];
+    const report = await terminateRun(
+      { path: await writeRunRecord(env, record), record },
+      {
+        settle,
+        attempts: 2,
+        io: {
+          ...io,
+          kill: (pid, signal) => {
+            sent.push(`${signal} ${pid}`);
+            // Each group dies with its signal; the vendor dying first would re-parent the shell.
+            const target = Math.abs(pid);
+            for (const [key, stat] of [...table]) {
+              if (pid < 0 ? stat.pgid === target : key === target) table.delete(key);
+            }
+          },
+        },
+      },
+    );
+
+    expect(sent).toEqual(["SIGTERM -7002", "SIGTERM -7001", "SIGTERM 7000"]);
+    expect(sent.some((line) => line.endsWith("7100"))).toBe(false);
+    expect(report.signalled.find((entry) => entry.pid === 7002)?.how).toBe("group");
+    expect(report.survivors).toEqual([]);
+    expect(table.has(7003)).toBe(false);
+  });
+
+  test("detachedDescendants names nothing for a vendor whose whole tree stays in its group", () => {
+    const table: Record<number, ProcStat> = {
+      8000: { pid: 8000, ppid: 1, pgid: 8000, startTicks: 1 },
+      8001: { pid: 8001, ppid: 8000, pgid: 8001, startTicks: 2 },
+      8002: { pid: 8002, ppid: 8001, pgid: 8001, startTicks: 3 },
+    };
+    const io = { stat: (pid: number) => table[pid] ?? null, kill: () => undefined, listPids: () => [8000, 8001, 8002] };
+    expect(detachedDescendants(8000, io)).toEqual([]);
   });
 
   test("D-044: a process that outlives SIGKILL too is a survivor, with the KILL command", async () => {
@@ -669,7 +738,9 @@ describe("terminateRun ends the turn, children first", () => {
       startedAt: new Date().toISOString(),
     };
 
-    const report = await terminateRun({ path: await writeRunRecord(env, record), record }, { settle });
+    // 400 polls rather than the default 40: the child is real, and 40 × 10 ms is less than a loaded runner can
+    // take to deliver a SIGTERM and reap. The loop stops as soon as it is gone, so a quiet machine waits no longer.
+    const report = await terminateRun({ path: await writeRunRecord(env, record), record }, { settle, attempts: 400 });
 
     expect(report.liveness).toBe("live");
     expect(report.signalled.some((entry) => entry.pid === child.pid && entry.how === "group")).toBe(
@@ -682,3 +753,246 @@ describe("terminateRun ends the turn, children first", () => {
     expect(report.refusal).toBeUndefined();
   });
 });
+
+describe("D-149 review — stop from inside the turn, members that outlive their leader, reused parents", () => {
+  type Stat = { pid: number; ppid: number; pgid: number; startTicks: number };
+
+  /** A fake process table whose signals land: a group signal ends every member, a process signal one. */
+  function fakeMachine(rows: readonly Stat[], ignores: ReadonlySet<number> = new Set()) {
+    const table = new Map<number, Stat>(rows.map((row) => [row.pid, row]));
+    const sent: string[] = [];
+    const io = {
+      stat: (pid: number) => (table.get(pid) as never) ?? null,
+      listPids: () => [...table.keys()],
+      kill: (pid: number, signal: NodeJS.Signals) => {
+        sent.push(`${signal} ${pid}`);
+        const target = Math.abs(pid);
+        for (const [key, stat] of [...table]) {
+          const hit = pid < 0 ? stat.pgid === target : key === target;
+          // SIGKILL cannot be ignored; SIGTERM can.
+          if (hit && (signal === "SIGKILL" || !ignores.has(key))) table.delete(key);
+        }
+      },
+    };
+    return { table, sent, io };
+  }
+
+  test("`ohmyagi stop` run in the vendor tool's setsid shell is never signalled, nor its group as a group", async () => {
+    // Measured by the review on the first fix: the agent (or a script it ran) calls
+    // `ohmyagi stop` inside grok's setsid shell; the stop TERMed that shell's group
+    // first — itself included — died mid-output, and the turn ran on to the end.
+    const env = await sandbox();
+    const { table, sent, io } = fakeMachine([
+      { pid: 7000, ppid: 1, pgid: 6900, startTicks: 1 }, // om-agi, not a leader
+      { pid: 7001, ppid: 7000, pgid: 7001, startTicks: 2 }, // grok, its own group
+      { pid: 7002, ppid: 7001, pgid: 7002, startTicks: 3 }, // the tool's shell, setsid
+      { pid: 7003, ppid: 7002, pgid: 7002, startTicks: 4 }, // `ohmyagi stop` — the stopper
+      { pid: 7005, ppid: 7002, pgid: 7002, startTicks: 5 }, // a background job of that shell
+      { pid: 7010, ppid: 7001, pgid: 7010, startTicks: 6 }, // another tool shell, setsid
+      { pid: 7011, ppid: 7010, pgid: 7010, startTicks: 7 }, // its command
+      { pid: 7100, ppid: 1, pgid: 7100, startTicks: 8 }, // somebody else's
+    ]);
+    const record: RunRecord = {
+      schema: RUN_SCHEMA, turnId: "s1", subject: SUBJECT, backends: ["grok-local"],
+      pid: 7000, pgid: 6900, pidStart: 1, startedAt: new Date().toISOString(),
+    };
+
+    const report = await terminateRun({ path: await writeRunRecord(env, record), record }, { settle, attempts: 2, io, stopper: 7003 });
+
+    // The group that holds no stop is still ended as a group, first; the stop's own
+    // groups (its shell's, grok's) are ended one process at a time, last, deepest first.
+    expect(sent).toEqual(["SIGTERM -7010", "SIGTERM 7005", "SIGTERM 7002", "SIGTERM 7001", "SIGTERM 7000"]);
+    expect(sent.some((line) => line.endsWith(" 7003") || line.endsWith("-7002") || line.endsWith("-7001"))).toBe(false);
+    expect(sent.some((line) => line.endsWith("7100"))).toBe(false);
+    expect(report.spared).toBe(7003);
+    expect(report.survivors).toEqual([]);
+    expect([...table.keys()].sort()).toEqual([7003, 7100]);
+  });
+
+  test("D-044 reaches a member that ignores SIGTERM while its leader dies — in a setsid group and in the vendor's own", async () => {
+    // Measured by the review: the setsid leader died on TERM, a member of its group
+    // ignored it, `stop` said "everything this record named is gone" — it watched
+    // only the processes it had addressed — and the member wrote its file.
+    const env = await sandbox();
+    const { table, sent, io } = fakeMachine(
+      [
+        { pid: 7200, ppid: 1, pgid: 7199, startTicks: 1 }, // om-agi
+        { pid: 7201, ppid: 7200, pgid: 7201, startTicks: 2 }, // the vendor
+        { pid: 7202, ppid: 7201, pgid: 7202, startTicks: 3 }, // setsid shell, dies on TERM
+        { pid: 7203, ppid: 7202, pgid: 7202, startTicks: 4 }, // its command, ignores TERM
+        { pid: 7204, ppid: 7201, pgid: 7201, startTicks: 5 }, // in the vendor's group, ignores TERM
+      ],
+      new Set([7203, 7204]),
+    );
+    const record: RunRecord = {
+      schema: RUN_SCHEMA, turnId: "s2", subject: SUBJECT, backends: ["grok-local"],
+      pid: 7200, pgid: 7199, pidStart: 1, startedAt: new Date().toISOString(),
+    };
+
+    const report = await terminateRun({ path: await writeRunRecord(env, record), record }, { settle, attempts: 2, io });
+
+    expect(sent.filter((line) => line.startsWith("SIGTERM"))).toEqual(["SIGTERM -7202", "SIGTERM -7201", "SIGTERM 7200"]);
+    // Their leaders are gone, so each is killed by itself — after its start time was checked.
+    expect(sent.filter((line) => line.startsWith("SIGKILL")).sort()).toEqual(["SIGKILL 7203", "SIGKILL 7204"]);
+    expect(report.survivors).toEqual([]);
+    expect(table.size).toBe(0);
+  });
+
+  test("a member whose number was reused in between is not killed: its start time changed", async () => {
+    const env = await sandbox();
+    const { table, sent, io } = fakeMachine(
+      [
+        { pid: 7300, ppid: 1, pgid: 7299, startTicks: 1 },
+        { pid: 7301, ppid: 7300, pgid: 7301, startTicks: 2 },
+        { pid: 7302, ppid: 7301, pgid: 7301, startTicks: 3 }, // ignores TERM…
+      ],
+      new Set([7302]),
+    );
+    const record: RunRecord = {
+      schema: RUN_SCHEMA, turnId: "s3", subject: SUBJECT, backends: ["claude"],
+      pid: 7300, pgid: 7299, pidStart: 1, startedAt: new Date().toISOString(),
+    };
+    const kill = io.kill;
+    io.kill = (pid, signal) => {
+      kill(pid, signal);
+      // …and is replaced by an unrelated process under the same number before the KILL round.
+      if (signal === "SIGTERM" && pid === 7300) table.set(7302, { pid: 7302, ppid: 1, pgid: 7302, startTicks: 99 });
+    };
+    const report = await terminateRun({ path: await writeRunRecord(env, record), record }, { settle, attempts: 2, io });
+    expect(sent.filter((line) => line.startsWith("SIGKILL"))).toEqual([]);
+    expect(report.survivors).toEqual([]);
+  });
+
+  test("a parent that started after its child is not its parent: no descent is claimed through it", () => {
+    // pid 7401's ppid is 7400, but 7400 started later — the number was reused. It is
+    // not this turn's work, and it is a stranger in a group led by 7400.
+    const rows: Stat[] = [
+      { pid: 7400, ppid: 1, pgid: 7400, startTicks: 50 },
+      { pid: 7401, ppid: 7400, pgid: 7400, startTicks: 10 },
+      { pid: 7402, ppid: 7401, pgid: 7402, startTicks: 11 },
+    ];
+    const io = { stat: (pid: number) => (rows.find((row) => row.pid === pid) as never) ?? null, listPids: () => rows.map((row) => row.pid), kill: () => undefined };
+    expect(strangersInGroup(io, 7400).map((stat) => stat.pid)).toEqual([7401]);
+    expect(detachedDescendants(7400, io)).toEqual([]);
+    expect(signalTree(7400, "SIGTERM", { io, stopper: 1 }).watched.map((stat) => stat.pid)).toEqual([7400]);
+    // The control: with the start times in order, 7402 is a detached descendant.
+    const ordered = rows.map((row) => (row.pid === 7400 ? { ...row, startTicks: 1 } : row));
+    const io2 = { ...io, stat: (pid: number) => (ordered.find((row) => row.pid === pid) as never) ?? null };
+    expect(detachedDescendants(7400, io2).map((stat) => stat.pid)).toEqual([7402]);
+  });
+
+  test.skipIf(Bun.which("setsid") === null || Bun.which("sh") === null)(
+    "for real: a stop inside the turn's setsid shell finishes its report, and ends the turn and the shell's job",
+    async () => {
+      // The shape the review measured, with real processes: a "turn" T (detached,
+      // like om-agi under a launcher) runs `setsid sh -c '…'` — the grok shape — and
+      // that shell runs a background `sleep` and then a stopper that calls
+      // terminateRun on T's record, then would write a file. The stopper must live to
+      // write its report; T, the shell and the sleep must end; the file must not appear.
+      // The real path: a process's cwd is read back resolved, and a symlinked TMPDIR would
+      // make every "is anything still running in dir?" below vacuously true.
+      const dir = realpathSync(await mkdtemp(join(tmpdir(), "om-agi-stop-inside-")));
+      scratch.push(dir);
+      try {
+      const recordPath = join(dir, "record.json");
+      const reportPath = join(dir, "report.json");
+      const runs = join(import.meta.dir, "..", "..", "src", "decide", "runs.ts");
+      const seconds = 280 + Math.floor(Math.random() * 15);
+      // The stopper waits for the record (written only once the whole tree is up), and writes its report whole:
+      // to a temporary name, then renamed, so a reader never sees half of it.
+      await writeFile(
+        join(dir, "stopper.ts"),
+        `import { readFileSync, renameSync, writeFileSync, existsSync } from "node:fs";\n` +
+          `import { terminateRun } from ${JSON.stringify(runs)};\n` +
+          `const deadline = Date.now() + 60_000;\n` +
+          `while (!existsSync(${JSON.stringify(recordPath)}) && Date.now() < deadline) await Bun.sleep(25);\n` +
+          `const record = JSON.parse(readFileSync(${JSON.stringify(recordPath)}, "utf8"));\n` +
+          `const report = await terminateRun({ path: ${JSON.stringify(recordPath)}, record }, { settle: () => Bun.sleep(25), attempts: 400 });\n` +
+          `writeFileSync(${JSON.stringify(`${reportPath}.tmp`)}, JSON.stringify({ me: process.pid, report }));\n` +
+          `renameSync(${JSON.stringify(`${reportPath}.tmp`)}, ${JSON.stringify(reportPath)});\n`,
+      );
+      const inner = `sleep ${seconds} & "${process.execPath}" run stopper.ts; echo late > late.txt`;
+      // T starts nothing after the setsid shell returns (`true` is a builtin, and keeps sh from exec'ing its last
+      // command): a process born after the stop's snapshot is outside what this case is about.
+      const turn = Bun.spawn(["sh", "-c", `setsid sh -c '${inner}'; true`], {
+        cwd: dir,
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
+        detached: true,
+      });
+      started.push(turn);
+
+      // The whole tree is up before the stop may start: the background sleep and the stopper both exist.
+      // Deadlines, not attempt counts: a loaded CI runner starts a bun process in seconds, not milliseconds.
+      const argvOf = (pid: number) => {
+        try {
+          return require("node:fs").readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").filter((part: string) => part !== "");
+        } catch {
+          return [] as string[];
+        }
+      };
+      const sleeper = () => processesIn(dir).find((pid) => { const argv = argvOf(pid); return argv.length === 2 && argv[1] === String(seconds); });
+      const stopper = () => processesIn(dir).find((pid) => argvOf(pid).includes("stopper.ts"));
+      expect(await waitFor(() => sleeper() !== undefined && stopper() !== undefined, 30_000)).toBe(true);
+      const sleepPid = sleeper()!;
+      const t = procStat(turn.pid)!;
+      expect(t).not.toBeNull();
+      const record: RunRecord = {
+        schema: RUN_SCHEMA, turnId: "s5", subject: SUBJECT, backends: ["grok-local"],
+        pid: turn.pid, pgid: t.pgid, pidStart: t.startTicks, startedAt: new Date().toISOString(),
+      };
+      await writeFile(`${recordPath}.tmp`, JSON.stringify(record));
+      await rename(`${recordPath}.tmp`, recordPath);
+
+      expect(await waitFor(() => existsSync(reportPath), 60_000)).toBe(true);
+      const { me, report } = JSON.parse(await readFile(reportPath, "utf8")) as { me: number; report: { spared?: number; survivors: unknown[]; signalled: { pid: number; how: string }[] } };
+
+      // It lived to write all of it, and it says it was the one left alone.
+      expect(report.spared).toBe(me);
+      expect(report.signalled.some((entry) => entry.pid === me)).toBe(false);
+      // It was the stop that ended the turn and the shell's background job, one by one: neither shares a
+      // group with a process the stop runs under that may be signalled as a group.
+      expect(report.signalled.some((entry) => entry.pid === turn.pid && entry.how === "process")).toBe(true);
+      expect(report.signalled.some((entry) => entry.pid === sleepPid && entry.how === "process")).toBe(true);
+      expect(report.survivors).toEqual([]);
+      // Nothing that ran in `dir` is left — T, the setsid shell, its sleep, and (having exited) the stopper.
+      expect(await waitFor(() => processesIn(dir).length === 0, 30_000)).toBe(true);
+      // The shell is gone and never wrote the line after the stop: with it gone, nothing can write it later.
+      expect(await Bun.file(join(dir, "late.txt")).exists()).toBe(false);
+      } finally {
+        // Whatever a failed run left behind in `dir`, and only that.
+        for (const pid of processesIn(dir)) {
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {
+            // Already gone.
+          }
+        }
+      }
+    },
+    120_000,
+  );
+});
+
+/** Wait until `done()` or the deadline passes. A deadline, not a count of attempts: a loaded runner is slow. */
+async function waitFor(done: () => boolean, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (!done() && Date.now() < deadline) await Bun.sleep(20);
+  return done();
+}
+
+/** Processes of this user whose working directory is `dir` — what a case started there, and nothing else. */
+function processesIn(dir: string): number[] {
+  const fs = require("node:fs") as typeof import("node:fs");
+  const found: number[] = [];
+  for (const name of fs.readdirSync("/proc")) {
+    if (!/^\d+$/.test(name)) continue;
+    try {
+      if (fs.readlinkSync(`/proc/${name}/cwd`) === dir) found.push(Number(name));
+    } catch {
+      // Not ours to read, or gone.
+    }
+  }
+  return found;
+}

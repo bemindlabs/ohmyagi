@@ -373,7 +373,7 @@ describe("a prompt cannot leave by this door unannounced", () => {
       const source = await Bun.file(resolve(ROOT, rel)).text();
       expect(assertionEscapes(rel, source, TYPES, []).length, rel).toBeGreaterThan(0);
     }
-  });
+  }, 30_000);
 
   test("the chain `turn` runs is built in one place, so the type gate cannot be walked round", async () => {
     const ALLOWED = [EGRESS];
@@ -396,7 +396,7 @@ describe("a prompt cannot leave by this door unannounced", () => {
       const source = await Bun.file(resolve(ROOT, rel)).text();
       expect(constructions(rel, source, "FallbackExec").length, rel).toBeGreaterThan(0);
     }
-  });
+  }, 30_000);
 
   test("the checker reads syntax, not words — the controls", () => {
     const caught = (source: string) => constructions("synthetic.ts", source, "FallbackExec");

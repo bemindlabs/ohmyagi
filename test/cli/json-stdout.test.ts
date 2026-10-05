@@ -251,6 +251,14 @@ const ROWS: readonly Row[] = [
     build: async () => ["memory", "distill", "show", "--subject", SUBJECT, "--json"],
   },
   {
+    file: "memory.ts",
+    id: "memory ask --json (an empty question)",
+    code: 2,
+    // Refused before anything is read: the usage line goes to stderr, and stdout stays empty rather than half an answer.
+    stdout: "empty",
+    build: async () => ["memory", "ask", SOUL, "--subject", SUBJECT, "--json", "   "],
+  },
+  {
     file: "eval.ts",
     id: "eval --json (no task set)",
     code: 1,
@@ -397,6 +405,42 @@ const ROWS: readonly Row[] = [
     code: 2,
     stdout: "empty",
     build: async () => ["key", "prove", SOUL, "--subject", SUBJECT, "--market", "https://market.example/", "--listing", "ts-reviewer", "--nonce", "A".repeat(43), "--json"],
+  },
+  {
+    file: "browser.ts",
+    id: "browser status --json where there is no docker",
+    // This sandbox's PATH has bun and git only: the answer is still one document, and says why.
+    code: 1,
+    stdout: "document",
+    build: async () => ["browser", "status", "--json"],
+  },
+  {
+    file: "browser.ts",
+    id: "browser up --json where there is no docker",
+    code: 1,
+    stdout: "document",
+    build: async () => ["browser", "up", "--subject", SUBJECT, "--allow", "https://example.com", "--json"],
+  },
+  {
+    file: "browser.ts",
+    id: "browser up --json with an allowlist the CLI will not take",
+    code: 2,
+    stdout: "empty",
+    build: async () => ["browser", "up", "--subject", SUBJECT, "--allow", "https://*.example.com", "--json"],
+  },
+  {
+    file: "browser.ts",
+    id: "browser down --json where there is no docker",
+    code: 1,
+    stdout: "document",
+    build: async () => ["browser", "down", "t-none", "--json"],
+  },
+  {
+    file: "browser.ts",
+    id: "browser mcp-config --json for a task that is not up",
+    code: 1,
+    stdout: "empty",
+    build: async () => ["browser", "mcp-config", "t-none", "--vendor", "claude", "--json"],
   },
   {
     file: "erase.ts",

@@ -25,16 +25,19 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { hostname, tmpdir, uptime } from "node:os";
 import { join } from "node:path";
 import { templateFiles } from "../../src/agent/template.ts";
 import { commitErase, planErase, verifyErase, type EraseEnv } from "../../src/erase/plan.ts";
+import { BROWSER_SCHEMA, containerName, createRecord } from "../../src/browser/store.ts";
+import { recordPath, wiringDir } from "../../src/browser/paths.ts";
 import { confirmationsPath, setConfirmation } from "../../src/decide/confirm.ts";
 import { RAG_MARKER_FILE, ragDirFor, writeRagMarker } from "../../src/memory/marker.ts";
 import { splice } from "../../src/soul/block.ts";
 import type { LedgerEntry } from "../../src/ledger/entry.ts";
-import { append, ledgerDir } from "../../src/ledger/store.ts";
+import { append, canAppend, ledgerDir } from "../../src/ledger/store.ts";
+import { LOCK_TIMING, type ThisMachine } from "../../src/ledger/lock.ts";
 import { UNREPORTED_USAGE, subjectId, type SubjectId } from "../../src/types.ts";
 import { identityDirFor, keyPath } from "../../src/identity/dir.ts";
 import { ensureAgentKey } from "../../src/identity/key.ts";
@@ -190,12 +193,12 @@ describe("a full erase", () => {
     const env = envFor(home);
     const plan = await planErase(env, request(mine.agent, [mine.instruction]));
     expect(plan.refusals).toEqual([]);
-    // Thirteen trees: the soul, the derived directory, the backups, the level-3
-    // confirmations (D-042), the rag marker (D-038), the run records (S5.4),
+    // Fourteen trees: the soul, the derived directory, the backups, the level-3
+    // confirmations (D-042), the rag marker (D-038), the run records (S5.4), the browser task records (D-151),
     // the trigger fire times (S5.3), the A2A peers (D-063), the chat
     // allowlist (D-066), the push handles (D-130), the basis records (D-077), the personal directory and the
     // agent's signing key (S15.8). The block and the ledger lines are counted separately.
-    expect(plan.trees.length).toBe(13);
+    expect(plan.trees.length).toBe(14);
     expect(plan.blocks.filter((block) => block.outcome === "strip").length).toBe(1);
     expect(plan.ledger.matched.length).toBe(1);
 
@@ -225,6 +228,48 @@ describe("a full erase", () => {
     // to begin with, and the repository itself.
     expect(await Bun.file(join(mine.agent, "memory", "README.md")).exists()).toBe(true);
     expect(await Bun.file(join(mine.agent, ".gitignore")).exists()).toBe(true);
+  }, 30_000);
+
+  test("the ledger's lock: a killed turn's lock does not hold an erase up, and erase's own is this machine's (D-145)", async () => {
+    const home = await sandbox();
+    const mine = await fixture(home, SUBJECT);
+    // What `bin/commands/erase.ts` hands in, read the same way (`thisMachine()` in bin/shared.ts).
+    const here: ThisMachine = { host: hostname(), bootedAt: Date.now() - uptime() * 1000 };
+    const env: EraseEnv = { ...envFor(home), machine: here };
+
+    // A turn killed while it held the ledger's lock: its owner names this machine, and its pid is gone.
+    const dead = Bun.spawn([process.execPath, "-e", "0"], { stdout: "ignore", stderr: "ignore" });
+    await dead.exited;
+    const lock = join(ledgerDir(env, SUBJECT), ".lock");
+    await mkdir(lock, { recursive: true, mode: 0o700 });
+    const owner = { pid: dead.pid, host: here.host, started: new Date().toISOString() };
+    await writeFile(join(lock, `owner.${crypto.randomUUID()}.json`), JSON.stringify(owner));
+
+    const plan = await planErase(env, request(mine.agent, [mine.instruction]));
+    // Carried to the commit, so the commit judges the lock as a turn would — and writes its own owner with it.
+    expect(plan.ledger.machine).toEqual(here);
+    const began = performance.now();
+    const result = await commitErase(plan);
+    // Broken at once, not waited on for the five seconds an owner of unknown machine gets, then refused.
+    expect(performance.now() - began).toBeLessThan(LOCK_TIMING.waitMs);
+    expect((await verifyErase(plan, result)).verdict).toBe("erased-and-verified");
+    expect(await Bun.file(ledgerDir(env, SUBJECT)).exists()).toBe(false);
+
+    // And the lock an erase killed in the middle leaves behind now names this machine, so the next turn
+    // clears it at once — where one naming none, as an erase used to leave, refuses turns until it is ten
+    // minutes old.
+    const turn = { home, env: env.env, now: env.now, machine: here };
+    await mkdir(lock, { recursive: true, mode: 0o700 });
+    await writeFile(join(lock, `owner.${crypto.randomUUID()}.json`), JSON.stringify({ ...owner, host: null }));
+    const unnamed = await canAppend(turn, SUBJECT, { ...LOCK_TIMING, waitMs: 200 });
+    expect(unnamed.ok ? undefined : unnamed.kind).toBe("locked");
+    await rm(lock, { recursive: true });
+    await mkdir(lock, { recursive: true, mode: 0o700 });
+    await writeFile(join(lock, `owner.${crypto.randomUUID()}.json`), JSON.stringify(owner));
+    expect((await canAppend(turn, SUBJECT, { ...LOCK_TIMING, waitMs: 200 })).ok).toBe(true);
+
+    // Without a machine — a caller that did not say — the plan has none, and every lock is judged by age.
+    expect((await planErase(envFor(home), request(null, []))).ledger.machine).toBeUndefined();
   }, 30_000);
 
   test("the empty directory that is only the subject's name goes too", async () => {
@@ -296,7 +341,7 @@ describe("a full erase", () => {
 
     const plan = await planErase(envFor(home), request(mine.agent, [mine.instruction]));
     // No new tree: the store is a subtree of a tree that was already planned.
-    expect(plan.trees.length).toBe(13);
+    expect(plan.trees.length).toBe(14);
     const observed = plan.trees.find((tree) => tree.plan.dir === personal);
     expect(observed).toBeDefined();
     expect(observed!.plan.before.paths.some((path) => path.includes("proposals"))).toBe(true);
@@ -332,7 +377,7 @@ describe("a full erase", () => {
 
     const before = await snapshot();
     const plan = await planErase(envFor(home), request(mine.agent, [mine.instruction]));
-    expect(plan.trees.length).toBe(13);
+    expect(plan.trees.length).toBe(14);
     const after = await snapshot();
 
     expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
@@ -456,9 +501,9 @@ describe("--personal", () => {
       }),
     );
     expect(plan.files).toEqual([join(mine.agent, "soul", "person.md")]);
-    // Eleven trees, not thirteen: `soul/` stays, because `role.md` is in it, and so does the agent's signing
+    // Twelve trees, not fourteen: `soul/` stays, because `role.md` is in it, and so does the agent's signing
     // key — the agent's identity, not the person's data (S15.8 review; D-138).
-    expect(plan.trees.length).toBe(11);
+    expect(plan.trees.length).toBe(12);
     expect(plan.trees.some((tree) => tree.label.includes("signing key"))).toBe(false);
     // No key was made in this fixture, so none is said to be kept (S15.8 re-review; the cases with one are below).
     expect(plan.notes.some((note) => note.includes("keeps the agent's signing key"))).toBe(false);
@@ -765,10 +810,10 @@ describe("--no-agent", () => {
 
     const plan = await planErase(envFor(home), request(null, [mine.instruction]));
 
-    // Backups, confirmations, run records, trigger fire times, A2A peers, the
+    // Backups, confirmations, run records, browser task records, trigger fire times, A2A peers, the
     // chat allowlist, the push handles, the basis records, the rag marker, the
     // personal directory and the signing key need no repository; soul/ and .dagi/ are not visited at all.
-    expect(plan.trees.length).toBe(11);
+    expect(plan.trees.length).toBe(12);
     expect(plan.git).toBeNull();
     expect(plan.notes.join("\n")).toContain("--no-agent");
     // The reserved addresses cannot be probed either, and that is said.
@@ -777,6 +822,81 @@ describe("--no-agent", () => {
     await commitErase(plan);
     expect(await Bun.file(join(mine.agent, "soul", "role.md")).exists()).toBe(true);
     expect(await Bun.file(join(home, "state", "om-agi", "backups", SUBJECT)).exists()).toBe(false);
+  }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
+// Browser tasks (D-151; review of PR #19)
+// ---------------------------------------------------------------------------
+
+describe("a subject with a browser task", () => {
+  test("its container is docker-killed first, then its record and wiring go, and verification is clean", async () => {
+    const home = await sandbox();
+    const mine = await fixture(home, SUBJECT);
+    const env = envFor(home);
+    const record = {
+      schema: BROWSER_SCHEMA,
+      task: "t-erase",
+      subject: SUBJECT,
+      container: containerName(env, "t-erase"),
+      image: "om-agi-browser:test",
+      port: 30_740,
+      token: "77".repeat(32),
+      operate: 1 as const,
+      allowed: ["https://example.com:443"],
+      outDir: join(home, "data", "om-agi", SUBJECT, "personal", "browser", "t-erase"),
+      owner: null,
+      startedAt: new Date().toISOString(),
+      ttlSeconds: 600,
+    };
+    expect((await createRecord(env, record)).ok).toBe(true);
+    await mkdir(wiringDir(env, SUBJECT, "t-erase"), { recursive: true });
+    await Bun.write(join(wiringDir(env, SUBJECT, "t-erase"), "claude-mcp.json"), "{}");
+
+    const plan = await planErase(env, request(mine.agent, [mine.instruction]));
+    expect(plan.browsers).toEqual([{ task: "t-erase", container: record.container }]);
+    expect(plan.notes.join("\n")).toContain("1 browser task(s)");
+
+    const killed: string[] = [];
+    const docker = {
+      run: async (args: readonly string[]) => {
+        killed.push(args.join(" "));
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    };
+    const result = await commitErase(plan, docker);
+    expect(killed).toEqual([`kill ${record.container}`]);
+    expect(result.browsers).toEqual([{ task: "t-erase", container: record.container, ok: true, detail: "killed" }]);
+    expect(await Bun.file(recordPath(env, SUBJECT, "t-erase")).exists()).toBe(false);
+    const verification = await verifyErase(plan, result);
+    expect(verification.verdict).toBe("erased-and-verified");
+  }, 30_000);
+
+  test("a container docker will not kill is a failure, and the verdict is not clean", async () => {
+    const home = await sandbox();
+    const mine = await fixture(home, SUBJECT);
+    const env = envFor(home);
+    await createRecord(env, {
+      schema: BROWSER_SCHEMA,
+      task: "t-stuck",
+      subject: SUBJECT,
+      container: containerName(env, "t-stuck"),
+      image: "om-agi-browser:test",
+      port: 30_741,
+      token: "78".repeat(32),
+      operate: 1 as const,
+      allowed: ["https://example.com:443"],
+      outDir: join(home, "x"),
+      owner: null,
+      startedAt: new Date().toISOString(),
+      ttlSeconds: 600,
+    });
+    const plan = await planErase(env, request(mine.agent, [mine.instruction]));
+    const result = await commitErase(plan, { run: async () => ({ code: 1, stdout: "", stderr: "permission denied" }) });
+    expect(result.browsers[0]).toMatchObject({ ok: false, detail: "permission denied" });
+    const verification = await verifyErase(plan, result);
+    expect(verification.failures).toBeGreaterThan(0);
+    expect(verification.verdict).not.toBe("erased-and-verified");
   }, 30_000);
 });
 
