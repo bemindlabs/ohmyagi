@@ -223,6 +223,48 @@ describe("browserUp", () => {
     expect(docker.calls[0]).toEqual(["ps", "--filter", `label=${BROWSER_LABEL}.root=${rootLabel(env)}`, "--format", "{{.Names}}"]);
   });
 
+  test("D-156, round 3: a task that can ask gets a wait and an Ed25519 pair — only the public half enters the container", async () => {
+    const { createPublicKey, sign, verify } = await import("node:crypto");
+    const env = await box();
+    const docker = fakeDocker();
+    const up = await browserUp({ env, subject: SUBJECT, allow: ["https://example.com"], task: "t-ask", operate: 2, approvalWaitSeconds: 120, io: docker.io, ...ALWAYS });
+    expect(up.ok).toBe(true);
+    if (!up.ok) return;
+    expect(up.record.approvalWaitSeconds).toBe(120);
+    const key = up.releaseKey!;
+    expect(key.type).toBe("private");
+    expect(key.asymmetricKeyType).toBe("ed25519");
+    const publicKey = up.record.releasePublicKey!;
+    // The public half is what the container verifies with: it checks the private half's signatures.
+    const message = Buffer.from("om-agi-release\na-1\nsha256:x\napprove");
+    expect(verify(null, message, createPublicKey({ key: Buffer.from(publicKey, "base64"), format: "der", type: "spki" }), sign(null, message, key))).toBe(true);
+    const runAt = docker.calls.findIndex((call) => call[0] === "run");
+    expect(docker.calls[runAt]).toContain("OM_AGI_APPROVAL_WAIT=120");
+    expect(docker.calls[runAt]).toContain(`OM_AGI_RELEASE_PUBKEY=${publicKey}`);
+    expect(docker.envs[runAt]).toEqual({ OM_AGI_TOKEN: up.record.token });
+    // Nothing secret of the signer anywhere the container or another user could read: argv, env, the record.
+    const secret = [
+      key.export({ type: "pkcs8", format: "der" }).toString("base64"),
+      key.export({ type: "pkcs8", format: "pem" }).toString(),
+      Buffer.from(key.export({ format: "jwk" }).d!, "base64url").toString("base64"),
+    ];
+    const seen = [docker.calls.flat().join(" "), JSON.stringify(docker.envs), await readFile(path(env, "t-ask"), "utf8")].join("\n");
+    for (const part of secret) expect(seen).not.toContain(part);
+    expect(seen).not.toContain(key.export({ format: "jwk" }).d!);
+    // No docker exec at all: nothing is handed in after start.
+    expect(docker.calls.some((call) => call[0] === "exec")).toBe(false);
+    expect(dockerRefusal(["exec", "-i", "c", "sh"])).toContain("is not one of the verbs");
+    // A browser started by hand has nobody to ask: no pair.
+    const hand = fakeDocker();
+    const plain = await browserUp({ env, subject: SUBJECT, allow: ["https://example.com"], task: "t-plain", io: hand.io, ...ALWAYS });
+    expect(plain.ok && plain.releaseKey).toBeUndefined();
+    expect(plain.ok && plain.record.releasePublicKey).toBeUndefined();
+    expect(hand.calls.flat().join(" ")).not.toContain("OM_AGI_RELEASE_PUBKEY");
+    for (const bad of [-1, 1.5, 3601]) {
+      expect(await browserUp({ env, subject: SUBJECT, allow: ["https://example.com"], approvalWaitSeconds: bad, io: fakeDocker().io, ...ALWAYS })).toMatchObject({ ok: false, reason: "an approval's wait is 0–3600 seconds" });
+    }
+  });
+
   test("an owner is recorded with its start time, so a reused pid cannot keep a container alive", async () => {
     const env = await box();
     const up = await browserUp({ env, subject: SUBJECT, allow: ["https://example.com"], owner: process.pid, io: fakeDocker().io, ...ALWAYS });

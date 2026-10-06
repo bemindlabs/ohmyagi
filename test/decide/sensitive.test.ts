@@ -42,8 +42,8 @@ const RULE_FLOOR: readonly { readonly id: string; readonly category: SensitiveCa
   { id: "send.words", category: "send", examples: [click("Send"), click("Reply all"), click("Publish"), click("Post"), click("ส่งข้อความ"), click("แชร์")] },
   { id: "delete.words", category: "delete", examples: [click("Delete repository"), click("Remove"), click("Move to trash"), click("Close account"), click("ลบไฟล์")] },
   { id: "credentials.value", category: "credentials", examples: [type("Anything", "password"), type("Code", "otp"), type("Key", "secret")] },
-  { id: "credentials.field", category: "credentials", examples: [type("Password"), type("API key"), type("Verification code"), type("รหัสผ่าน")] },
-  { id: "credentials.grant", category: "credentials", examples: [click("Sign in"), click("Log in"), click("Continue with Google"), click("เข้าสู่ระบบ")] },
+  { id: "credentials.field", category: "credentials", examples: [type("Password"), type("API key"), type("Verification code"), type("รหัสผ่าน"), type("Passwort"), type("Mot de passe"), type("Contraseña"), type("パスワード"), type("密码"), type("密碼"), type("비밀번호"), type("Wachtwoord"), type("Hasło"), type("Senha")] },
+  { id: "credentials.grant", category: "credentials", examples: [click("Sign in"), click("Log in"), click("Continue with Google"), click("เข้าสู่ระบบ"), click("Anmelden"), click("Se connecter"), click("Iniciar sesión"), click("ログイン"), click("登录"), click("로그인")] },
   { id: "credentials.allow", category: "credentials", examples: [click("Allow"), click("Authorize app"), click("Grant permission"), click("อนุญาต")] },
   {
     id: "credentials.login-submit",

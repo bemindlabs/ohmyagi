@@ -28,6 +28,9 @@ umask 077
 : "${OM_AGI_TOKEN:?OM_AGI_TOKEN must be the task's token}"
 TOKEN="$OM_AGI_TOKEN"
 unset OM_AGI_TOKEN
+# D-156: a task that can ask for the owner's yes has a wait, and its release *public* key (review of PR #24,
+# round 3): releases are Ed25519-signed by the task's runner, whose private key never enters this container.
+APPROVAL_WAIT="${OM_AGI_APPROVAL_WAIT:-0}"
 TTL="${OM_AGI_TTL:-1800}"
 EGRESS_ID=10002
 GUARD_ID=10003
@@ -117,4 +120,5 @@ exec setpriv --inh-caps=-all --ambient-caps=-all --bounding-set=-all,+kill,+setu
     --inh-caps=-all --ambient-caps=-all --bounding-set=-all --no-new-privs -- \
   env -i PATH="$PATH" HOME=/home/browser TMPDIR=/tmp \
     PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
+    OM_AGI_APPROVAL_WAIT="$APPROVAL_WAIT" OM_AGI_RELEASE_PUBKEY="${OM_AGI_RELEASE_PUBKEY:-}" \
   playwright-mcp --config /run/om-agi/mcp.json

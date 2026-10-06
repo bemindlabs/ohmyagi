@@ -182,6 +182,39 @@ function request(agent: string | null, instruction: string[], over: Partial<Para
 // The whole thing
 // ---------------------------------------------------------------------------
 
+describe("a subject's tasks end before anything is removed (review of PR #22)", () => {
+  test("the dry run names them; the commit stops them first — runner signalled, step turn ended — then erases", async () => {
+    const home = await sandbox();
+    const mine = await fixture(home, SUBJECT);
+    const env = envFor(home);
+    const tasks = join(home, "data", "om-agi", SUBJECT, "personal", "tasks");
+    const { TASK_SCHEMA } = await import("../../src/task/store.ts");
+    const base = {
+      schema: TASK_SCHEMA, subject: SUBJECT, goal: "g", dir: mine.agent, cwd: home, createdAt: "2026-10-05T00:00:00.000Z", via: "cli", backend: null, model: null,
+      operate: 0, allow: [], budget: { turns: 5, minutes: 5, tokens: null }, stepSeconds: 60, approvalSeconds: 60, statusAt: "x", reason: null, plan: null, steps: [],
+      result: null, used: { turns: 0, activeMs: 0, tokens: 0, tokensUnknown: 0 }, runner: null, current: null, browser: null, notes: [], generation: 1,
+    };
+    for (const [id, status] of [["t-0000aaaa", "running"], ["t-0000bbbb", "done"]] as const) {
+      await mkdir(join(tasks, id), { recursive: true });
+      await writeFile(join(tasks, id, "task.json"), JSON.stringify({ ...base, id, status }));
+    }
+    const plan = await planErase(env, request(mine.agent, [mine.instruction]));
+    expect(plan.tasks).toEqual(["t-0000aaaa"]);
+    expect(plan.notes.join(" ")).toContain("1 task(s) of this subject have not ended (t-0000aaaa)");
+    const order: string[] = [];
+    const result = await commitErase(plan, undefined, async (at, subject, runs) => {
+      order.push(`tasks ${at === tasks} ${subject} ${runs === join(home, "state", "om-agi", "runs")}`);
+      // Nothing was removed yet when the tasks were ended.
+      order.push(`task file still there: ${await Bun.file(join(tasks, "t-0000aaaa", "task.json")).exists()}`);
+      return [{ id: "t-0000aaaa", runner: "ended", turn: null }];
+    });
+    expect(order).toEqual([`tasks true ${SUBJECT} true`, "task file still there: true"]);
+    expect(result.tasks).toEqual([{ id: "t-0000aaaa", runner: "ended", turn: null }]);
+    expect((await verifyErase(plan, result)).verdict).toBe("erased-and-verified");
+    expect(await Bun.file(join(tasks, "t-0000aaaa", "task.json")).exists()).toBe(false);
+  }, 30_000);
+});
+
 describe("a full erase", () => {
   test("everything om-agi can delete goes, and the recount is read off the disk", async () => {
     const home = await sandbox();

@@ -34,6 +34,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { PROPOSALS_DIR, PROPOSAL_SCHEMA, REFILED_DIR, REFILE_SCHEMA } from "../../src/decide/proposals.ts";
 import { monthFileName } from "../../src/ledger/store.ts";
+import { allowedHosts, handler, TOKEN_HEADER, type WebDeps } from "../../src/web/server.ts";
 import { barePath, BUN, expectNoVendorOn } from "../support/bare-path.ts";
 import { serveOllama } from "../support/stub-ollama.ts";
 
@@ -599,6 +600,10 @@ describe("turn --proposal spends an approval once", () => {
       );
       expect(ran.code).toBe(REFUSED);
       expect(ran.stderr).toContain("Approve it again");
+      // D-153 follow-up: it points at the button and at `--refile`, not at typing the proposal out again.
+      expect(ran.stderr).toContain('"File it again for a yes" on the web page');
+      expect(ran.stderr).toContain(`ohmyagi proposal new <dir> --subject ${SUBJECT} --refile ${id}`);
+      expect(ran.stderr).not.toContain("file the same what");
       expect(ollama.prompts).toEqual([]);
       expect(await Bun.file(join(store, "spent", `${id}.json`)).exists()).toBe(false);
       void what;
@@ -620,6 +625,222 @@ describe("turn --proposal spends an approval once", () => {
       expect(evil.code).toBe(REFUSED);
       expect(evil.stderr).toContain("the approval names no action");
       expect(ollama.prompts).toEqual([]);
+    } finally {
+      await ollama.server.stop(true);
+    }
+  }, 60_000);
+
+  test("D-153 follow-up: `--refile` files an approval from before approvals named their action again, once — a new question, nothing run", async () => {
+    const box = await sandbox();
+    const ollama = serveOllama();
+    try {
+      const store = storeIn(box);
+      await mkdir(store, { recursive: true, mode: 0o700 });
+      const old = "6b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e";
+      await writeFile(
+        join(store, `${old}.json`),
+        JSON.stringify({
+          schema: PROPOSAL_SCHEMA, id: old, subject: SUBJECT, at: "2026-09-29T08:00:00.000Z",
+          what: "Reply with the token t5legacy2 and nothing else.", why: "because", impact: "nothing",
+          supersedes: null, changed: null,
+          decision: { outcome: "approved", at: "2026-09-29T09:00:00.000Z", by: "the owner", note: null },
+          usedByTurn: null, usedAt: null, filedBy: "agent", fromTurn: "turn-that-asked",
+        }),
+      );
+
+      // Three at once — a page, an app and a terminal: one files it, the others are told which.
+      const results = await Promise.all(
+        Array.from({ length: 3 }, () => run(box, ["proposal", "new", SOUL, "--subject", SUBJECT, "--refile", old])),
+      );
+      const filed = results.filter((r) => r.code === 0);
+      expect(filed).toHaveLength(1);
+      expect(results.filter((r) => r.code === REPEATED)).toHaveLength(2);
+      const newId = filed[0]!.stdout.trim();
+      expect(newId).toMatch(/^[0-9a-f-]{36}$/);
+      expect(filed[0]!.stderr).toContain(
+        `filed again from ${old}, approved before approvals named their action (D-153), so no turn would run that yes. ` +
+          `${old} leaves every list. It waits for a yes of its own; nothing was approved or run.`,
+      );
+      const fresh = await Bun.file(join(store, `${newId}.json`)).json();
+      expect(fresh).toMatchObject({
+        what: "Reply with the token t5legacy2 and nothing else.", why: "because", impact: "nothing",
+        decision: null, usedByTurn: null, supersedes: old,
+        changed: "filed again: approved 2026-09-29T09:00:00.000Z before approvals named their action (D-153), so that yes cannot run",
+        filedBy: "agent", fromTurn: "turn-that-asked",
+      });
+      expect(fresh.actionDigest).toMatch(/^sha256:/);
+      // The old record is untouched — still an approval no turn will run — and no turn ran.
+      const still = await Bun.file(join(store, `${old}.json`)).json();
+      expect(still.decision.actionDigest).toBeUndefined();
+      expect(still.usedByTurn).toBeNull();
+      expect(await Bun.file(join(store, "spent", `${old}.json`)).exists()).toBe(false);
+      expect(ollama.prompts).toEqual([]);
+
+      // Once: later, one at a time, it is still filed already.
+      const again = await run(box, ["proposal", "new", SOUL, "--subject", SUBJECT, "--refile", old]);
+      expect(again.code).toBe(REPEATED);
+      expect(again.stderr).toContain(`${old} was filed again already, as ${newId}`);
+
+      // The new one, approved, runs once; the old one still does not.
+      await run(box, ["proposal", "decide", newId, SOUL, "--subject", SUBJECT, "--approve"]);
+      const turn = (id: string) =>
+        run(box, ["turn", SOUL, "--subject", SUBJECT, "--backend", "ollama", "--model", "stub", "--proposal", id], { OLLAMA_HOST: ollama.url });
+      expect((await turn(old)).code).toBe(REFUSED);
+      const ran = await turn(newId);
+      expect(ran.code).toBe(0);
+      expect(ran.stdout.trim()).toBe("t5legacy2 from ollama with-soul");
+      expect(ollama.prompts).toHaveLength(1);
+    } finally {
+      await ollama.server.stop(true);
+    }
+  }, 60_000);
+
+  test("D-153 follow-up: an old approval whose what was already asked again by hand is not filed a second time", async () => {
+    // The owner's case: 63268cfb approved before v0.10.0, then the same what filed by hand, approved and spent.
+    const box = await sandbox();
+    const store = storeIn(box);
+    await mkdir(store, { recursive: true, mode: 0o700 });
+    const old = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
+    const what = "read the real state of the server";
+    await writeFile(
+      join(store, `${old}.json`),
+      JSON.stringify({
+        schema: PROPOSAL_SCHEMA, id: old, subject: SUBJECT, at: "2026-09-29T08:00:00.000Z",
+        what, why: "because", impact: "nothing", supersedes: null, changed: null,
+        decision: { outcome: "approved", at: "2026-09-29T09:00:00.000Z", by: "the owner", note: null },
+        usedByTurn: null, usedAt: null,
+      }),
+    );
+    const twin = await file(box, what);
+    expect(twin.code).toBe(0);
+
+    // Waiting: a twin is waiting already.
+    const waiting = await run(box, ["proposal", "new", SOUL, "--subject", SUBJECT, "--refile", old]);
+    expect(waiting.code).toBe(REPEATED);
+    expect(waiting.stderr).toContain(`${old} was asked again already, as ${twin.id}`);
+
+    // Approved and spent, as the owner's was: still asked again already — no new copy of the question.
+    await run(box, ["proposal", "decide", twin.id, SOUL, "--subject", SUBJECT, "--approve"]);
+    const spent = join(store, `${twin.id}.json`);
+    await writeFile(spent, JSON.stringify({ ...(await Bun.file(spent).json()), usedByTurn: "turn-ran", usedAt: "2026-10-05T15:48:23.008Z" }));
+    const after = await run(box, ["proposal", "new", SOUL, "--subject", SUBJECT, "--refile", old]);
+    expect(after.code).toBe(REPEATED);
+    expect(after.stderr).toContain(`${old} was asked again already, as ${twin.id}`);
+    expect((await readdir(store)).filter((name) => name.endsWith(".json")).sort()).toEqual([`${old}.json`, `${twin.id}.json`].sort());
+    expect(await Bun.file(join(store, "refiled", `${old}.json`)).exists()).toBe(false);
+  }, 60_000);
+
+  test("review of PR #29: a refile past a refusal its record supersedes is filed — by the CLI and by /refile, spent or not", async () => {
+    // Repro: A "Restart nginx" refused; B the same what, filed with --changed (supersedes A), approved with no
+    // digest. B was listed under "File it again for a yes", and the refile was refused for A: listed forever.
+    const box = await sandbox();
+    const store = storeIn(box);
+    const decide = (id: string, answer: "--approve" | "--refuse") => run(box, ["proposal", "decide", id, SOUL, "--subject", SUBJECT, answer]);
+    /** A refused, then B past it with --changed, approved; B's digest stripped as one from before v0.10.0. */
+    const pastRefusal = async (what: string) => {
+      const a = await file(box, what);
+      expect((await decide(a.id, "--refuse")).code).toBe(0);
+      const b = await file(box, what, ["--changed", "the config is fixed"]);
+      expect(b.code).toBe(0);
+      expect((await decide(b.id, "--approve")).code).toBe(0);
+      const path = join(store, `${b.id}.json`);
+      const record = await Bun.file(path).json();
+      expect(record.supersedes).toBe(a.id);
+      delete record.decision.actionDigest;
+      await writeFile(path, JSON.stringify(record));
+      return b.id;
+    };
+    const filedFrom = async (old: string) => {
+      const all = await Promise.all((await readdir(store)).filter((n) => n.endsWith(".json")).map((n) => Bun.file(join(store, n)).json()));
+      return all.filter((r) => r.supersedes === old);
+    };
+
+    // The CLI.
+    const viaCli = await pastRefusal("Restart nginx");
+    const refiled = await run(box, ["proposal", "new", SOUL, "--subject", SUBJECT, "--refile", viaCli]);
+    expect(refiled.code).toBe(0);
+    expect(refiled.stderr).not.toContain("a refusal is remembered");
+    const [fresh] = await filedFrom(viaCli);
+    expect(fresh).toMatchObject({ id: refiled.stdout.trim(), what: "Restart nginx", decision: null, supersedes: viaCli });
+
+    // The route, with the real CLI behind it: 200, a new proposal, and nothing approved or run.
+    const viaRoute = await pastRefusal("Restart postgres");
+    const deps = { dir: SOUL, subject: SUBJECT, run: (args: readonly string[]) => run(box, args) } as unknown as WebDeps;
+    const post = (id: string) => {
+      const headers = new Headers({ host: "127.0.0.1:30701", [TOKEN_HEADER]: "tok" });
+      return handler(deps, "tok", allowedHosts("127.0.0.1", 30701))(
+        new Request(`http://127.0.0.1:30701/api/proposals/${id}/refile`, { method: "POST", headers, body: "{}" }),
+      );
+    };
+    const res = await post(viaRoute);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; id: string };
+    expect(body.ok).toBe(true);
+    const [routed] = await filedFrom(viaRoute);
+    expect(routed).toMatchObject({ id: body.id, what: "Restart postgres", decision: null, supersedes: viaRoute });
+    // Once: the second press is told, with 409.
+    expect((await post(viaRoute)).status).toBe(409);
+
+    // The spent-refile path (D-144 §2) asks the same rule: an approval past a refusal whose turn sent nothing.
+    const a = await file(box, "Restart redis");
+    await decide(a.id, "--refuse");
+    const s = await file(box, "Restart redis", ["--changed", "the cache is cold"]);
+    await decide(s.id, "--approve");
+    const spentPath = join(store, `${s.id}.json`);
+    await writeFile(spentPath, JSON.stringify({ ...(await Bun.file(spentPath).json()), usedByTurn: "turn-unsent", usedAt: new Date().toISOString(), sentNothing: true }));
+    expect((await run(box, ["proposal", "new", SOUL, "--subject", SUBJECT, "--refile", s.id])).code).toBe(0);
+  }, 90_000);
+
+  test("review of PR #29: the twin rule is measured against the yes — a refusal the yes came after does not hide it", async () => {
+    // Repro: C filed; D, the same what, filed past it and refused; C approved after that, with no digest.
+    const box = await sandbox();
+    const store = storeIn(box);
+    const c = await file(box, "rotate the logs");
+    const d = await file(box, "rotate the logs", ["--changed", "only the old ones"]);
+    expect(d.code).toBe(0);
+    await run(box, ["proposal", "decide", d.id, SOUL, "--subject", SUBJECT, "--refuse"]);
+    await Bun.sleep(5);
+    await run(box, ["proposal", "decide", c.id, SOUL, "--subject", SUBJECT, "--approve"]);
+    const path = join(store, `${c.id}.json`);
+    const record = await Bun.file(path).json();
+    delete record.decision.actionDigest;
+    await writeFile(path, JSON.stringify(record));
+
+    const refiled = await run(box, ["proposal", "new", SOUL, "--subject", SUBJECT, "--refile", c.id]);
+    expect(refiled.code).toBe(0);
+    expect(refiled.stderr).toContain(`filed again from ${c.id}, approved before approvals named their action`);
+  }, 60_000);
+
+  test("review of PR #29: a record changed after its yes is refused by turn, pointed at --refile, and filed again from its record", async () => {
+    const box = await sandbox();
+    const ollama = serveOllama();
+    try {
+      const store = storeIn(box);
+      const filed = await file(box, "Reply with the token t5moved and nothing else.");
+      await run(box, ["proposal", "decide", filed.id, SOUL, "--subject", SUBJECT, "--approve"]);
+      const path = join(store, `${filed.id}.json`);
+      const record = await Bun.file(path).json();
+      record.what = "Reply with the token t5edited and nothing else.";
+      record.action = { kind: "turn", prompt: record.what };
+      await writeFile(path, JSON.stringify(record));
+
+      const ran = await run(
+        box,
+        ["turn", SOUL, "--subject", SUBJECT, "--backend", "ollama", "--model", "stub", "--proposal", filed.id],
+        { OLLAMA_HOST: ollama.url },
+      );
+      expect(ran.code).toBe(REFUSED);
+      expect(ran.stderr).toContain("changed after the yes");
+      expect(ran.stderr).toContain(`--refile ${filed.id}`);
+      expect(ollama.prompts).toEqual([]);
+
+      const refiled = await run(box, ["proposal", "new", SOUL, "--subject", SUBJECT, "--refile", filed.id]);
+      expect(refiled.code).toBe(0);
+      expect(refiled.stderr).toContain("whose record no longer holds the action its yes named (D-153)");
+      const fresh = await Bun.file(join(store, `${refiled.stdout.trim()}.json`)).json();
+      // What is asked again is what the record holds now, waiting for a yes of its own.
+      expect(fresh).toMatchObject({ what: "Reply with the token t5edited and nothing else.", decision: null, supersedes: filed.id });
+      expect(fresh.changed).toContain("the record no longer holds the action that yes named");
     } finally {
       await ollama.server.stop(true);
     }

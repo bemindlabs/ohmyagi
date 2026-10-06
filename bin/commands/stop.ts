@@ -14,6 +14,8 @@
  *    identified, and **print the command for what cannot**.
  * 4. **`docker kill` every browser task** of this state root (D-151), recorded
  *    or not — a container is identified by its labels, never by a guess.
+ * 5. **Ask every task to stop** (D-154): its runner starts no next step, also
+ *    after the brake is released.
  *
  * Each step reports separately and a failure in one does not skip the next,
  * because the person running this does not get to choose which failure they are
@@ -42,6 +44,7 @@ import {
   type TerminationReport,
 } from "../../src/decide/index.ts";
 import { sweepBrowsers } from "../../src/browser/runtime.ts";
+import { askEveryTaskToStop } from "../../src/task/control.ts";
 import { subjectId } from "../../src/types.ts";
 import { decideDial, dialEnv, whoIsSetting, writeDial } from "../dial.ts";
 import { ERR, OUT, parseArgs, usageError } from "../shared.ts";
@@ -264,6 +267,20 @@ export async function cmdStop(argv: readonly string[]): Promise<number> {
         (action.ok ? action.detail : `NOT ended: ${action.detail} — docker kill ${action.container}`),
     );
     if (!action.ok) failures += 1;
+  }
+
+  // --- 5. tasks (D-154) -----------------------------------------------------
+  // Their step's turn was ended in step 3 and their browser in step 4; this asks each not to start another, so a
+  // task does not carry on once the brake is released.
+  OUT.line("");
+  OUT.line(OUT.bold("5. tasks"));
+  try {
+    const asked = await askEveryTaskToStop(env, new Date(), "ohmyagi stop");
+    if (asked.length === 0) OUT.line("  none running.");
+    for (const task of asked) OUT.line(`  ${task.id} (subject ${task.subject}, ${task.status}): asked to stop`);
+  } catch (error) {
+    failures += 1;
+    OUT.line(`  COULD NOT ASK: ${String(error)} — \`ohmyagi task stop <task>\` each one`);
   }
 
   // --- what it did not do ---------------------------------------------------

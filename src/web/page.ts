@@ -306,6 +306,7 @@ ${MARKDOWN_CSS}
       <button role="tab" id="tabAgent" aria-selected="false" aria-controls="agent"><svg viewBox="0 0 24 24"><rect x="5" y="7" width="14" height="11" rx="3"/><path d="M12 3v4M9 12h.01M15 12h.01M9.5 15.5h5"/></svg><span>Agent</span></button>
       <button role="tab" id="tabProfile" aria-selected="false" aria-controls="profile"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c1.2-3.6 4-5.5 7-5.5s5.8 1.9 7 5.5"/></svg><span>Profile</span></button>
       <button role="tab" id="tabMemories" aria-selected="false" aria-controls="memories"><svg viewBox="0 0 24 24"><path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 2 5 3 3 0 0 0 6 1V4.5A2.5 2.5 0 0 0 9 4Z"/><path d="M15 4a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-2 5 3 3 0 0 1-6 1"/></svg><span>Memories</span></button>
+      <button role="tab" id="tabTasks" aria-selected="false" aria-controls="tasks"><svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1.5 1.5L7.5 5M3.5 12l1.5 1.5 2.5-2.5M3.5 18l1.5 1.5 2.5-2.5"/></svg><span>Tasks</span></button>
       <button role="tab" id="tabPrivacy" aria-selected="false" aria-controls="privacy"><svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.5 3 8.3 7 10 4-1.7 7-5.5 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-4"/></svg><span>Privacy</span></button>
       <button role="tab" id="tabSettings" aria-selected="false" aria-controls="settings"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg><span>Settings</span></button>
     </nav>
@@ -493,6 +494,34 @@ ${MARKDOWN_CSS}
     </section>
   </div>
 
+  <div class="set" id="tasks" role="tabpanel" aria-labelledby="tabTasks" hidden>
+    <section aria-labelledby="h-tasknew">
+      <h2 id="h-tasknew">Give it a task</h2>
+      <p class="hint">A goal it works on over several turns: a plan, then one step per turn, until it is done, its budget is spent, or you stop it. Every step is an ordinary turn — the levels in Settings, the ledger and “Stop everything” all apply.</p>
+      <div class="field"><label class="small" for="taskGoal">Goal</label><textarea id="taskGoal" placeholder="What should it get done?"></textarea></div>
+      <div class="row">
+        <label class="small" for="taskOperate">Browser</label><select id="taskOperate"><option value="0">No browser</option><option value="1">Look only</option><option value="2">Look and act</option></select>
+        <input type="text" id="taskAllow" placeholder="Sites it may use, e.g. https://example.com" aria-label="Sites the task's browser may use" autocomplete="off" style="flex:1;min-width:200px">
+      </div>
+      <div class="row">
+        <input type="text" id="taskBackend" placeholder="Backend (blank: the usual; a browser needs claude or claude-local)" aria-label="Backend for the task" autocomplete="off" style="flex:1;min-width:200px">
+        <input type="number" id="taskTurns" min="1" max="200" placeholder="Turns (12)" aria-label="Most turns" style="width:7.5rem">
+        <input type="number" id="taskMinutes" min="1" max="1440" placeholder="Minutes (30)" aria-label="Most minutes" style="width:7.5rem">
+      </div>
+      <div class="row"><button class="primary" id="taskStart">Start</button><span class="small">It runs on this computer in the background; you can close this page.</span></div>
+    </section>
+    <section aria-labelledby="h-taskask" id="taskAskBox" hidden>
+      <h2 id="h-taskask">A task is waiting for your answer</h2>
+      <p class="hint">It paused before something it never does unasked — paying, sending, deleting, a password, accepting terms. A yes lets that one action happen, once. No answer in time is a no.</p>
+      <div id="taskAsk"></div>
+    </section>
+    <section aria-labelledby="h-tasklist">
+      <h2 id="h-tasklist">Tasks</h2>
+      <div id="taskList"></div>
+    </section>
+    <section id="taskDetail" aria-label="The task you opened" hidden></section>
+  </div>
+
   <div class="set" id="privacy" role="tabpanel" aria-labelledby="tabPrivacy" hidden>
     <section aria-labelledby="h-capture">
       <h2 id="h-capture">Learning what you do <span class="pill" id="capPill">…</span></h2>
@@ -674,8 +703,8 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
   }
   $("bulkYes").onclick = () => bulk("approve");
   $("bulkNo").onclick = () => bulk("refuse");
-  function renderApproved(items, again) {
-    again = again || [];
+  function renderApproved(items, again, legacy) {
+    again = again || []; legacy = legacy || [];
     const box = $("approved"); box.replaceChildren();
     if (items.length) box.append(el("p", "small", "Allowed and not done yet:"));
     for (const p of items) {
@@ -700,6 +729,19 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
       re.disabled = busy;
       re.onclick = () => refile(p, re);
       const row = el("div", "row"); row.append(re, el("span", "small", "Files it as a new suggestion that waits for your yes. Nothing runs."));
+      c.append(row); box.append(c);
+    }    // D-153 follow-up: a yes no turn will run — given before approvals named their action, or the record changed
+    // after it. A turn refuses it, so it is never offered
+    // with "Do it now" — only to be filed again, from its own record, as a new suggestion that waits for a new yes.
+    for (const p of legacy) {
+      const c = el("div", "card");
+      const why = p.reason === "changed" ? "This text changed after your yes. Read it as a new request." : "Approved before approvals named their action — approve it again";
+      c.append(el("p", "what", p.what), el("p", "meta", why + (p.approved ? " · allowed " + p.approved : "")));
+      const busy = refilingProposals.has(p.id);
+      const re = el("button", "primary", busy ? "Filing…" : "File it again for a yes");
+      re.disabled = busy;
+      re.onclick = () => refile(p, re);
+      const row = el("div", "row"); row.append(re, el("span", "small", "Files it as a new suggestion that waits for your yes. Nothing runs, and the old yes is retired."));
       c.append(row); box.append(c);
     }
   }
@@ -735,7 +777,8 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
     $("levelDetail").textContent = s.autonomy.detail;
     // D-153: the browser, at the level in force — min(operate, reach) — in English and in Thai.
     const op = s.autonomy.operate; $("operateLine").textContent = op ? "Browser: " + op.title + " — " + op.en + " · " + op.th : "";
-    renderWaiting(s.waiting, force === true); renderApproved(s.approved, s.refileable);
+    renderWaiting(s.waiting, force === true); renderApproved(s.approved, s.refileable, s.needsReapproval);
+    renderTaskAsks(s.taskApprovals);
     $("nextRun").textContent = s.triggers.length ? s.triggers.map((t) => t.id + " · " + t.next).join("  ·  ") : "nothing scheduled";
     renderList("triggers", s.triggers, (t) => { const li = el("li"); li.append(el("div", "", t.id), el("div", "small", "every " + t.every + " · next " + t.next)); return li; }, "No schedule. Add one in soul/triggers.md.");
     const recentSig = JSON.stringify(s.recent.map((r) => [r.id, r.when]));
@@ -1148,7 +1191,7 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
   const OP_LEVELS = ["No browser", "Looks and suggests", "Allowed sites only"];
   const OP_TH = ["ไม่ใช้เบราว์เซอร์", "ดูแล้วเสนอ", "ทำเฉพาะเว็บที่อนุญาต", "ทำได้ทุกเว็บ"];
   const wordsFor = (key) => key === "operate" ? OP_LEVELS : LEVELS;
-  const TABS = ["home", "agent", "profile", "memories", "privacy", "settings"];
+  const TABS = ["home", "agent", "profile", "memories", "tasks", "privacy", "settings"];
   function showTab(which) {
     if (!TABS.includes(which)) which = "home";
     for (const t of TABS) {
@@ -1162,6 +1205,7 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
     if (which === "memories") loadMemories();
     if (which === "profile") { loadProfile(); loadDrafts(); }
     if (which === "privacy") loadPrivacy();
+    if (which === "tasks") loadTasks();
   }
   for (const t of TABS) $("tab" + t[0].toUpperCase() + t.slice(1)).onclick = () => showTab(t);
   const kv = (id, rows) => { const dl = $(id); dl.replaceChildren(); for (const [k, v] of rows) { if (v === null || v === undefined || v === "") continue; const dd = el("dd"); if (v instanceof Node) dd.append(v); else dd.textContent = v; dl.append(el("dt", "", k), dd); } };
@@ -2008,6 +2052,116 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
   $("hidePair").onclick = () => { $("pairCode").replaceChildren(); $("pairBox").hidden = true; $("showPair").hidden = false; $("hidePair").hidden = true; };
   $("checkUpdate").onclick = async () => { $("checkUpdate").disabled = true; const r = await api("/api/update-check", {}); toast(r.message || (r.ok ? "Checked." : "Could not check.")); $("checkUpdate").disabled = false; loadSettings(); };
   pickSummary(); loadModels();
+  // ── Tasks (D-154) ── the same API the app uses: /api/tasks, one task, its newest screenshot, stop and resume.
+  let taskOpen = null;
+  const TASK_WORDS = { planning: "Planning", running: "Working on it", waiting: "Waiting for you", done: "Done", failed: "Failed", stopped: "Stopped", budget: "Out of budget", interrupted: "Interrupted" };
+  const taskWord = (t) => (TASK_WORDS[t.status] || t.status) + " · " + t.used.turns + "/" + t.budget.turns + " turns";
+  async function loadTasks() {
+    let r; try { r = await api("/api/tasks"); } catch { return; }
+    const box = $("taskList"); box.replaceChildren();
+    const items = r.tasks || [];
+    if (!items.length) box.append(el("p", "empty", "No tasks yet."));
+    for (const t of items) {
+      const c = el("div", "card"); c.tabIndex = 0; c.setAttribute("role", "button"); c.style.cursor = "pointer";
+      c.append(el("p", "what", t.goal), el("p", "meta", taskWord(t) + (t.reason ? " — " + t.reason : "")));
+      // D-158: resuming is yours to do — an interrupted task says so where it is listed, with the button.
+      if (t.resumable) {
+        c.style.borderColor = "var(--warn)";
+        c.append(el("p", "meta", "Its runner stopped mid-way (a crash or a restart). Nothing resumes it on its own."));
+        const b = el("button", "primary", "Resume");
+        b.onclick = async (e) => { e.stopPropagation(); b.disabled = true; const r = await api("/api/tasks/" + t.id + "/resume", {}); toast(r.ok ? "Resumed in the background." : (r.message || "That did not work.")); loadTasks(); };
+        c.append(b);
+      }
+      c.onclick = () => { taskOpen = t.id; drawTask(); };
+      c.onkeydown = (e) => { if (e.key === "Enter") c.onclick(); };
+      box.append(c);
+    }
+    if (taskOpen) drawTask();
+  }
+  async function drawTask() {
+    const d = $("taskDetail");
+    if (!taskOpen) { d.hidden = true; return; }
+    let t; try { t = await api("/api/tasks/" + taskOpen); } catch { return; }
+    if (t.error) { d.hidden = false; d.replaceChildren(el("p", "small", t.error)); return; }
+    d.hidden = false; d.replaceChildren();
+    d.append(el("h2", "", t.goal), el("p", "meta", taskWord(t) + (t.reason ? " — " + t.reason : "") + " · " + (t.used.activeMs / 60000).toFixed(1) + "/" + t.budget.minutes + " min"));
+    if (t.plan && t.plan.length) { const ol = el("ol", "small"); for (const p of t.plan) ol.append(el("li", "", p)); d.append(el("p", "small", "Plan"), ol); }
+    const log = el("ul", "plain small");
+    for (const st of t.steps) {
+      const li = el("li");
+      li.append(el("div", "", (st.kind === "plan" ? "Plan" : "Step " + st.n) + " — " + (st.finishedAt === null ? "running" : st.outcome) + (st.waitedMs > 0 ? " · waited " + Math.round(st.waitedMs / 1000) + "s for you" : "")));
+      if (st.summary) li.append(el("div", "hint", st.summary));
+      log.append(li);
+    }
+    d.append(el("p", "small", "Steps"), log);
+    const asks = (t.approvals || []);
+    if (asks.length) {
+      d.append(el("p", "small", "Sensitive actions it asked about"));
+      for (const a of asks) d.append(a.status === "pending" ? askCard(a, t.id) : el("p", "hint", heldWords(a) + " — " + (a.status === "refused" || a.approvable === false ? "not allowed yet (D-160): a password or credential is never entered for you until a store fills it without the model seeing it" : a.status + (a.by ? " (" + a.by + ")" : ""))));
+    }
+    if (t.result) { const res = el("div", "notes"); res.style.whiteSpace = "normal"; res.append(md(t.result)); d.append(el("p", "small", "Result"), res); }
+    if (t.operate > 0) {
+      const img = el("img"); img.alt = "The task's browser, as it last looked"; img.style.maxWidth = "100%"; img.style.border = "1px solid var(--line)"; img.style.borderRadius = "8px";
+      const cap = el("p", "hint", "Its browser: loading the newest screenshot…");
+      d.append(cap, img);
+      api("/api/tasks/" + t.id + "/screen").then((r) => { if (r.image) { img.src = r.image; cap.textContent = "Its browser, " + new Date(r.at).toLocaleTimeString() + (t.status === "running" || t.status === "waiting" ? " (live — it refreshes)" : ""); } else { img.remove(); cap.textContent = "Its browser: " + (r.error || "no screenshot yet"); } }).catch(() => {});
+    }
+    const row = el("div", "row");
+    if (t.stoppable && t.status !== "interrupted") { const b = el("button", "danger", "Stop this task"); b.onclick = async () => { b.disabled = true; const r = await api("/api/tasks/" + t.id + "/stop", {}); toast(r.ok ? "Stopped." : (r.message || "That did not work.")); loadTasks(); }; row.append(b); }
+    if (t.resumable) { const b = el("button", "primary", "Resume"); b.onclick = async () => { b.disabled = true; const r = await api("/api/tasks/" + t.id + "/resume", {}); toast(r.ok ? "Resumed in the background." : (r.message || "That did not work.")); loadTasks(); }; row.append(b); }
+    const close = el("button", "", "Close"); close.onclick = () => { taskOpen = null; drawTask(); }; row.append(close);
+    d.append(row);
+  }
+  // D-156 — the held actions a task is paused on: one card each, answered once (the engine's own claim).
+  const answering = new Set();
+  function heldWords(a) {
+    const x = a.action || {};
+    const what = x.kind === "dialog-submit" ? "accept a dialog" : x.kind === "dialog-type" ? "answer a dialog" : (x.kind || "act");
+    const target = (x.formAction ? " → " + String(x.formMethod || "get").toUpperCase() + " " + x.formAction : "") + (x.href ? " → " + x.href : "") + (x.context ? " (in: “" + x.context + "”)" : "");
+    return what + (x.text ? " “" + x.text + "”" : "") + target + (x.origin ? " on " + x.origin + (x.path || "") : "") + (x.frameOrigin ? " (in a frame from " + x.frameOrigin + (x.framePath || "") + ")" : "");
+  }
+  function askCard(a, taskId) {
+    const c = el("div", "card"); c.style.borderColor = "var(--warn)";
+    // D-159: a page's confirm is its own question, shown with the action that opened it.
+    if (a.follows) c.append(el("p", "meta", "1. You allowed: " + heldWords(a.follows)), el("p", "meta", "2. Now the page asks:"));
+    c.append(el("p", "what", "It wants to " + heldWords(a)), el("p", "meta", (a.reasons || []).join(" · ")));
+    if (a.carriesValue) c.append(el("p", "meta", "The value is not shown, and was chosen by the agent."));
+    c.append(el("p", "meta", (a.goal ? "Task: " + a.goal + " · " : "") + "answer before " + new Date(a.expiresAt).toLocaleTimeString()));
+    const busy = answering.has(a.id);
+    // D-160: a credential cannot be approved, from anywhere — the engine refuses it too.
+    const yes = el("button", "primary", a.approvable === false ? "Not allowed yet (D-160)" : busy ? "Answering…" : "Yes, this once"); const no = el("button", "", "No"); const stop = el("button", "danger", "No, and stop the task");
+    yes.disabled = no.disabled = stop.disabled = busy;
+    if (a.approvable === false) yes.disabled = true;
+    const go = async (verdict, body) => {
+      answering.add(a.id); yes.disabled = no.disabled = stop.disabled = true;
+      let r; try { r = await api("/api/tasks/" + taskId + "/approvals/" + a.id + "/" + verdict, body); } finally { answering.delete(a.id); }
+      toast(r && r.ok ? (verdict === "approve" ? "Allowed — it happens once, now." : "Declined — the task is told.") : ((r && (r.reason || r.error)) || "That did not work."));
+      refresh(true); loadTasks();
+    };
+    yes.onclick = () => go("approve", {}); no.onclick = () => go("deny", {}); stop.onclick = () => go("deny", { stop: true });
+    const row = el("div", "row"); row.append(yes, no, stop); c.append(row);
+    return c;
+  }
+  function renderTaskAsks(items) {
+    items = items || [];
+    $("taskAskBox").hidden = items.length === 0;
+    const box = $("taskAsk"); box.replaceChildren();
+    for (const a of items) box.append(askCard(a, a.task));
+    const tab = $("tabTasks").querySelector("span"); tab.textContent = items.length ? "Tasks (" + items.length + ")" : "Tasks";
+  }
+  $("taskStart").onclick = async () => {
+    const goal = $("taskGoal").value.trim(); if (!goal) { toast("Write the goal first."); return; }
+    const body = { goal, operate: Number($("taskOperate").value) };
+    const allow = $("taskAllow").value.split(/[\s,]+/).filter(Boolean); if (allow.length) body.allow = allow;
+    const backend = $("taskBackend").value.trim(); if (backend) body.backend = backend;
+    if ($("taskTurns").value) body.budgetTurns = Number($("taskTurns").value);
+    if ($("taskMinutes").value) body.budgetMinutes = Number($("taskMinutes").value);
+    $("taskStart").disabled = true;
+    let r; try { r = await api("/api/tasks", body); } finally { $("taskStart").disabled = false; }
+    if (!r || !r.ok) { toast((r && r.error) || "It did not start."); return; }
+    toast("Started " + r.id + "."); $("taskGoal").value = ""; taskOpen = r.id; loadTasks();
+  };
+  setInterval(() => { if (!$("tasks").hidden) loadTasks(); }, 4000);
   refresh().then(() => { if (startTab !== "home") showTab(startTab); }); setInterval(refresh, 5000);
 })();
 </script>

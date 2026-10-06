@@ -4,8 +4,13 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { PAGE_HTML } from "../../src/web/page.ts";
 import { ALREADY_RUNNING, ASK_BUSY, MEMORY_ASK_TIMEOUT_MS, askAnswer, allowedHosts, handler, pairingLink, recallOf, sameToken, startWeb, tailnetNames, TOKEN_HEADER, type KeyControl, type WebDeps } from "../../src/web/server.ts";
 import { keyPrint } from "../../src/web/key.ts";
-import { ago, excerpt, levelSentence, operateSentence, remoteForPage, triageChips, type AgentInfo, type SettingsState, type ViewState } from "../../src/web/view.ts";
+import { ago, approvalLists, excerpt, levelSentence, operateSentence, remoteForPage, triageChips, type AgentInfo, type SettingsState, type ViewState } from "../../src/web/view.ts";
 import type { Triage } from "../../src/decide/triage.ts";
+import { claimRefile, decideProposal, describeProposal, findProposal, readProposals, writeProposal, type Proposal } from "../../src/decide/proposals.ts";
+import { subjectId } from "../../src/types.ts";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { ASK_ANSWER_MAX_CHARS } from "../../src/memory/ask.ts";
 import { waitFor } from "../support/wait.ts";
 
@@ -16,7 +21,10 @@ const STATE: ViewState = {
   waiting: [],
   approved: [],
   refileable: [],
+  needsReapproval: [],
   triggers: [],
+  tasks: [],
+  taskApprovals: [],
   recent: [],
   canTriage: false, version: { current: "0.6.1", latest: "0.7.0" },
   engine: { chain: ["claude", "codex", "ollama"], localModel: "qwen3.8:27b", judge: "qwen3.8:27b", last: { backend: "claude", model: null, modelRequested: null, when: "just now" } },
@@ -408,12 +416,16 @@ describe("an approved proposal runs once — one turn per proposal at the door (
       `const runningProposals = new Set(); const chatLog = []; const closeMenu = () => {}; const runCommand = async () => {};
        const refilingProposals = new Set(); const choice = () => ({}); const turnLine = () => ""; const refresh = async () => {};
        ${pick(/async function send\(text, proposal\) \{[\s\S]*?\n  \}\n/)}
-       ${pick(/function renderApproved\(items, again\) \{[\s\S]*?\n  \}\n/)}
+       ${pick(/function renderApproved\(items, again, legacy\) \{[\s\S]*?\n  \}\n/)}
        ${pick(/async function refile\(p, button\) \{[\s\S]*?\n  \}\n/)}
        return { send, renderApproved, runningProposals };`,
     )($, el, document, (t: string) => toasts.push(t), api, (cls: string, text: string) => void bubbles.push([cls, text])) as {
       send: (text: string, proposal?: string) => Promise<void>;
-      renderApproved: (items: readonly { id: string; what: string; decided: string }[], again?: readonly { id: string; what: string; spent: string }[]) => void;
+      renderApproved: (
+        items: readonly { id: string; what: string; decided: string }[],
+        again?: readonly { id: string; what: string; spent: string }[],
+        legacy?: readonly { id: string; what: string; approved: string; approvedAt: string; reason: "no-action" | "changed" }[],
+      ) => void;
       runningProposals: Set<string>;
     };
     const card = [{ id: "0123abcd-0001", what: "delete the old logs", decided: "just now" }];
@@ -491,6 +503,92 @@ describe("an approved proposal runs once — one turn per proposal at the door (
     answer({ ok: true, id: "new-id" });
     await Bun.sleep(0);
     expect(toasts.at(-1)).toBe("Filed again — it waits for your yes.");
+
+    // D-153 follow-up — an approval from before approvals named their action: never "Do it now", one button that
+    // files it again by id for a new yes, through the same route; nothing goes with it, nothing is approved or run.
+    const oldId = "6b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e";
+    const oldCard = [{ id: oldId, what: "read the real state of the server", approved: "yesterday", approvedAt: "2026-10-04T18:11:37.997Z", reason: "no-action" as const }];
+    page.renderApproved([], [], oldCard);
+    const card0 = $("approved").children[0]!;
+    expect(card0.children[1]!.textContent).toBe("Approved before approvals named their action — approve it again · allowed yesterday");
+    const reask = () => $("approved").children[0]!.children[2]!.children[0]!;
+    expect(reask().textContent).toBe("File it again for a yes");
+    expect(reask().disabled).toBe(false);
+    const drawn = JSON.stringify($("approved").children);
+    expect(drawn).not.toContain("Do it now");
+    expect(drawn).not.toContain("Running");
+    paths.length = 0;
+    bodies.length = 0;
+    reask().onclick!();
+    expect(reask().disabled).toBe(true);
+    expect(reask().textContent).toBe("Filing…");
+    expect(paths).toEqual([`/api/proposals/${oldId}/refile`]);
+    expect(bodies).toEqual([{}]);
+    page.renderApproved([], [], oldCard);
+    expect(reask().disabled).toBe(true);
+    reask().onclick!();
+    expect(paths).toHaveLength(1);
+    answer({ ok: true, id: "newer-id" });
+    await Bun.sleep(0);
+    expect(toasts.at(-1)).toBe("Filed again — it waits for your yes.");
+    // The next poll no longer lists it: the card is gone.
+    page.renderApproved([], [], []);
+    expect($("approved").children).toEqual([]);
+
+    // Review of PR #29: a record changed after its yes. The refile copies the edited text, so the card frames it as
+    // a new request, not as confirming what was approved.
+    page.renderApproved([], [], [{ ...oldCard[0]!, reason: "changed" as const }]);
+    expect($("approved").children[0]!.children[1]!.textContent).toBe("This text changed after your yes. Read it as a new request. · allowed yesterday");
+    expect(JSON.stringify($("approved").children)).not.toContain("approve it again");
+    expect($("approved").children[0]!.children[2]!.children[0]!.textContent).toBe("File it again for a yes");
+    expect(JSON.stringify($("approved").children)).not.toContain("Do it now");
+  });
+
+  test("/api/state lists an approval that names no action apart — never runnable — and drops it once it is asked again (D-153 follow-up)", async () => {
+    const home = await mkdtemp(join(tmpdir(), "om-agi-web-legacy-"));
+    try {
+      const dir = join(home, "proposals");
+      await mkdir(dir, { recursive: true });
+      const at = new Date("2026-10-05T12:00:00.000Z");
+      const base = (id: string, what: string) => ({
+        ...describeProposal({ id, subject: subjectId("example"), at: new Date("2026-10-04T18:10:51.504Z"), what, why: "w", impact: "i" }),
+      });
+      const decided = (p: Proposal) => {
+        const d = decideProposal(p, { outcome: "approved", at: "2026-10-04T18:11:37.997Z", by: "the owner", note: null });
+        if (typeof d === "string") throw new Error(d);
+        return d;
+      };
+      const bound = decided(base("bound", "approved after D-153"));
+      const withDigest = decided(base("old", "approved before D-153"));
+      const { actionDigest: _, ...decision } = withDigest.decision!;
+      const old = { ...withDigest, decision };
+      // Review of PR #29: a digest that is empty, or names an action the record no longer holds, cannot run either.
+      const blank = decided(base("blank", "a digest that is empty"));
+      const moved = decided(base("moved", "a digest for something else"));
+      for (const p of [bound, old, { ...blank, decision: { ...blank.decision!, actionDigest: "" } }, { ...moved, decision: { ...moved.decision!, actionDigest: "sha256:0000" } }]) {
+        await writeProposal(dir, p);
+      }
+
+      const lists = approvalLists(await readProposals(dir), at);
+      // "Do it now" is offered only for what `turn --proposal` would run.
+      expect(lists.approved.map((p) => p.id)).toEqual(["bound"]);
+      expect(lists.refileable).toEqual([]);
+      const when = { approved: ago("2026-10-04T18:11:37.997Z", at), approvedAt: "2026-10-04T18:11:37.997Z" };
+      expect([...lists.needsReapproval].sort((x, y) => x.id.localeCompare(y.id))).toEqual([
+        { id: "blank", what: "a digest that is empty", ...when, reason: "changed" },
+        { id: "moved", what: "a digest for something else", ...when, reason: "changed" },
+        { id: "old", what: "approved before D-153", ...when, reason: "no-action" },
+      ]);
+
+      // Filed again (the claim is what says so): in no list at all.
+      expect((await claimRefile(findProposal(await readProposals(dir), "old")!, "new-one", at)).ok).toBe(true);
+      const after = approvalLists(await readProposals(dir), at);
+      expect(after.needsReapproval.map((p) => p.id).sort()).toEqual(["blank", "moved"]);
+      expect(after.approved.map((p) => p.id)).toEqual(["bound"]);
+      expect(after.refileable).toEqual([]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   });
 });
 
@@ -1485,5 +1583,111 @@ describe("ask your memory (D-152): POST /api/memory-ask", () => {
     expect(PAGE_HTML).toContain('"\\n\\nSources: " + from');
     // The raw route stays for whoever must show raw pieces (the app's management views); the page no longer pastes them.
     expect(PAGE_HTML).not.toContain('api("/api/memory-search"');
+  });
+});
+
+describe("tasks (D-154): one API for the page and the app, every route a command a person could type", () => {
+  const TASK = { id: "t-0000abcd", goal: "g", status: "running" };
+  function taskDeps(code = 0) {
+    const { deps, runs } = fakeDeps();
+    const run: WebDeps["run"] = async (args) => {
+      runs.push(args);
+      if (args[1] === "list") return { code, stdout: code === 0 ? JSON.stringify({ tasks: [TASK], unreadable: [] }) : "", stderr: "ohmyagi task: nope" };
+      if (args[1] === "show") return { code, stdout: code === 0 ? JSON.stringify(TASK) : "", stderr: "ohmyagi task: no task t-0000abcd" };
+      if (args[1] === "new") return { code, stdout: code === 0 ? JSON.stringify({ ok: true, id: "t-0000abcd", detached: true, pid: 9 }) : "", stderr: "ohmyagi task: nothing was started — the brake is on" };
+      return { code, stdout: "", stderr: code === 0 ? "" : "ohmyagi task: no task" };
+    };
+    return { deps: { ...deps, run, taskScreen: async (id: string) => (id === "t-0000abcd" ? { ok: true as const, image: "data:image/png;base64,AA==", at: "t" } : { ok: false as const, reason: "no screenshot" }) }, runs };
+  }
+
+  test("list, show and the screenshot are read with GET; a bad id never reaches a command", async () => {
+    const { deps, runs } = taskDeps();
+    const h = handler(deps, "tok", HOSTS);
+    expect(await (await h(req("/api/tasks"))).json()).toEqual({ tasks: [TASK], unreadable: [] });
+    expect(await (await h(req("/api/tasks/t-0000abcd"))).json()).toEqual(TASK);
+    expect(await (await h(req("/api/tasks/t-0000abcd/screen"))).json()).toEqual({ ok: true, image: "data:image/png;base64,AA==", at: "t" });
+    expect((await h(req("/api/tasks/t-11111111/screen"))).status).toBe(404);
+    expect((await h(req("/api/tasks/..%2Fx"))).status).toBe(400);
+    expect((await h(req("/api/tasks/t-0000abcd/stop"))).status).toBe(405);
+    expect(runs).toEqual([
+      ["task", "list", "/a", "--subject", "example", "--json"],
+      ["task", "show", "t-0000abcd", "/a", "--subject", "example", "--json"],
+    ]);
+    const { deps: failing } = taskDeps(2);
+    const hf = handler(failing, "tok", HOSTS);
+    expect((await hf(req("/api/tasks/t-0000abcd"))).status).toBe(404);
+    expect((await hf(req("/api/tasks"))).status).toBe(500);
+    const { deps: bare } = fakeDeps();
+    expect((await handler(bare, "tok", HOSTS)(req("/api/tasks/t-0000abcd/screen"))).status).toBe(404);
+  });
+
+  test("a new task is `task new … --detach`, with every field checked; stop and resume are the commands", async () => {
+    const { deps, runs } = taskDeps();
+    const h = handler(deps, "tok", HOSTS);
+    const post = (path: string, body: unknown) => h(req(path, { method: "POST", body: JSON.stringify(body) }));
+    const ok = await post("/api/tasks", { goal: " fill the form ", operate: 2, allow: ["http://host.docker.internal:30999"], backend: "claude-local", budgetTurns: 6, budgetMinutes: 10, model: "haiku" });
+    expect(await ok.json()).toEqual({ ok: true, id: "t-0000abcd", detached: true, pid: 9 });
+    expect(runs[0]).toEqual([
+      "task", "new", "/a", "--subject", "example", "--goal", "fill the form", "--budget-turns", "6", "--budget-minutes", "10",
+      "--operate", "2", "--allow", "http://host.docker.internal:30999", "--backend", "claude-local", "--model", "haiku", "--detach", "--json", "--via", "web",
+    ]);
+    for (const bad of [{}, { goal: "" }, { goal: "-x" }, { goal: "g", operate: 3 }, { goal: "g", budgetTurns: 0 }, { goal: "g", budgetTurns: 1.5 }, { goal: "g", allow: "http://a" }, { goal: "g", allow: ["javascript:x"] }, { goal: "g", backend: "a b" }, { goal: "g", model: "--rm" }]) {
+      expect((await post("/api/tasks", bad)).status).toBe(400);
+    }
+    expect(runs).toHaveLength(1);
+    await post("/api/tasks/t-0000abcd/stop", {});
+    await post("/api/tasks/t-0000abcd/resume", {});
+    expect(runs.slice(1)).toEqual([
+      ["task", "stop", "t-0000abcd", "/a", "--subject", "example", "--json"],
+      ["task", "resume", "t-0000abcd", "/a", "--subject", "example", "--detach"],
+    ]);
+    expect((await post("/api/tasks/nope/stop", {})).status).toBe(400);
+    const { deps: braked } = taskDeps(4);
+    const hb = handler(braked, "tok", HOSTS);
+    const refused = await hb(req("/api/tasks", { method: "POST", body: JSON.stringify({ goal: "g" }) }));
+    expect(refused.status).toBe(409);
+    expect(((await refused.json()) as { error: string }).error).toContain("the brake is on");
+    expect((await hb(req("/api/tasks/t-0000abcd/stop", { method: "POST", body: "{}" }))).status).toBe(409);
+  });
+
+  test("D-156: an answer is answered in this process behind the page's key — never by running the CLI", async () => {
+    const { deps, runs } = taskDeps();
+    const answers: unknown[][] = [];
+    const h = handler({
+      ...deps,
+      taskAnswer: async (task, approval, verdict, stop) => {
+        answers.push([task, approval, verdict, stop]);
+        if (approval.startsWith("a-2")) return { ok: false as const, kind: "agent" as const, reason: "a turn that can run commands is running for this agent" };
+        return verdict === "deny" ? { ok: false as const, kind: "not-allowed" as const, reason: "not allowed yet (D-160)" } : { ok: false as const, kind: "missing" as const, reason: "no such approval" };
+      },
+    }, "tok", HOSTS);
+    const post = (path: string, body: unknown) => h(req(path, { method: "POST", body: JSON.stringify(body) }));
+    const id = "a-11111111-2222-4333-8444-555555555555";
+    expect((await post(`/api/tasks/t-0000abcd/approvals/${id}/approve`, { stop: true })).status).toBe(404);
+    const denied = await post(`/api/tasks/t-0000abcd/approvals/${id}/deny`, { stop: true });
+    expect(denied.status).toBe(409);
+    expect(((await denied.json()) as { reason: string }).reason).toContain("D-160");
+    expect((await post("/api/tasks/t-0000abcd/approvals/../approve", {})).status).toBe(404);
+    expect((await post("/api/tasks/t-0000abcd/approvals/a-1/approve", {})).status).toBe(400);
+    expect((await h(req(`/api/tasks/t-0000abcd/approvals/${id}/approve`, { method: "POST", body: "{}", token: "wrong" }))).status).toBe(401);
+    // Review of PR #24, finding 2: while a loosened turn of the agent runs, the page's answer is refused (403).
+    expect((await post("/api/tasks/t-0000abcd/approvals/a-21111111-2222-4333-8444-555555555555/approve", {})).status).toBe(403);
+    expect(answers.slice(0, 2)).toEqual([["t-0000abcd", id, "approve", false], ["t-0000abcd", id, "deny", true]]);
+    expect(runs).toEqual([]);
+    const { deps: bare } = fakeDeps();
+    expect((await handler(bare, "tok", HOSTS)(req(`/api/tasks/t-0000abcd/approvals/${id}/approve`, { method: "POST", body: "{}" }))).status).toBe(404);
+    expect(PAGE_HTML).toContain('id="taskAskBox"');
+    // D-160: no yes button that works for a credential.
+    expect(PAGE_HTML).toContain('"Not allowed yet (D-160)"');
+    expect(PAGE_HTML).toContain("if (a.approvable === false) yes.disabled = true;");
+    // D-158: an interrupted task carries its Resume button in the list.
+    expect(PAGE_HTML).toContain("Nothing resumes it on its own.");
+    expect(PAGE_HTML).toContain('api("/api/tasks/" + taskId + "/approvals/" + a.id + "/" + verdict, body)');
+  });
+
+  test("the page has a Tasks tab that uses exactly these routes", () => {
+    for (const id of ["tabTasks", "taskGoal", "taskOperate", "taskAllow", "taskStart", "taskList", "taskDetail"]) expect(PAGE_HTML).toContain(`id="${id}"`);
+    expect(PAGE_HTML).toContain('api("/api/tasks", body)');
+    expect(PAGE_HTML).toContain('api("/api/tasks/" + t.id + "/screen")');
   });
 });

@@ -40,7 +40,11 @@ import {
   describeProposal,
   ensureProposalsDir,
   findProposal,
+  askedAgain,
+  isUnboundApproval,
+  unboundReason,
   isProposalId,
+  needsReapproval,
   proposalKey,
   proposalLine,
   proposalPath,
@@ -653,7 +657,8 @@ describe("an approval is good for one turn", () => {
     const ran = { ...spendProposal(approvedOf("a turn ran it, or may have"), "turn-ran", at), id: "ran" };
     const unsent = { ...spendProposal(approvedOf("the turn sent nothing"), "turn-unsent", at), id: "unsent", sentNothing: true as const };
     const done = { ...spendProposal(approvedOf("sent nothing and filed again"), "turn-done", at), id: "done", sentNothing: true as const };
-    const again = { ...proposalOf("sent nothing and filed again"), id: "again", supersedes: "done" };
+    // Filed again after the yes, as a refile always is (a superseder from before the yes is not a refile of it).
+    const again = { ...proposalOf("sent nothing and filed again"), id: "again", supersedes: "done", at: "2026-09-29T13:00:00.000Z" };
     for (const p of [pending, ready, ran, unsent, done, again]) await writeProposal(dir.path, p);
 
     const inventory = await readProposals(dir.path);
@@ -704,6 +709,177 @@ describe("an approval is good for one turn", () => {
     await writeFile(join(dir.path, REFILED_DIR, "other.json"), "{not json");
     const after = await readProposals(dir.path);
     expect(refileProblem(after, findProposal(after, "other")!.proposal)).toEqual({ kind: "already", by: "unknown" });
+  });
+
+  test("an approval from before approvals named their action is asked for again, once, and never listed as spent or runnable (D-153 follow-up)", async () => {
+    const { env } = await sandbox();
+    const dir = await ensureProposalsDir(env, SUBJECT);
+    if (!dir.ok) throw new Error(dir.reason);
+    const at = new Date("2026-09-29T12:00:00.000Z");
+    /** Approved with no digest in its decision — before v0.10.0, or stripped. */
+    const legacyOf = (what: string, id: string, over: Partial<Proposal> = {}): Proposal => {
+      const approved = approvedOf(what);
+      const { actionDigest: _, ...decision } = approved.decision!;
+      return { ...approved, decision, id, ...over };
+    };
+    const legacy = legacyOf("an old yes", "legacy");
+    const ready = { ...approvedOf("approved and bound"), id: "ready" };
+    const unsent = { ...spendProposal(approvedOf("the turn sent nothing"), "turn-unsent", at), id: "unsent", sentNothing: true as const };
+    // Spent with no digest: a turn had it before D-153 — not legacy, and not filed again (it ran or may have).
+    const spentOld = legacyOf("an old yes, spent", "spent-old", { usedByTurn: "turn-old", usedAt: at.toISOString() });
+    // Already asked again: by the button (its supersedes), or by hand — a later twin of any state, or a pending one.
+    const viaButton = legacyOf("asked again by the button", "via-button");
+    const button = { ...proposalOf("asked again by the button"), id: "button-new", supersedes: "via-button", at: "2026-09-29T13:00:00.000Z" };
+    const byHand = legacyOf("asked again by hand", "by-hand");
+    const handTwin = { ...spendProposal(approvedOf("Asked again  by hand"), "turn-hand", at), id: "hand-twin", at: "2026-10-05T15:48:18.320Z" };
+    const waitingTwin = legacyOf("a twin is waiting", "waiting-twin");
+    const waiting = { ...proposalOf("a twin is waiting"), id: "waiting", at: "2026-09-01T00:00:00.000Z" };
+    // An earlier twin that was approved and spent answers nothing about a later yes.
+    const laterYes = legacyOf("an earlier twin ran", "later-yes");
+    const earlier = { ...spendProposal(approvedOf("an earlier twin ran"), "turn-earlier", at), id: "earlier", at: "2026-09-01T00:00:00.000Z" };
+    for (const p of [legacy, ready, unsent, spentOld, viaButton, button, byHand, handTwin, waitingTwin, waiting, laterYes, earlier]) {
+      await writeProposal(dir.path, p);
+    }
+
+    const inventory = await readProposals(dir.path);
+    const of = (id: string) => findProposal(inventory, id)!.proposal;
+    expect(isUnboundApproval(of("legacy"))).toBe(true);
+    expect(unboundReason(of("legacy"))).toBe("no-action");
+    expect(isUnboundApproval(of("ready"))).toBe(false);
+    expect(isUnboundApproval(of("spent-old"))).toBe(false);
+    expect(isUnboundApproval(of("waiting"))).toBe(false);
+    const problem = (id: string) => refileProblem(inventory, of(id));
+    expect(problem("legacy")).toBeUndefined();
+    expect(problem("later-yes")).toBeUndefined();
+    expect(problem("ready")?.kind).toBe("not-refileable");
+    expect(problem("spent-old")).toEqual({ kind: "not-refileable", reason: "turn turn-old ran it or may have — only an approval whose turn sent nothing is filed again" });
+    expect(problem("via-button")).toEqual({ kind: "already", by: "button-new" });
+    const twinOf = (id: string) => { const p = problem(id); return p?.kind === "asked-again" ? p.by.id : p; };
+    expect(twinOf("by-hand")).toBe("hand-twin");
+    expect(twinOf("waiting-twin")).toBe("waiting");
+    // Two lists, kept apart: the spent one that sent nothing, and the old yeses still to be asked for again.
+    expect(refileable(inventory).map((p) => p.id)).toEqual(["unsent"]);
+    expect(needsReapproval(inventory).map((p) => p.id).sort()).toEqual(["later-yes", "legacy"]);
+
+    // Claimed once among any number at once, the way a spend is; then it leaves the list.
+    const stored = findProposal(inventory, "legacy")!;
+    const claims = await Promise.all(Array.from({ length: 6 }, (_, n) => claimRefile(stored, `new-${n}`, at)));
+    expect(claims.filter((claim) => claim.ok)).toHaveLength(1);
+    const after = await readProposals(dir.path);
+    const won = findProposal(after, "legacy")!.proposal.refiledAs;
+    expect(won).toMatch(/^new-\d$/);
+    expect(refileProblem(after, findProposal(after, "legacy")!.proposal)).toEqual({ kind: "already", by: won! });
+    expect(needsReapproval(after).map((p) => p.id)).toEqual(["later-yes"]);
+    expect(refileable(after).map((p) => p.id)).toEqual(["unsent"]);
+  });
+
+  test("one twin rule, measured against the yes: a refusal the yes came after, or one the record supersedes, does not count (review of PR #29)", async () => {
+    const { env } = await sandbox();
+    const dir = await ensureProposalsDir(env, SUBJECT);
+    if (!dir.ok) throw new Error(dir.reason);
+    const refused = (what: string, id: string, at: string, decidedAt: string, over: Partial<Proposal> = {}): Proposal => ({
+      ...proposalOf(what), id, at, ...over,
+      decision: { outcome: "refused", at: decidedAt, by: "the owner", note: "no" },
+    });
+    const yes = (what: string, id: string, at: string, decidedAt: string, over: Partial<Proposal> = {}, digest = true): Proposal => {
+      const p = { ...proposalOf(what), id, at, ...over };
+      const d = decideProposal(p, { outcome: "approved", at: decidedAt, by: "the owner", note: null });
+      if (typeof d === "string") throw new Error(d);
+      if (digest) return d;
+      const { actionDigest: _, ...decision } = d.decision!;
+      return { ...d, decision };
+    };
+    // Repro 1: A refused; B the same what, filed with --changed (supersedes A), approved with no digest.
+    const a = refused("Restart nginx", "a", "2026-09-10T00:00:00.000Z", "2026-09-10T01:00:00.000Z");
+    const b = yes("Restart nginx", "b", "2026-09-11T00:00:00.000Z", "2026-09-11T01:00:00.000Z", { supersedes: "a", changed: "the config is fixed" }, false);
+    // Repro 2: C filed 09-10; D the same what, filed and refused 09-11; C approved 09-12 with no digest.
+    const c = yes("rotate the logs", "c", "2026-09-10T00:00:00.000Z", "2026-09-12T00:00:00.000Z", {}, false);
+    // Filed through the CLI, D would supersede C (--changed past a waiting twin): filed before the yes, not a refile.
+    const d = refused("rotate the logs", "d", "2026-09-11T00:00:00.000Z", "2026-09-11T01:00:00.000Z", { supersedes: "c" });
+    // A refusal filed after the yes is the newer answer: E leaves every list.
+    const e = yes("empty the trash", "e", "2026-09-10T00:00:00.000Z", "2026-09-10T01:00:00.000Z", {}, false);
+    const f = refused("empty the trash", "f", "2026-09-20T00:00:00.000Z", "2026-09-20T01:00:00.000Z");
+    // The spent-refile path (D-144 §2) asks the same rule: G's turn sent nothing, and G supersedes a refusal.
+    const g0 = refused("prune docker", "g0", "2026-09-10T00:00:00.000Z", "2026-09-10T01:00:00.000Z");
+    const g = { ...spendProposal(yes("prune docker", "g", "2026-09-11T00:00:00.000Z", "2026-09-11T01:00:00.000Z", { supersedes: "g0" }), "turn-g", new Date("2026-09-11T02:00:00.000Z")), sentNothing: true as const };
+    // Down a chain: H supersedes H1, which supersedes the refused H0, filed after H1's own refusal.
+    const h0 = refused("drop the cache", "h0", "2026-09-10T00:00:00.000Z", "2026-09-10T01:00:00.000Z");
+    const h1 = refused("drop the cache", "h1", "2026-09-11T00:00:00.000Z", "2026-09-11T01:00:00.000Z", { supersedes: "h0" });
+    const h = yes("drop the cache", "h", "2026-09-12T00:00:00.000Z", "2026-09-12T01:00:00.000Z", { supersedes: "h1" }, false);
+    for (const p of [a, b, c, d, e, f, g0, g, h0, h1, h]) await writeProposal(dir.path, p);
+
+    const inventory = await readProposals(dir.path);
+    const of = (id: string) => findProposal(inventory, id)!.proposal;
+    expect(refileProblem(inventory, of("b"))).toBeUndefined();
+    expect(refileProblem(inventory, of("c"))).toBeUndefined();
+    expect(refileProblem(inventory, of("h"))).toBeUndefined();
+    expect(refileProblem(inventory, of("g"))).toBeUndefined();
+    expect(askedAgain(inventory, of("e"))?.id).toBe("f");
+    expect(needsReapproval(inventory).map((p) => p.id).sort()).toEqual(["b", "c", "h"]);
+    expect(refileable(inventory).map((p) => p.id)).toEqual(["g"]);
+    // A twin still waiting counts whenever it was filed — even one this record supersedes.
+    await writeProposal(dir.path, { ...proposalOf("drop the cache"), id: "h-wait", at: "2026-09-01T00:00:00.000Z" });
+    const later = await readProposals(dir.path);
+    expect(askedAgain(later, findProposal(later, "h")!.proposal)?.id).toBe("h-wait");
+  });
+
+  test("twin times are compared as instants, not as text: mixed precision in one second, and an offset (review of PR #29)", async () => {
+    const { env } = await sandbox();
+    const dir = await ensureProposalsDir(env, SUBJECT);
+    if (!dir.ok) throw new Error(dir.reason);
+    /** Approved with no digest, the yes at `yesAt`. */
+    const unbound = (what: string, id: string, yesAt: string): Proposal => {
+      const d = decideProposal({ ...proposalOf(what), id, at: "2026-09-11T00:00:00.000Z" }, { outcome: "approved", at: yesAt, by: "the owner", note: null });
+      if (typeof d === "string") throw new Error(d);
+      const { actionDigest: _, ...decision } = d.decision!;
+      return { ...d, decision };
+    };
+    const refused = (what: string, id: string, at: string): Proposal => ({
+      ...proposalOf(what), id, at, decision: { outcome: "refused", at, by: "the owner", note: null },
+    });
+    // As text "…05Z" sorts after "…05.500Z"; as instants the refusal came half a second before the yes.
+    await writeProposal(dir.path, unbound("before by half a second", "p1", "2026-09-11T00:00:05.500Z"));
+    await writeProposal(dir.path, refused("before by half a second", "t1", "2026-09-11T00:00:05Z"));
+    // As text "…05.500Z" sorts before "…05Z"; as instants the refusal came half a second after the yes.
+    await writeProposal(dir.path, unbound("after by half a second", "p2", "2026-09-11T00:00:05Z"));
+    await writeProposal(dir.path, refused("after by half a second", "t2", "2026-09-11T00:00:05.500Z"));
+    // As text "…T01:30…+02:00" sorts after "…T00:00Z"; as an instant it is 23:30 the day before.
+    await writeProposal(dir.path, unbound("an offset", "p3", "2026-09-11T00:00:00Z"));
+    await writeProposal(dir.path, refused("an offset", "t3", "2026-09-11T01:30:00+02:00"));
+
+    const inventory = await readProposals(dir.path);
+    const twin = (id: string) => askedAgain(inventory, findProposal(inventory, id)!.proposal)?.id;
+    expect(twin("p1")).toBeUndefined();
+    expect(twin("p2")).toBe("t2");
+    expect(twin("p3")).toBeUndefined();
+    expect(needsReapproval(inventory).map((p) => p.id).sort()).toEqual(["p1", "p3"]);
+  });
+
+  test("an approval whose record no longer matches its yes, or whose digest is not one, cannot run and is asked for again (review of PR #29)", async () => {
+    const { env } = await sandbox();
+    const dir = await ensureProposalsDir(env, SUBJECT);
+    if (!dir.ok) throw new Error(dir.reason);
+    const bound = { ...approvedOf("approved and bound"), id: "bound" };
+    const empty = approvedOf("a digest that is empty");
+    const mismatch = approvedOf("a digest for something else");
+    await writeProposal(dir.path, bound);
+    await writeProposal(dir.path, { ...empty, id: "empty", decision: { ...empty.decision!, actionDigest: "" } });
+    await writeProposal(dir.path, { ...mismatch, id: "mismatch", decision: { ...mismatch.decision!, actionDigest: "sha256:0000" } });
+    // `null` on disk is read as "" — kept, never taken for "no digest".
+    const nulled = join(dir.path, "nulled.json");
+    const raw = JSON.parse(JSON.stringify({ ...approvedOf("a digest that is null"), id: "nulled" }));
+    raw.decision.actionDigest = null;
+    await writeFile(nulled, JSON.stringify(raw));
+
+    const inventory = await readProposals(dir.path);
+    const of = (id: string) => findProposal(inventory, id)!.proposal;
+    expect(unboundReason(of("bound"))).toBeUndefined();
+    for (const id of ["empty", "mismatch", "nulled"]) {
+      expect(unboundReason(of(id))).toBe("changed");
+      expect(refileProblem(inventory, of(id))).toBeUndefined();
+    }
+    expect(needsReapproval(inventory).map((p) => p.id).sort()).toEqual(["empty", "mismatch", "nulled"]);
+    expect(refileable(inventory)).toEqual([]);
   });
 
   test("a refile claim names a proposal that was written, one being written, or one that never will be", async () => {

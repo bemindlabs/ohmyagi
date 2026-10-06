@@ -86,6 +86,7 @@ var KNOWN_KINDS = Object.freeze([
 var LOOKING = new Set(["navigate", "back", "scroll", "hover", "read", "screenshot", "wait"]);
 var words = (...list) => `(?:^|[^a-z0-9])(?:${list.join("|")})(?:$|[^a-z0-9])`;
 var thai = (...list) => `(?:${list.join("|")})`;
+var cjk = (...list) => `(?:${list.join("|")})`;
 var matches = (source, text) => new RegExp(source, "u").test(text);
 var freezeRule = (rule) => Object.freeze({
   ...rule,
@@ -139,7 +140,10 @@ var SENSITIVE_RULES = Object.freeze([
     what: "typing into a field labelled as a password, PIN, code, key or token",
     text: [
       words("password", "passphrase", "passcode", "pin", "otp", "one-time code", "verification code", "security code", "2fa", "mfa", "api key", "secret", "token", "private key", "cvv", "cvc"),
-      thai("รหัสผ่าน", "รหัส", "พิน", "รหัสยืนยัน", "โทเคน")
+      thai("รหัสผ่าน", "รหัส", "พิน", "รหัสยืนยัน", "โทเคน"),
+      words("passwort", "kennwort", "geheimzahl", "mot de passe", "code secret", "contraseña", "contrasena", "clave", "código de verificación"),
+      words("wachtwoord", "hasło", "haslo", "senha", "palavra-passe"),
+      cjk("パスワード", "暗証番号", "認証コード", "密码", "密碼", "验证码", "驗證碼", "비밀번호", "암호", "인증번호", "인증 코드")
     ],
     roles: ["textbox", "searchbox", "spinbutton", "combobox", "field", "input"]
   },
@@ -149,7 +153,9 @@ var SENSITIVE_RULES = Object.freeze([
     what: "signing in, or granting an app access to an account",
     text: [
       words("sign in", "log in", "login", "authorize", "authorise", "allow access", "grant access", "connect account", "continue with google", "continue with apple", "sign in with"),
-      thai("เข้าสู่ระบบ", "ล็อกอิน", "อนุญาตการเข้าถึง", "ให้สิทธิ์")
+      thai("เข้าสู่ระบบ", "ล็อกอิน", "อนุญาตการเข้าถึง", "ให้สิทธิ์"),
+      words("anmelden", "einloggen", "se connecter", "connexion", "iniciar sesión", "iniciar sesion", "acceder"),
+      cjk("ログイン", "サインイン", "登录", "登錄", "로그인")
     ]
   },
   {

@@ -53,6 +53,11 @@ export interface BrowserHands {
   readonly operate: 1 | 2;
   /** A directory om-agi owns where the vendor's config file is written. */
   readonly dir: string;
+  /**
+   * claude's per-call limit for this server (its config's `timeout`, ms), when a call may legitimately wait:
+   * a sensitive action paused on the owner's answer (D-156) is a tool call that has not returned yet.
+   */
+  readonly toolTimeoutMs?: number;
 }
 
 /**
@@ -178,6 +183,9 @@ export function browserWiring(vendor: string, hands: BrowserHands, restraint: Re
             type: "http",
             url: browserMcpUrl(hands.port),
             headers: { Authorization: `Bearer ${hands.token}` },
+            // claude 2.1.289: "Per-server tool-call timeout in milliseconds. Overrides the MCP_TOOL_TIMEOUT
+            // environment variable for this server" (its config schema, read from the binary 2026-10-05).
+            ...(hands.toolTimeoutMs === undefined ? {} : { timeout: hands.toolTimeoutMs }),
           },
         },
       },

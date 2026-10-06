@@ -289,3 +289,24 @@ export function defaultEffective(): EffectiveDial {
     stopped: false,
   });
 }
+
+/**
+ * A step of a task with a browser acts through the browser only (review of PR #24, finding 1): write and run
+ * are held at 1 — the vendor's read-only flag goes on, claude gets no shell, no file tools and no web fetch —
+ * while reach and operate keep their levels, so the browser keeps the level the dial gives it.
+ *
+ * Why: a step that can run a command could answer its own task's approval (`task approve`, the web API with
+ * the page's key, or a release file signed with the task's key — all reachable by the owner's uid). With no
+ * shell it has no way to any of them. Lower only: a dial already below 1 stays where it is.
+ */
+export function browserOnly(effective: EffectiveDial): EffectiveDial {
+  const write = Math.min(effective.dial.write, 1) as Level;
+  const run = Math.min(effective.dial.run, 1) as Level;
+  if (write === effective.dial.write && run === effective.dial.run) return effective;
+  const dial: Dial = { ...effective.dial, write, run };
+  const why = "a step of a task with a browser acts through the browser only: no shell, no file writes (review of PR #24)";
+  const clamps: Clamp[] = [...effective.clamps];
+  if (write !== effective.dial.write) clamps.push({ category: "write", set: effective.dial.write, effective: write, why });
+  if (run !== effective.dial.run) clamps.push({ category: "run", set: effective.dial.run, effective: run, why });
+  return { ...effective, dial, act: actLevel(dial), clamps, notes: [...effective.notes, why] };
+}

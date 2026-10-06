@@ -46,7 +46,7 @@
  * `docker ps -a`.
  */
 
-import { randomBytes } from "node:crypto";
+import { generateKeyPairSync, randomBytes, type KeyObject } from "node:crypto";
 import { existsSync } from "node:fs";
 import { chmod, mkdir } from "node:fs/promises";
 import { connect } from "node:net";
@@ -85,7 +85,7 @@ export const PLAYWRIGHT_MCP_VERSION = "0.0.83";
  * `up` builds it instead of starting the old one. `test/browser/runtime.test.ts`
  * recomputes it: edit a file there and that test names the new value.
  */
-export const BROWSER_CONTEXT_SHA256 = "8fcabbcb556fc347261346e37ce6add86f4ba02080445927125a20d3578ce6a4";
+export const BROWSER_CONTEXT_SHA256 = "c3d08f65684e22166ea95e7bdeb81aefaa2b7cac95723c2568ce245684493f07";
 /** The local tag; never pushed. */
 export const BROWSER_IMAGE = `om-agi-browser:${PLAYWRIGHT_MCP_VERSION}-${BROWSER_CONTEXT_SHA256.slice(0, 12)}`;
 /** The port the guard in front of the MCP server listens on inside the container. */
@@ -191,6 +191,11 @@ export function dockerRunArgs(
     `OM_AGI_OPERATE=${record.operate}`,
     "--env",
     "OM_AGI_TOKEN",
+    // D-156: a task that can ask — its wait, and (by name only, like the token) its release key.
+    // D-156: a task that can ask — its wait. The release key is handed in after start (`handKey`), never here.
+    ...(record.approvalWaitSeconds === undefined || record.approvalWaitSeconds === 0 ? [] : ["--env", `OM_AGI_APPROVAL_WAIT=${record.approvalWaitSeconds}`]),
+    // Its release *public* key — it can only verify (review of PR #24, round 3).
+    ...(record.releasePublicKey === undefined ? [] : ["--env", `OM_AGI_RELEASE_PUBKEY=${record.releasePublicKey}`]),
     record.image,
   ];
 }
@@ -336,6 +341,11 @@ export interface BrowserUpOptions {
   readonly ttlSeconds?: number;
   /** The process whose death ends the container; `null` for one a person starts. */
   readonly owner?: number | null;
+  /**
+   * D-156: a held sensitive action waits this long for the owner's answer (1–3600 s) and goes ahead once on a
+   * yes. Omitted or 0: held is refused at once — a browser started by hand has nobody to ask.
+   */
+  readonly approvalWaitSeconds?: number;
   /** Build the image from {@link BROWSER_BUILD_DIR} when it is missing. Default true. */
   readonly build?: boolean;
   readonly io?: DockerIo;
@@ -347,7 +357,14 @@ export interface BrowserUpOptions {
 }
 
 export type BrowserUp =
-  | { readonly ok: true; readonly record: BrowserRecord; readonly built: boolean; readonly swept: readonly SweepAction[] }
+  | {
+      readonly ok: true;
+      readonly record: BrowserRecord;
+      readonly built: boolean;
+      readonly swept: readonly SweepAction[];
+      /** D-156: the key releases are signed with — only for a browser with a wait; held by the caller alone. */
+      readonly releaseKey?: KeyObject;
+    }
   | { readonly ok: false; readonly reason: string; readonly swept: readonly SweepAction[] };
 
 const PORT_TAKEN = /port is already allocated|address already in use/i;
@@ -371,6 +388,10 @@ export async function browserUp(options: BrowserUpOptions): Promise<BrowserUp> {
   if (badTask !== undefined) return { ok: false, reason: badTask, swept: [] };
   const operate = options.operate ?? 1;
   if (operate !== 1 && operate !== 2) return { ok: false, reason: "operate is 1 (look) or 2 (act)", swept: [] };
+  const approvalWaitSeconds = options.approvalWaitSeconds ?? 0;
+  if (!Number.isInteger(approvalWaitSeconds) || approvalWaitSeconds < 0 || approvalWaitSeconds > 3600) {
+    return { ok: false, reason: "an approval's wait is 0–3600 seconds", swept: [] };
+  }
   const ttlSeconds = options.ttlSeconds ?? DEFAULT_TTL_SECONDS;
   if (!Number.isInteger(ttlSeconds) || ttlSeconds < MIN_TTL_SECONDS || ttlSeconds > MAX_TTL_SECONDS) {
     return { ok: false, reason: `ttl must be ${MIN_TTL_SECONDS}–${MAX_TTL_SECONDS} seconds`, swept: [] };
@@ -438,6 +459,8 @@ export async function browserUp(options: BrowserUpOptions): Promise<BrowserUp> {
   const owner = options.owner === undefined || options.owner === null
     ? null
     : { pid: options.owner, start: procStat(options.owner)?.startTicks ?? null };
+  // D-156: an Ed25519 pair for a browser that can ask. Only the public half is recorded and handed in.
+  const signing = approvalWaitSeconds > 0 ? generateKeyPairSync("ed25519") : undefined;
   let record: BrowserRecord = {
     schema: BROWSER_SCHEMA,
     task,
@@ -452,6 +475,7 @@ export async function browserUp(options: BrowserUpOptions): Promise<BrowserUp> {
     owner,
     startedAt: new Date().toISOString(),
     ttlSeconds,
+    ...(signing === undefined ? {} : { approvalWaitSeconds, releasePublicKey: signing.publicKey.export({ type: "spki", format: "der" }).toString("base64") }),
   };
   // Exclusive: a second `up` of the same task that got past the check above loses here.
   if (!(await createRecord(env, record)).ok) return already();
@@ -480,6 +504,9 @@ export async function browserUp(options: BrowserUpOptions): Promise<BrowserUp> {
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
+  // D-156 (review of PR #24, round 3): the private key is returned to the caller — the task's runner, which is
+  // not dumpable — and goes nowhere else: not the record, not the container, not an argv or an environment.
+  if (signing !== undefined) return { ok: true, record, built, swept: sweep.actions, releaseKey: signing.privateKey };
   return { ok: true, record, built, swept: sweep.actions };
 }
 

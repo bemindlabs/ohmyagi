@@ -46,6 +46,7 @@ import { cmdRebuild } from "./commands/rebuild.ts";
 import { cmdSetup } from "./commands/setup.ts";
 import { cmdSoul } from "./commands/soul.ts";
 import { cmdStop } from "./commands/stop.ts";
+import { cmdTask } from "./commands/task.ts";
 import { cmdTriggers } from "./commands/triggers.ts";
 import { cmdTurn } from "./commands/turn.ts";
 import { cmdUsage } from "./commands/usage.ts";
@@ -209,6 +210,9 @@ async function main(rawArgv: readonly string[]): Promise<number> {
 
     case "browser":
       return cmdBrowser(rest);
+
+    case "task":
+      return cmdTask(rest);
 
     case "help":
     case "--help":

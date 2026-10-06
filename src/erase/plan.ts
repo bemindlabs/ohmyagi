@@ -52,6 +52,10 @@
  * and never deleted for you (see {@link verifyErase}).
  */
 
+import { endTasksForErase, type EndedTask } from "../task/control.ts";
+import { personalPath } from "../guard/personal.ts";
+import { isFinal, listTasks, TASKS_DIR } from "../task/store.ts";
+import { RUNS_DIR } from "../decide/runs.ts";
 import { rmdir, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { dockerIo, killContainer, readBrowserRecords, type DockerIo } from "../browser/store.ts";
@@ -188,6 +192,10 @@ export interface ErasePlan {
   readonly stateRoot: string;
   readonly dataRoot: string;
   readonly trees: readonly TreeTarget[];
+  /** The subject's tasks that had not ended at planning time (D-154); every unfinished one is ended at commit. */
+  readonly tasks: readonly string[];
+  /** Where the subject's tasks are (`personal/tasks/`). */
+  readonly tasksAt: string;
   /**
    * The subject's browser tasks (D-151) whose containers `docker kill` ends
    * before their records go with the `browser` tree. Killed first: a running
@@ -460,6 +468,14 @@ export async function planErase(
     }
   }
 
+  // Review of PR #22: a running task would go on writing (its next step's turn, a ledger line) after the
+  // certificate. Its unfinished tasks are ended first, at commit; listed here so the dry run says so.
+  const tasksAt = join(personalPath(env, subject), TASKS_DIR);
+  const tasks = (await listTasks(tasksAt, subject)).records.filter((record) => !isFinal(record.status)).map((record) => record.id);
+  if (tasks.length > 0) {
+    notes.push(`${tasks.length} task(s) of this subject have not ended (${tasks.join(", ")}); they are stopped, and their step's turn ended, before anything is removed.`);
+  }
+
   const browsers = (await readBrowserRecords(env, subject)).records.map((record) => ({
     task: record.task,
     container: record.container,
@@ -480,6 +496,8 @@ export async function planErase(
     stateRoot: state,
     dataRoot: data,
     trees,
+    tasks,
+    tasksAt,
     browsers,
     files,
     emptyParents,
@@ -568,6 +586,8 @@ export interface TreeResult {
 
 /** What the run actually did. Every number here is observed, none derived. */
 export interface EraseResult {
+  /** The subject's unfinished tasks, ended before anything was removed (review of PR #22). */
+  readonly tasks: readonly EndedTask[];
   /** Each recorded browser task's container, and whether `docker kill` ended it. */
   readonly browsers: readonly { readonly task: string; readonly container: string; readonly ok: boolean; readonly detail: string }[];
   readonly trees: readonly TreeResult[];
@@ -591,8 +611,10 @@ export interface EraseResult {
  * @throws {Error} when the ledger lock is held. A partial deletion reported as
  *   a success is the worst outcome available here, so it is not swallowed.
  */
-export async function commitErase(plan: ErasePlan, docker: DockerIo = dockerIo()): Promise<EraseResult> {
-  // First, before anything is removed: a running container writes into the recording below.
+export async function commitErase(plan: ErasePlan, docker: DockerIo = dockerIo(), endTasks: typeof endTasksForErase = endTasksForErase): Promise<EraseResult> {
+  // First of all: the subject's tasks, so no step starts and no step's turn writes a ledger line after this.
+  const tasks = await endTasks(plan.tasksAt, plan.subject, join(plan.stateRoot, RUNS_DIR), { now: new Date() });
+  // Then, before anything is removed: a running container writes into the recording below.
   const browsers: { task: string; container: string; ok: boolean; detail: string }[] = [];
   for (const browser of plan.browsers) {
     browsers.push({ ...browser, ...(await killContainer(docker, browser.container)) });
@@ -648,7 +670,7 @@ export async function commitErase(plan: ErasePlan, docker: DockerIo = dockerIo()
       ? await dropCollection(plan.vector.url, plan.subject)
       : null;
 
-  return { browsers, trees, files, emptyParents, blocks, ledger, ledgerDirRemoved, vector };
+  return { tasks, browsers, trees, files, emptyParents, blocks, ledger, ledgerDirRemoved, vector };
 }
 
 /** The verdict. Never a boolean: "clean" and "clean enough" are different facts. */
@@ -856,6 +878,7 @@ export async function verifyErase(
   // A browser container docker would not kill still runs with this subject's recording mounted.
   const failures =
     result.browsers.filter((browser) => !browser.ok).length +
+    result.tasks.filter((task) => task.turn !== null && task.turn.survivors.length > 0).length +
     (result.vector !== null && !result.vector.dropped ? 1 : 0) +
     result.files.filter((file) => !file.removed).length +
     result.blocks.filter((block) => block.outcome === "refused").length +

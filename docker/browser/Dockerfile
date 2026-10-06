@@ -53,7 +53,7 @@ RUN apt-get update \
  && chmod 1777 /home/browser
 
 COPY --chmod=0555 entrypoint.sh /opt/om-agi/entrypoint.sh
-COPY --chmod=0444 proxy.mjs guard.mjs mcp-config.mjs record.cjs sensitive.cjs /opt/om-agi/
+COPY --chmod=0444 proxy.mjs guard.mjs mcp-config.mjs record.cjs release.cjs describe.cjs cdp-read.cjs sensitive.cjs /opt/om-agi/
 
 LABEL org.opencontainers.image.title="om-agi-browser" \
       org.opencontainers.image.description="Per-task headless Chromium + Playwright MCP behind an egress allowlist (om-agi D-151/D-155)" \

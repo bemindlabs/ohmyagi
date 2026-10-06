@@ -46,6 +46,7 @@ import {
   describeProposal,
   ensureProposalsDir,
   findProposal,
+  unboundReason,
   proposalKey,
   proposalLine,
   proposalsDir,
@@ -238,9 +239,10 @@ async function textsFrom(
 /**
  * `--refile <id>` (D-144 §2): the three fields from a spent approval's own record, never from the command line.
  *
- * Only for an approval whose turn sent nothing ({@link refileProblem}), and once. What is filed is a new
- * proposal — pending, needing a new yes — that names the old one in `supersedes` and says why in `changed`, and
- * keeps who first filed it (`filedBy`, `fromTurn`): the text is still the agent's, or the person's, words.
+ * Only for an approval whose turn sent nothing, or one given before approvals named their action (D-153), which
+ * no turn will run ({@link refileProblem}) — and once. What is filed is a new proposal — pending, needing a new
+ * yes — that names the old one in `supersedes` and says why in `changed`, and keeps who first filed it
+ * (`filedBy`, `fromTurn`): the text is still the agent's, or the person's, words.
  */
 /** Why a refile was refused as used up — naming the new proposal only when there is one to find. */
 async function filedAgainAlready(dir: string, id: string, as: string): Promise<string> {
@@ -275,13 +277,27 @@ async function refileTexts(
     ERR.line(await filedAgainAlready(dir, id, problem.by));
     return { ok: false, code: PROPOSAL_REPEATED };
   }
+  if (problem?.kind === "asked-again") {
+    // The one twin rule (`askedAgain`): the lists ask it too, so what this refuses is not listed either.
+    ERR.line(`ohmyagi: ${id} was asked again already, as ${problem.by.id}. Nothing was filed.`);
+    ERR.line(`  ${proposalLine(problem.by)}`);
+    if (problem.by.decision?.note != null) ERR.line(`    note: ${problem.by.decision.note}`);
+    return { ok: false, code: PROPOSAL_REPEATED };
+  }
   if (problem !== undefined) {
     ERR.line(`ohmyagi: ${id} cannot be filed again from its record: ${problem.reason}. Nothing was filed.`);
     ERR.line(`  ${proposalLine(stored.proposal)}`);
     return { ok: false, code: DIAL_REFUSED };
   }
-  const { what, why, impact, usedByTurn } = stored.proposal;
-  return { ok: true, what, why, impact, changed: `filed again: turn ${usedByTurn} took its approval and sent nothing`, from: stored };
+  const { what, why, impact, usedByTurn, decision } = stored.proposal;
+  const unbound = unboundReason(stored.proposal);
+  const changed =
+    unbound === "no-action"
+      ? `filed again: approved ${decision?.at ?? ""} before approvals named their action (D-153), so that yes cannot run`
+      : unbound === "changed"
+        ? `filed again: approved ${decision?.at ?? ""}, and the record no longer holds the action that yes named (D-153), so it cannot run`
+        : `filed again: turn ${usedByTurn} took its approval and sent nothing`;
+  return { ok: true, what, why, impact, changed, from: stored };
 }
 
 async function cmdNew(argv: readonly string[]): Promise<number> {
@@ -291,7 +307,7 @@ async function cmdNew(argv: readonly string[]): Promise<number> {
 
   const refile = options.get("refile");
   if (refile !== undefined && (refile === "" || ["what", "why", "impact", "from", "changed"].some((key) => options.has(key)))) {
-    return usageError("--refile takes the id of a spent proposal, and its text comes from that record — pass no --what, --why, --impact, --from or --changed");
+    return usageError("--refile takes the id of an approved proposal, and its text comes from that record — pass no --what, --why, --impact, --from or --changed");
   }
   const typed = refile === undefined ? await textsFrom(options) : undefined;
   if (typed !== undefined && !typed.ok) return typed.code;
@@ -306,10 +322,11 @@ async function cmdNew(argv: readonly string[]): Promise<number> {
   const from = refiled?.ok === true ? refiled.from : undefined;
 
   const key = proposalKey(texts.what);
-  const blocking = blockingProposal(read.inventory, key);
-  // A refile never goes past a twin that is waiting or refused: its `changed` is a fact about the old turn, not
-  // something new about the question.
-  if (blocking !== undefined && (texts.changed === null || refile !== undefined)) {
+  // A refile has asked its twin question already, in `refileProblem` (`askedAgain`) — the same rule every list asks,
+  // so a refile is never refused here for a twin the lists did not count (review of PR #29). A typed proposal asks
+  // `blockingProposal`: a twin waiting or refused stops it unless --changed says what is new.
+  const blocking = from === undefined ? blockingProposal(read.inventory, key) : undefined;
+  if (blocking !== undefined && texts.changed === null) {
     ERR.line(
       `ohmyagi: this subject has already had that asked. Nothing was filed.\n` +
         `  ${proposalLine(blocking)}`,
@@ -384,7 +401,14 @@ async function cmdNew(argv: readonly string[]): Promise<number> {
   ERR.line(`filed: ${path}`);
   if (from !== undefined) {
     const first = from.proposal.filedBy === "agent" ? ` First filed by the agent${from.proposal.fromTurn === null ? "" : ` (turn ${from.proposal.fromTurn})`}.` : "";
-    ERR.line(`  filed again from ${refile}, whose turn sent nothing. It waits for a yes of its own; nothing was approved or run.${first}`);
+    const unbound = unboundReason(from.proposal);
+    const because =
+      unbound === "no-action"
+        ? `approved before approvals named their action (D-153), so no turn would run that yes. ${refile} leaves every list`
+        : unbound === "changed"
+          ? `whose record no longer holds the action its yes named (D-153), so no turn would run that yes. ${refile} leaves every list`
+          : `whose turn sent nothing`;
+    ERR.line(`  filed again from ${refile}, ${because}. It waits for a yes of its own; nothing was approved or run.${first}`);
   } else if (blocking !== undefined) {
     ERR.line(
       `  supersedes ${blocking.id} — ${blocking.decision === null ? "pending" : blocking.decision.outcome} ` +

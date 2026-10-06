@@ -6,7 +6,7 @@
  */
 
 import { firedPath, nextDue, parseTriggers, readFired, triggersDirFor, TRIGGERS_FILE } from "../../src/decide/triggers.ts";
-import { proposalsDir, readProposals, refileable } from "../../src/decide/proposals.ts";
+import { proposalsDir, readProposals } from "../../src/decide/proposals.ts";
 import { readTriage, typesafeKey } from "../../src/decide/triage.ts";
 import { engineCommand } from "../../src/guard/hooks.ts";
 import { query } from "../../src/ledger/store.ts";
@@ -15,11 +15,16 @@ import { runGuarded } from "../../src/spawn.ts";
 import { runWithDeadline } from "../../src/web/deadline.ts";
 import { subjectId, type SubjectId } from "../../src/types.ts";
 import { startWeb, tailnetNames } from "../../src/web/server.ts";
-import { ago, excerpt, levelSentence, operateSentence, remoteForPage, triageChips, type AgentInfo, type PrivacyState, type SettingsState, type ViewState } from "../../src/web/view.ts";
+import { ago, approvalLists, excerpt, levelSentence, operateSentence, remoteForPage, triageChips, type AgentInfo, type PrivacyState, type SettingsState, type ViewState } from "../../src/web/view.ts";
+import { latestScreen, pendingApprovals, recentTasks } from "../../src/task/screen.ts";
+import { answerHeld } from "../../src/task/answer.ts";
+import { tasksDir } from "../../src/task/store.ts";
 import { basisDirFor, readBasis, recordState } from "../../src/consent/basis.ts";
 import { listMemories, memoryGraph, readMemoryFile, whoMentions } from "../../src/web/memories.ts";
 import { keyPrint, loadOrCreateKey, replaceKey } from "../../src/web/key.ts";
 import { encodeQr, qrTerminal } from "../../src/web/qr.ts";
+import { linkLines } from "../../src/web/banner.ts";
+import { isatty } from "node:tty";
 import { addSubscription, forgetAll, forgetEverything, notifyAll, pushDirFor, removeSubscription, subscriptionsFor, WaitingWatch, type Fetcher } from "../../src/web/push.ts";
 import { profileOf } from "../../src/soul/profile.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -53,7 +58,6 @@ async function gather(dir: string, id: SubjectId, options: ReadonlyMap<string, s
   const pdir = await proposalsDir(dialEnv(), id);
   const inventory = pdir.ok ? await readProposals(pdir.path) : { proposals: [], unreadable: [] };
   const waiting = [];
-  const approved = [];
   for (const { proposal } of [...inventory.proposals].sort((a, b) => b.proposal.at.localeCompare(a.proposal.at))) {
     if (proposal.decision === null) {
       const triage = pdir.ok ? await readTriage(pdir.path, proposal.id) : undefined;
@@ -66,8 +70,6 @@ async function gather(dir: string, id: SubjectId, options: ReadonlyMap<string, s
         byAgent: (proposal as { filedBy?: string }).filedBy === "agent",
         chips: triage === undefined ? [] : triageChips(triage),
       });
-    } else if (proposal.decision.outcome === "approved" && proposal.usedByTurn === null) {
-      approved.push({ id: proposal.id, what: proposal.what, decided: ago(proposal.decision.at, now) });
     }
   }
 
@@ -104,10 +106,13 @@ async function gather(dir: string, id: SubjectId, options: ReadonlyMap<string, s
     },
     stopped: verdict.effective.stopped,
     waiting,
-    approved,
-    // D-144 §2 — the rule is the store's (`refileProblem`), the same one `proposal new --refile` asks.
-    refileable: refileable(inventory).map((p) => ({ id: p.id, what: p.what, spent: p.usedAt === null ? "" : ago(p.usedAt, now) })),
+    // D-144 §2 and D-153 follow-up — the rules are the store's (`refileProblem`), the ones `proposal new --refile`
+    // asks. An approval that names no action is never in `approved`: `turn` refuses it, so it is not offered with
+    // "Do it now"; it is in `needsReapproval`, or — asked again already — in no list at all.
+    ...approvalLists(inventory, now),
     triggers,
+    tasks: await recentTasks(dialEnv(), id),
+    taskApprovals: await pendingApprovals(dialEnv(), id, now),
     recent,
     canTriage: (await typesafeKey(process.env)) !== undefined,
     version: { current: VERSION, latest: (await readCheck(stateRoot(homedir(), process.env)))?.latest ?? null },
@@ -413,6 +418,12 @@ export async function cmdWeb(argv: readonly string[]): Promise<number> {
         count: async (key) => (await subscriptionsFor(pushDir, key)).length,
         clear: (key) => forgetEverything(pushDir, key, relayFetch),
       },
+      taskScreen: (task) => latestScreen(dialEnv(), id, task),
+      taskAnswer: async (task, approval, verdict, stop) => {
+        const tasks = await tasksDir(dialEnv(), id);
+        if (!tasks.ok) return { ok: false as const, kind: "no-task" as const, reason: tasks.reason };
+        return answerHeld({ env: dialEnv(), tasks: tasks.path, subject: id, task, approval, verdict, by: "the owner, on the web page", stop, now: new Date(), from: "web" });
+      },
       run: async (args, runOptions) => {
         if (runOptions?.timeoutMs === undefined) {
           const out = await runGuarded([...engineCommand().argv, ...args]);
@@ -433,13 +444,26 @@ export async function cmdWeb(argv: readonly string[]): Promise<number> {
       onRotate: () => console.error(dim(`ohmyagi: the page's key was changed from the page — every paired phone and every old link stop working${keyFile ? `; the new one is in ${keyFile}` : ""}.`)),
     },
   );
+  // D-162: the key goes only to a terminal. A service, a pipe or a file keeps what it is given (journald keeps
+  // stdout and stderr both), so there the link is printed without its key — the key file's path instead, or the
+  // key masked when there is no file. `isatty(1)`, never `process.stdout` (bin/shared.ts says why).
+  const terminal = isatty(1);
+  const shown = linkLines(server.url, { terminal, ...(keyFile === undefined || keyFile === "" ? {} : { keyFile: resolve(keyFile) }) });
   console.log(bold(`${loaded.soul.role.name} — open this in your browser:`));
-  console.log(`  ${server.url}`);
+  console.log(`  ${shown.link}`);
+  if (shown.note !== undefined) console.log(dim(`  ${shown.note}`));
   if (names.length > 0) console.log(dim(`  also answers as ${[hostname, ...names.slice(1)].join(", ")} — the same key after #t=`));
   // S14.2: the app pairs by scanning the link rather than typing a 64-character key.
   if (options.has("qr")) {
-    const modules = encodeQr(server.url, "M");
-    console.log(modules === null ? dim("  (the link is too long for a code — paste it into the app instead)") : `${qrTerminal(modules)}\n${dim("  Scan with the Oh My AGI app. The code is the link, key included — show it only to your own phone.")}`);
+    // The code is the link, key included: a log that kept it would be a log anyone could pair from (D-162).
+    const modules = terminal ? encodeQr(server.url, "M") : undefined;
+    console.log(
+      modules === undefined
+        ? dim("  (no pairing code here — it holds the key and this output is not a terminal; run --qr at a terminal, or pair from the page)")
+        : modules === null
+          ? dim("  (the link is too long for a code — paste it into the app instead)")
+          : `${qrTerminal(modules)}\n${dim("  Scan with the Oh My AGI app. The code is the link, key included — show it only to your own phone.")}`,
+    );
   }
   console.log(
     dim(
@@ -448,7 +472,8 @@ export async function cmdWeb(argv: readonly string[]): Promise<number> {
           ? "On loopback, reached through the https proxy in front of it. "
           : "Only this computer can reach it. "
         : `Listening on ${hostname}: anything that can reach that address and has the link can use it. `) +
-        "The link carries a one-time key; keep it to yourself. Ctrl-C stops the page (D-060).",
+        (terminal ? "The link carries a one-time key; keep it to yourself." : "The key is never printed off a terminal (D-162).") +
+        " Ctrl-C stops the page (D-060).",
     ),
   );
   // A stop lets what is running finish (an import that has written its file and is rebuilding the index, a

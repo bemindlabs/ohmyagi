@@ -17,10 +17,13 @@ import {
 } from "../../src/exec/index.ts";
 import {
   describeRun,
+  noteEnded,
   removeRunRecord,
   writeRunRecord,
 } from "../../src/decide/runs.ts";
 import { judgeConfig, judgeEgress, judgeInput, loadLexicon, recordBlocked, screen, verdictFindings } from "../../src/egress/index.ts";
+import { browserOnly } from "../../src/decide/effective.ts";
+import { pendingAnywhere } from "../../src/task/screen.ts";
 import { RecordingExec, canAppend, modelOfTurn, type RecordingOptions } from "../../src/ledger/index.ts";
 import { loadPrices } from "../../src/pricing/table.ts";
 import { printable } from "../../src/identity/shapes.ts";
@@ -66,6 +69,10 @@ import {
 } from "../../src/memory/index.ts";
 import { isKnownBackend, loadSoul, renderSoul, resolveSoulDir, sha256 } from "../../src/soul/index.ts";
 import { isLocalBackend } from "../../src/web/turninfo.ts";
+import { readBrowserRecords } from "../../src/browser/store.ts";
+import { wiringDir } from "../../src/browser/paths.ts";
+import type { BrowserHands } from "../../src/browser/mcp-config.ts";
+import { browserTaskProblem, browserToolTimeoutMs, stepTimeoutMs, taskForTurn, type TaskRecord } from "../../src/task/index.ts";
 import { subjectId, type SubjectId } from "../../src/types.ts";
 import { DIAL_REFUSED, decideDial, dialEnv, dialLine, heldNote } from "../dial.ts";
 import { triageIfEnabled } from "../triage.ts";
@@ -121,7 +128,7 @@ async function readPromptFrom(path: string): Promise<string> {
 const TURN_USAGE =
   "usage: ohmyagi turn <dir> --subject <id> (--prompt <text> | --prompt-file <path> | --proposal <id>) " +
   "[--backend a,b,c] [--route auto|local|cloud] [--model <m> | --model <backend>=<m>,…] [--private] [--proposal <id>] [--no-recall] [--no-proposals] " +
-  "[--recall-chars <n>] [--history-json <[{role,text}]>] [--json]";
+  "[--recall-chars <n>] [--history-json <[{role,text}]>] [--task <id>] [--json]";
 
 /**
  * The approval `--proposal` names, or the exit code that stops the turn.
@@ -454,6 +461,15 @@ async function turnOnce(argv: readonly string[], took: Took): Promise<number> {
     if (!parsedHistory.ok) return usageError(`${TURN_USAGE} — ${parsedHistory.reason}`);
     history = parsedHistory.items;
   }
+  // D-154: a task's step. The task names this turn's timeout and — when it has one — its browser.
+  const taskId = options.get("task");
+  let task: TaskRecord | undefined;
+  if (taskId !== undefined) {
+    if (underApproval) return usageError("--task cannot go with --proposal: a step of a task is not an approved action. Nothing was sent.");
+    const found = await taskForTurn(dialEnv(), id, taskId);
+    if (!found.ok) return usageError(`${found.reason}. Nothing was sent.`);
+    task = found.record;
+  }
   const recallChars = Number(options.get("recall-chars") ?? String(DEFAULT_RECALL_CHARS));
   if (!Number.isInteger(recallChars) || recallChars < 0) {
     return usageError(`${TURN_USAGE} — --recall-chars is a whole number of characters, 0 or more`);
@@ -537,12 +553,27 @@ async function turnOnce(argv: readonly string[], took: Took): Promise<number> {
     );
   }
 
-  const restraint = restrain(verdict.effective);
+  // Review of PR #24, finding 1: a step of a task with a browser has the browser and nothing else.
+  const effective = task !== undefined && task.operate >= 1 ? browserOnly(verdict.effective) : verdict.effective;
+  const restraint = restrain(effective);
+  // Review of PR #24, finding 2: a turn that can run commands does not start while one of this agent's tasks is
+  // paused on the owner's answer — such a turn could reach the answer itself.
+  if (restraint.loosened) {
+    const waiting = await pendingAnywhere(dialEnv(), new Date());
+    if (waiting.length > 0) {
+      console.error(
+        `ohmyagi: nothing was sent — task ${waiting[0]!.task} (agent ${waiting[0]!.subject}) is waiting on your answer to a held action (${waiting[0]!.id}). ` +
+          "A turn that can run commands waits until it is answered: answer it on the web page or at a terminal (`ohmyagi task show`).",
+      );
+      return DIAL_REFUSED;
+    }
+  }
+  if (effective !== verdict.effective) console.error(dimErr(`ohmyagi: task ${task!.id}: this step acts through the browser only — no shell, no file tools`));
   // S5.1 AC2 (D-052): the categories are set apart but act together, so a turn
   // whose settings disagree says which one is in force.
-  const held = heldNote(verdict.effective.dial);
-  if (held !== "") console.error(dimErr(`ohmyagi: acts at ${verdict.effective.act}${held}`));
-  const loosened = loosenedNote(verdict.effective);
+  const held = heldNote(effective.dial);
+  if (held !== "") console.error(dimErr(`ohmyagi: acts at ${effective.act}${held}`));
+  const loosened = loosenedNote(effective);
   // Printed before the prompt goes, not after: this is the one line that says a
   // turn may write to the disk, and it is worth nothing once it already has.
   if (loosened !== undefined) console.error(dimErr(`ohmyagi: ${loosened}`));
@@ -590,7 +621,7 @@ async function turnOnce(argv: readonly string[], took: Took): Promise<number> {
       }
     : chooseRoute({
         held: split?.held ?? 0,
-        acting: verdict.effective.act >= 2,
+        acting: effective.act >= 2,
         preference: routePreference,
         localAvailable,
       });
@@ -610,11 +641,38 @@ async function turnOnce(argv: readonly string[], took: Took): Promise<number> {
     console.error(dimErr(`ohmyagi: model: ${given}${own.length === 0 ? "" : `; ${own.join(", ")} run their own default`}`));
   }
 
+  // D-154/D-155 — a task with a browser hands this step its MCP config: claude and claude-local only (D-157),
+  // and only while the dial lets the browser be used. Asked before anything is sent.
+  let browser: BrowserHands | undefined;
+  if (task?.browser != null) {
+    const problem = browserTaskProblem(backendIds, restraint.operate);
+    if (problem !== undefined) {
+      console.error(`ohmyagi: nothing was sent — ${problem}`);
+      return DIAL_REFUSED;
+    }
+    const { records } = await readBrowserRecords(dialEnv(), id);
+    const record = records.find((entry) => entry.task === task!.browser!.task);
+    if (record === undefined) {
+      console.error(`ohmyagi: nothing was sent — task ${task.id}'s browser is not running (no record for ${task.browser.task}).`);
+      return 1;
+    }
+    const toolTimeoutMs = browserToolTimeoutMs(task);
+    browser = {
+      port: record.port,
+      token: record.token,
+      operate: record.operate,
+      dir: wiringDir(dialEnv(), id, record.task),
+      ...(toolTimeoutMs === undefined ? {} : { toolTimeoutMs }),
+    };
+    console.error(dimErr(`ohmyagi: task ${task.id}: this step has its browser (operate ${Math.min(restraint.operate, record.operate)}, ${record.allowed.join(", ")})`));
+  }
+
   // D-045 — level 1 is "propose": the vendor is read-only already, and this
   // tells the model where to put what it would have done.
   const compose = (att: Attachment | undefined, talk: string) => {
     const parts = [att === undefined ? soulText : withRecall(soulText, att), talk].filter((p) => p !== "").join("\n\n");
-    return verdict.effective.act === 1 ? `${parts}\n\n${PROPOSE_INSTRUCTION}` : parts;
+    // A task's step reports in its own block (src/task/prompt.ts), not as proposals.
+    return effective.act === 1 && task === undefined ? `${parts}\n\n${PROPOSE_INSTRUCTION}` : parts;
   };
   const system = compose(attachment, conversationBlock(history));
   const cloudSystem = compose(cloudAttachment, conversationBlock(cloudHistory.kept, cloudHistory.held));
@@ -734,11 +792,9 @@ async function turnOnce(argv: readonly string[], took: Took): Promise<number> {
   // one. A failure to write it does not stop the turn — a kill switch that can
   // veto work is a worse failure than one that misses a turn — but it is said.
   let runRecordPath: string | undefined;
+  const runRecord = describeRun({ turnId, subject: id, backends: backendIds, at: new Date(), loosened: restraint.loosened });
   try {
-    runRecordPath = await writeRunRecord(
-      dialEnv(),
-      describeRun({ turnId, subject: id, backends: backendIds, at: new Date() }),
-    );
+    runRecordPath = await writeRunRecord(dialEnv(), runRecord);
   } catch (error) {
     console.error(
       `ohmyagi: could not write the run record (${String(error)}). The turn is going ahead; ` +
@@ -749,13 +805,22 @@ async function turnOnce(argv: readonly string[], took: Took): Promise<number> {
 
   // S5.2 AC4 (D-043) — a turn allowed to act reports what it changed before
   // it ends. The snapshot is only taken when the vendor may write at all.
-  const before = verdict.effective.act >= 2 ? await snapshotTree(workdir) : undefined;
+  const before = effective.act >= 2 ? await snapshotTree(workdir) : undefined;
 
   const sentAt = new Date();
   let result: TurnResult;
   try {
-    result = await chain.run({ subject: id, prompt, system, restraint });
+    result = await chain.run({
+      subject: id,
+      prompt,
+      system,
+      restraint,
+      ...(browser === undefined ? {} : { browser }),
+      ...(task === undefined ? {} : { timeoutMs: stepTimeoutMs(task) }),
+    });
   } finally {
+    // A loosened turn notes when it ran, so an approval claimed meanwhile is never signed (review of PR #24, round 3).
+    if (restraint.loosened) await noteEnded(dialEnv(), runRecord, new Date());
     if (runRecordPath !== undefined) await removeRunRecord(runRecordPath);
   }
 
@@ -785,13 +850,13 @@ async function turnOnce(argv: readonly string[], took: Took): Promise<number> {
   // D-149 — a backend with no tools answers in words and nothing else. At a level that lets a turn act, its
   // answer is said for what it is, so a "done" from a model that could do nothing is not read as done.
   const notes: string[] = [];
-  if (verdict.effective.act >= 2 && answered && toolless.has(result.backend)) {
+  if (effective.act >= 2 && answered && toolless.has(result.backend)) {
     notes.push(`${result.backend} has no tools — it answered in words and could not act. Nothing it says it did was done (D-149).`);
   }
   for (const note of notes) console.error(`ohmyagi: ${note}`);
   // `--no-proposals`: a measurement (`ohmyagi eval`) must not leave work in the owner's list —
   // what the agent would have asked is still printed, just not filed.
-  const filed = verdict.effective.act === 1 && answered && !options.has("no-proposals") ? await fileAgentAsks(id, turnId, result.text, loaded.soul.person.inherits_from) : [];
+  const filed = effective.act === 1 && answered && task === undefined && !options.has("no-proposals") ? await fileAgentAsks(id, turnId, result.text, loaded.soul.person.inherits_from) : [];
 
   // The answering backend's model, told the way its ledger line tells it (D-142).
   const aboutModel = modelOfTurn(result.evidence.model, null, modelRun.get(result.backend) ?? null);
@@ -801,6 +866,9 @@ async function turnOnce(argv: readonly string[], took: Took): Promise<number> {
       JSON.stringify(
         {
           ...result,
+          // The id the ledger line carries: a task's step records it, which is the link between the two (D-154).
+          turn: turnId,
+          task: task?.id ?? null,
           route: routeLine(result),
           // S12.4 — who handled this turn, so a caller (the web page) can say it
           // without parsing the route sentence. `local` is the display rule (an

@@ -393,7 +393,10 @@ Usage:
                                         nothing (D-144). A new proposal that waits
                                         for a new yes; once per approval, and
                                         refused (4) for one a turn ran or may
-                                        have run.
+                                        have run. Also files again an approval
+                                        no turn will run (D-153): given before
+                                        approvals named their action, or whose
+                                        record changed after the yes.
   ohmyagi proposal decide <proposal-id> <dir> --subject <id> (--approve | --refuse)
                          [--note <text>]
                                         Answer one, recording who and when. A
@@ -422,7 +425,8 @@ Usage:
   ohmyagi stop [<dir> --subject <id>]   Stop everything, in a fixed order: set
                                         the brake, take every category to 0, end
                                         the turns that are running, docker kill
-                                        every browser task. Prints what it could
+                                        every browser task, ask every task to
+                                        stop. Prints what it could
                                         not reach and the exact command for
                                         each. Exit 1 if anything survived.
   ohmyagi browser up --subject <id> --allow <origin> [--allow <origin>…] [--operate 1|2] [--task <id>] [--ttl <s>] [--no-build] [--json]
@@ -455,6 +459,62 @@ Usage:
                                         operate's: 1 approves look tools only, 2
                                         also click and type; code-running tools
                                         never, and sensitive actions are held.
+  ohmyagi task new <dir> --subject <id> --goal <text> [--backend a,b] [--model <m>] [--budget-turns <n>] [--budget-minutes <n>] [--budget-tokens <n>] [--operate 0|1|2] [--allow <origin>…] [--step-minutes <n>] [--approve-within <minutes>] [--detach] [--json]
+                                        A goal carried over several turns
+                                        (D-154): a plan, then one step per turn,
+                                        each an ordinary turn (ledger, dial,
+                                        fence, egress, stop all apply), until it
+                                        is done, the budget is spent (default
+                                        12 turns, 30 active minutes, no token
+                                        limit) or it is stopped. --operate 1|2
+                                        gives it a browser on --allow's origins
+                                        (claude or claude-local only, D-157),
+                                        never above the dial, and each step has
+                                        the browser and no shell; at 2, a sensitive
+                                        action pauses the task until you answer
+                                        (--approve-within, default 10 minutes;
+                                        no answer is a no). The goal, plan and
+                                        steps stay in the personal directory.
+                                        Foreground prints each step on stderr
+                                        and the result on stdout; --detach runs
+                                        it in the background. Exit 0 done,
+                                        1 failed, 3 out of budget, 4 stopped or
+                                        refused, 5 already running.
+  ohmyagi task list <dir> --subject <id> [--json]
+                                        Every task of this agent, newest first.
+  ohmyagi task show <task> <dir> --subject <id> [--json]
+                                        Its goal, status, budget used, plan and
+                                        every step with the id of its turn.
+                                        "interrupted" means its runner died.
+  ohmyagi task stop <task> <dir> --subject <id> [--json]
+                                        Stop it: no next step starts, the step
+                                        running now is ended like ohmyagi stop
+                                        ends a turn, its browser is killed.
+  ohmyagi task resume <task> <dir> --subject <id> [--detach] [--json]
+                                        Carry an interrupted task on from the
+                                        step it was on (that step counts as a
+                                        turn spent; its browser starts fresh).
+  ohmyagi task approve <task> <approval> <dir> --subject <id> [--json]
+                                        D-156: let one sensitive browser action
+                                        a task's container is holding (paying,
+                                        sending, deleting, a credential, terms)
+                                        happen, once — that action and no other.
+                                        "task show" lists them. Answered once:
+                                        a second answer is refused (exit 5); no
+                                        answer by its deadline is a no. Only at
+                                        a terminal (exit 4 otherwise) or with
+                                        Yes / No on the web page. A password or
+                                        credential is never approvable yet
+                                        (D-160). A page's confirm is its own
+                                        question, shown with its click (D-159).
+  ohmyagi task deny <task> <approval> <dir> --subject <id> [--stop] [--json]
+                                        It does not happen, and the task is told
+                                        so; --stop also stops the task.
+  ohmyagi task run <task> <dir> --subject <id> [--detached]
+                                        The runner itself — what new --detach
+                                        and resume --detach start. --detached
+                                        writes its lines to the task's
+                                        runner.log instead of stderr.
   ohmyagi triggers show <dir> --subject <id>
                                         The schedules in triggers.md, when each
                                         last fired and when it is next due.
@@ -480,7 +540,9 @@ Usage:
                                         adds others. --https: behind
                                         tailscale serve, on loopback.
                                         --key-file keeps the link across
-                                        restarts (made once, 600).
+                                        restarts (made once, 600). Off a
+                                        terminal (a service, a pipe) the key
+                                        is not printed, nor a --qr code.
                                         --backend and --model are what a chat
                                         message uses until the page picks
                                         others; --model is read as turn reads

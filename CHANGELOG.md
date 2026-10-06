@@ -1,5 +1,85 @@
 # Changelog
 
+## 0.10.1 — 2026-10-06
+
+Tasks: a goal the agent carries over ordinary turns, with a budget, a stop and a manual resume, and — when it
+has a browser — an approval channel: a sensitive browser action pauses the task until the owner answers that one
+action, once (E17, D-154, D-156, D-158, D-159, D-160). And two fixes: `ohmyagi web` no longer prints its access key
+where it may be kept, such as a service's journal (D-162), and approvals given before D-153 ask to be approved
+again instead of offering a run that is refused.
+
+### Added — tasks, and the approval channel for a task's browser (E17, PR #24)
+- **`ohmyagi task new|list|show|stop|resume` (D-154).** A task is a goal carried over ordinary turns: plan,
+  step, observe, decide the next step. Each step is `ohmyagi turn --task <id>` as a child, so the ledger, dial,
+  fence, egress, run record and `stop` all apply. A budget of turns, active minutes and tokens bounds it. One
+  runner at a time; a crashed step is closed as interrupted and told to the next. `ohmyagi stop` asks every
+  unfinished task to stop, and `erase` ends a subject's unfinished tasks first.
+- **Resume is by hand (D-158).** A task whose runner died shows `interrupted` on the CLI, the web page and
+  `/api/state`, with a Resume button; nothing resumes on its own (no daemon, D-054). Its browser starts fresh.
+- **A browser for a task.** `task new --operate 1|2 --allow <origin>…` brings up the task's browser container
+  (0.10.0's runtime) at min(task, dial), restarted lower — or ended at 0 — when the dial is lowered. Steps get it
+  on claude and claude-local only (grok stays off, D-157). A step of a browser task runs **browser only**: no
+  shell, no file tools, no web fetch.
+- **The approval channel (D-156).** An action D-153's list holds (pay, send, delete, accept, a page's confirm…)
+  is filed as a pending approval — kind, element, origin, target, rules, never a value — and the task shows
+  `waiting`; the wait is not charged to the budget's minutes. The owner answers with `ohmyagi task approve|deny
+  <task> <approval> [--stop]` at a real terminal, or the Yes / No / No-and-stop card on the web page
+  (`POST /api/tasks/<id>/approvals/<id>/approve|deny`). An answer is claimed once (D-144); a yes is released to
+  the container signed by the runner, for that action only. No answer by the deadline is a no.
+- **A yes binds the target.** The card shows the page path, form action and method, link href or row text; the
+  element — and for keystrokes, the focused element — is read again before the release, and a page that
+  re-pointed the form or moved the focus gets nothing.
+- **A page's confirm is its own question (D-159, as amended).** The click and the confirm it opens are asked
+  separately, shown as a pair on one card, so the confirm's own text is seen before it is accepted.
+- **No passwords yet (D-160).** A credential action (typing into a password field, submitting a form holding
+  one, answering a password-like prompt) is refused at once and cannot be approved — the store, the CLI and the
+  API all refuse it, and the card says "not allowed yet (D-160)". The agent therefore cannot log in to sites yet.
+- **Web:** a Tasks tab, `/api/tasks` (list, new, show, stop, resume, newest screenshot), `tasks` and
+  `taskApprovals` in `/api/state`.
+- **Proof:** `bun run e2e:tasks` on a real backend (claude-local): a form filled, a runaway stopped by its
+  budget, a delete approved once through the API, a delete denied at the terminal, a swapped target and a moved
+  focus refused, and a task that cannot approve another's action. Record in `notes/2026-10-05_tasks-e2e.md`.
+
+#### Known limits, said plainly
+- **Q4 — anything running as the owner's user can get past a hold.** That is D-042's same-uid limit. The largest
+  door: a turn at write/run 2 (a loosened turn) runs as the owner, who is in the `docker` group, so it could
+  `docker exec -u 0` into the task's container and drive the browser directly. Answers are not taken while a
+  loosened turn runs, and a yes claimed while one ran is released as a no, but the docker socket is
+  root-equivalent and outside this code. Closing it needs the owner's Q4 decision: a separate user for the
+  runner and its store, or a passkey per answer **and** no docker group for the user turns run as.
+- **A page's own script can still misuse what the model types** into an ordinary field: copy it into a password
+  field at submit, or keylog it. D-160 classifies by the field a key lands in, not by the page's script.
+- **Token budgets on claude are mostly turn budgets** (claude counts its cache reads as input), and the step
+  running when a limit is reached finishes.
+- **A held action waits inside the step's turn;** a step held several times can run out of its own timeout.
+- **Telegram, A2A and triggers cannot start a task yet** (D-154's later channels).
+
+### Fixed — `ohmyagi web` no longer prints its key where it may be kept (D-162)
+- **The link went to the journal, key and all.** Every start printed `https://…/#t=<key>`; run as a systemd
+  service, that line landed in the journal, where anyone who can read it could open the page.
+- **Off a terminal, the link is printed without its key.** With `--key-file`, the address and the file's path are
+  printed and no part of the key; without one, the key is masked to its first and last four characters. `--qr`
+  draws no code there, since the code is the link. At a terminal the whole link is shown as before.
+- **Rotate after upgrading.** A journal written before this still holds the old key: delete the key file and
+  restart once.
+
+### Fixed — approvals that cannot run as they were given (D-153 follow-up)
+- **`Do it now` is offered only for what `turn --proposal` would run.** An approval given before approvals named
+  their action, one whose digest is malformed, or one whose record changed after the yes is refused by `turn`.
+  Before this fix, the web page still showed such an approval with a button that could only fail. `/api/state`
+  now leaves it out of `approved` and lists it in a new `needsReapproval` list (`id`, `what`, `approved`,
+  `approvedAt`, `reason`: `no-action` or `changed`).
+- **The page offers one button for it, "File it again for a yes".** The button files a new pending proposal from
+  the record's own what, why and impact, through `proposal new --refile`. It is claimed once, like a D-144
+  refile, and the old approval then leaves every list. Nothing is approved or run.
+- **`proposal new --refile <id>` accepts such an approval.** Refiles and the lists now share one twin rule
+  (`askedAgain`), measured against the time of the yes:
+  - A twin that is still waiting counts.
+  - A twin filed after the yes counts, in any state.
+  - A refusal that the yes came after does not count. This includes a refusal that the record supersedes with
+    `--changed`, which before this fix blocked the refile while the approval stayed listed.
+- **`turn --proposal`'s refusal points to the button or `--refile`,** not to typing the proposal out again.
+
 ## 0.10.0 — 2026-10-05
 
 An approved proposal runs once, even when two turns start together, and a spent approval can be filed again

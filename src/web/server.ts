@@ -31,6 +31,7 @@ import { encodeQr, qrPath } from "./qr.ts";
 import { keyPrint, newKey } from "./key.ts";
 import { ASK_ANSWER_MAX_CHARS, ASK_TIMEOUT_MS, askProblem, capAnswer } from "../memory/ask.ts";
 import { timingSafeEqual } from "node:crypto";
+import { answerCode, type Answer } from "../task/answer.ts";
 
 export const TOKEN_HEADER = "x-ohmyagi-token";
 
@@ -80,6 +81,13 @@ export interface WebDeps {
     /** The subscriptions made under this key dropped, each relay asked to forget; how many there were. */
     readonly clear: (key: string) => Promise<number>;
   };
+  /**
+   * D-154: the newest screenshot a task's browser took, as a data URL — or why there is none. Absent on a page
+   * that does not offer it; the route then answers 404.
+   */
+  /** D-156: the owner's answer to a held action (`answerHeld`), from this page. Absent: the route answers 404. */
+  readonly taskAnswer?: (task: string, approval: string, verdict: "approve" | "deny", stop: boolean) => Promise<Answer>;
+  readonly taskScreen?: (task: string) => Promise<{ readonly ok: true; readonly image: string; readonly at: string } | { readonly ok: false; readonly reason: string }>;
   /** The agent directory and subject every action is about. */
   readonly dir: string;
   readonly subject: string;
@@ -101,6 +109,56 @@ export interface WebServer {
 }
 
 const ID = /^[0-9a-f-]{8,64}$/;
+const TASK_ID = /^t-[0-9a-f]{8}$/;
+const APPROVAL_ID = /^a-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** A child's stdout as JSON, or undefined. */
+function parsed(stdout: string): Record<string, unknown> | undefined {
+  try {
+    const value: unknown = JSON.parse(stdout);
+    return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `task new`'s flags from a page's request (D-154), or what is wrong with it. Nothing passes unchecked. */
+export function taskNewArgs(body: Record<string, unknown>): { readonly ok: true; readonly args: string[] } | { readonly ok: false; readonly error: string } {
+  const goal = typeof body["goal"] === "string" ? body["goal"].trim() : "";
+  if (goal === "" || goal.length > 4000) return { ok: false, error: "write the goal first (at most 4000 characters)" };
+  if (goal.startsWith("-")) return { ok: false, error: "a goal cannot start with a dash" };
+  const args = ["--goal", goal];
+  const whole = (key: string, flag: string, max: number): string | undefined => {
+    const value = body[key];
+    if (value === undefined || value === null || value === "") return undefined;
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > max) return `${key} is a whole number from 1 to ${max}`;
+    args.push(flag, String(value));
+    return undefined;
+  };
+  for (const [key, flag, max] of [["budgetTurns", "--budget-turns", 200], ["budgetMinutes", "--budget-minutes", 1440], ["budgetTokens", "--budget-tokens", 1_000_000_000], ["approveWithin", "--approve-within", 60]] as const) {
+    const problem = whole(key, flag, max);
+    if (problem !== undefined) return { ok: false, error: problem };
+  }
+  const operate = body["operate"];
+  if (operate !== undefined && operate !== 0 && operate !== 1 && operate !== 2) return { ok: false, error: "operate is 0, 1 or 2" };
+  if (operate !== undefined) args.push("--operate", String(operate));
+  const allow = body["allow"];
+  if (allow !== undefined) {
+    if (!Array.isArray(allow) || allow.length > 32 || !allow.every((a) => typeof a === "string" && /^https?:\/\/[^\s,]{1,200}$/.test(a))) {
+      return { ok: false, error: "allow is a list of origins like https://example.com" };
+    }
+    for (const origin of allow) args.push("--allow", origin as string);
+  }
+  if (body["backend"] !== undefined && body["backend"] !== null && body["backend"] !== "") {
+    if (typeof body["backend"] !== "string" || !BACKEND_CHAIN.test(body["backend"])) return { ok: false, error: "that is not a backend" };
+    args.push("--backend", body["backend"]);
+  }
+  if (body["model"] !== undefined && body["model"] !== null && body["model"] !== "") {
+    if (!isModel(body["model"])) return { ok: false, error: "that is not a model name" };
+    args.push("--model", body["model"]);
+  }
+  return { ok: true, args };
+}
 const CATEGORIES = ["read", "write", "run", "reach", "operate"];
 /**
  * A backend chain as `turn --backend` takes it, and a model name — nothing a shell or a flag could be smuggled
@@ -384,6 +442,25 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[], 
       const read = await deps.memory(url.searchParams.get("path") ?? "");
       return read.ok ? json({ text: read.text }) : json({ error: read.reason }, 404);
     }
+    // D-154 — tasks, through the same commands a person types (D-086): the list, one task, its newest screenshot.
+    if (req.method === "GET" && url.pathname === "/api/tasks") {
+      const out = await deps.run(["task", "list", ...place, "--json"]);
+      const listed = parsed(out.stdout);
+      return listed === undefined ? json({ error: said(out.stderr) || "the tasks could not be read" }, 500) : json(listed);
+    }
+    const oneTask = /^\/api\/tasks\/([^/]+)(\/screen)?$/.exec(url.pathname);
+    if (req.method === "GET" && oneTask !== null) {
+      const id = oneTask[1]!;
+      if (!TASK_ID.test(id)) return json({ error: "that is not a task id" }, 400);
+      if (oneTask[2] !== undefined) {
+        if (deps.taskScreen === undefined) return json({ error: "not found" }, 404);
+        const screen = await deps.taskScreen(id);
+        return screen.ok ? json(screen) : json({ error: screen.reason }, 404);
+      }
+      const out = await deps.run(["task", "show", id, ...place, "--json"]);
+      const shown = parsed(out.stdout);
+      return shown === undefined ? json({ error: said(out.stderr) || "no such task" }, out.code === 2 ? 404 : 500) : json(shown);
+    }
     if (req.method !== "POST") return json({ error: "not allowed" }, 405);
 
     let body: Record<string, unknown> = {};
@@ -391,6 +468,34 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[], 
       body = ((await req.json()) ?? {}) as Record<string, unknown>;
     } catch {
       // An empty body is fine for the actions that take none.
+    }
+
+    // D-154 — a new task, started in the background; the page follows it with GET /api/tasks/<id>. Every field is
+    // shape-checked here and again by `task new`, which refuses what a person typing it would be refused.
+    if (url.pathname === "/api/tasks") {
+      const args = taskNewArgs(body);
+      if (!args.ok) return json({ ok: false, error: args.error }, 400);
+      const out = await deps.run(["task", "new", ...place, ...args.args, "--detach", "--json", "--via", "web"]);
+      const started = parsed(out.stdout);
+      if (out.code !== 0 || started === undefined) return json({ ok: false, error: said(out.stderr) || `it did not start (exit ${out.code})` }, out.code === 2 ? 400 : out.code === 4 ? 409 : 500);
+      return json(started);
+    }
+    // D-156 — the owner's answer to one held action, in this process, behind this page's key. Not through the
+    // CLI: `task approve|deny` answers only at a terminal (review of PR #24), so no script can borrow it.
+    const answer = /^\/api\/tasks\/([^/]+)\/approvals\/([^/]+)\/(approve|deny)$/.exec(url.pathname);
+    if (answer !== null) {
+      const [, id, approval, verdict] = answer;
+      if (!TASK_ID.test(id!) || !APPROVAL_ID.test(approval!)) return json({ ok: false, error: "that is not a task or an approval id" }, 400);
+      if (deps.taskAnswer === undefined) return json({ error: "not found" }, 404);
+      const out = await deps.taskAnswer(id!, approval!, verdict as "approve" | "deny", verdict === "deny" && body["stop"] === true);
+      return json(out.ok ? { ok: true, approval: out.approval } : { ok: false, kind: out.kind, reason: out.reason }, answerCode(out).status);
+    }
+    const control = /^\/api\/tasks\/([^/]+)\/(stop|resume)$/.exec(url.pathname);
+    if (control !== null) {
+      const [, id, action] = control;
+      if (!TASK_ID.test(id!)) return json({ ok: false, error: "that is not a task id" }, 400);
+      const out = await deps.run(action === "stop" ? ["task", "stop", id!, ...place, "--json"] : ["task", "resume", id!, ...place, "--detach"]);
+      return json({ ok: out.code === 0, message: said(out.stderr) || said(out.stdout) }, out.code === 0 ? 200 : out.code === 2 ? 404 : 409);
     }
 
     if (url.pathname === "/api/turn") {
@@ -484,7 +589,8 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[], 
     // D-144 §2 (the owner, 2026-09-29): "File it again" — a spent approval whose turn sent nothing, filed again
     // as a new proposal waiting for a new yes. `proposal new --refile`: the command rebuilds what, why and impact
     // from the stored record by id and refuses every other kind of proposal; nothing is taken from the body, and
-    // nothing is approved or run. One at a time per id, the way turns are.
+    // nothing is approved or run. One at a time per id, the way turns are. The same route serves "File it again
+    // for a yes" (D-153 follow-up): an approval given before approvals named their action, which no turn runs.
     const refile = /^\/api\/proposals\/([^/]+)\/refile$/.exec(url.pathname);
     if (refile !== null) {
       const id = refile[1]!;
@@ -499,7 +605,7 @@ export function handler(deps: WebDeps, token: string, hosts: readonly string[], 
         refiling.delete(key);
       }
       const message = said(out.stderr);
-      // 2: no such proposal · 4: not one whose turn sent nothing · 5: filed again already, or a twin is waiting.
+      // 2: no such proposal · 4: neither sent-nothing nor from before D-153 · 5: filed again already, or a twin is waiting.
       if (out.code === 0) return json({ ok: true, id: out.stdout.trim(), message });
       return json({ ok: false, message }, out.code === 2 ? 404 : out.code === 4 || out.code === 5 ? 409 : 500);
     }

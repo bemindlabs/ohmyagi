@@ -7,8 +7,11 @@
  * sentence here is wrong, the page is wrong, and a test says so.
  */
 
+import type { TaskSummary } from "../task/view.ts";
+import type { ActionApproval } from "../task/approvals.ts";
 import { OPERATE_MEANING, type Level } from "../decide/autonomy.ts";
 import type { Triage } from "../decide/triage.ts";
+import { boundAction, needsReapproval, refileable, unboundReason, type ProposalInventory } from "../decide/proposals.ts";
 
 /** One line for "what may it do on its own", from the level a turn acts at. */
 export function levelSentence(act: Level, stopped: boolean): { readonly title: string; readonly detail: string; readonly tone: "stop" | "ask" | "act" } {
@@ -97,6 +100,34 @@ export function excerpt(text: string | null, max = 90): string {
   return first.length > max ? `${first.slice(0, max - 1)}…` : first;
 }
 
+/**
+ * The three lists of approvals the page shows, from a store already read: `approved` (runnable — "Do it now"),
+ * `refileable` (D-144 §2: spent while sending nothing) and `needsReapproval` (D-153 follow-up: approved, but
+ * `turn` refuses to run it — `boundAction`). Every rule is the store's; an approval is in one list at
+ * most, and one already filed again is in none.
+ */
+export function approvalLists(
+  inventory: ProposalInventory,
+  now: Date,
+): Pick<ViewState, "approved" | "refileable" | "needsReapproval"> {
+  const newest = [...inventory.proposals].map((stored) => stored.proposal).sort((a, b) => b.at.localeCompare(a.at));
+  return {
+    approved: newest
+      // Only what `turn --proposal` would run (`boundAction`, review of PR #29): a yes that names no action, a
+      // malformed digest, or a record changed after the yes is in `needsReapproval`, never beside "Do it now".
+      .filter((p) => p.decision?.outcome === "approved" && p.usedByTurn === null && boundAction(p).ok)
+      .map((p) => ({ id: p.id, what: p.what, decided: ago(p.decision!.at, now) })),
+    refileable: refileable(inventory).map((p) => ({ id: p.id, what: p.what, spent: p.usedAt === null ? "" : ago(p.usedAt, now) })),
+    needsReapproval: needsReapproval(inventory).map((p) => ({
+      id: p.id,
+      what: p.what,
+      approved: p.decision === null ? "" : ago(p.decision.at, now),
+      approvedAt: p.decision?.at ?? "",
+      reason: unboundReason(p) ?? "no-action",
+    })),
+  };
+}
+
 /** What the page receives from `/api/state`. Built by the command, shaped here. */
 export interface ViewState {
   readonly agent: { readonly name: string; readonly role: string; readonly subject: string; readonly dir: string };
@@ -124,7 +155,25 @@ export interface ViewState {
    * new question (`refileProblem`). Never one a turn ran or may have run. `spent` is when, as a person says it.
    */
   readonly refileable: readonly { readonly id: string; readonly what: string; readonly spent: string }[];
+  /**
+   * D-153 follow-up: approved, unspent, and refused by `turn` (`boundAction`) — given before approvals named their
+   * action, or the record no longer holds the action the yes named. So they are not in `approved`; each is offered to be filed again as a new question waiting for a new yes (`refileProblem`, the
+   * same `/refile` route). Gone once filed again — by the button, by `--refile`, or by hand as a twin. `approved`
+   * is when, as a person says it; `approvedAt` the ISO time.
+   */
+  readonly needsReapproval: readonly {
+    readonly id: string;
+    readonly what: string;
+    readonly approved: string;
+    readonly approvedAt: string;
+    /** `no-action`: the yes names no action (before v0.10.0, or stripped). `changed`: the record no longer holds the action it named. */
+    readonly reason: "no-action" | "changed";
+  }[];
   readonly triggers: readonly { readonly id: string; readonly every: string; readonly next: string }[];
+  /** D-154: the newest tasks, as `task list --json` shows them. */
+  readonly tasks: readonly TaskSummary[];
+  /** D-156: sensitive browser actions a task is paused on, waiting for the owner's answer. */
+  readonly taskApprovals: readonly (ActionApproval & { readonly goal: string })[];
   readonly recent: readonly { readonly id: string; readonly when: string; readonly backend: string; readonly asked: string; readonly ok: boolean }[];
   readonly canTriage: boolean;
   /** This build of Oh My AGI, and the newest release the last update check saw (null: never checked). For the footer (D-089). */

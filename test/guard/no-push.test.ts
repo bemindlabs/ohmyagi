@@ -503,6 +503,9 @@ describe("C. behaviour — every command, watched by a git that writes down its 
       // the trap PATH and says so — and `down` of a task nobody started; neither has a reason to start git.
       ["browser", "status"],
       ["browser", "down", "t-none"],
+      // D-154's: reading a subject's tasks (none here), and one that does not exist; neither starts a turn.
+      ["task", "list", join(agent, "soul"), "--subject", SUBJECT],
+      ["task", "show", "t-11111111", join(agent, "soul"), "--subject", SUBJECT],
       // S7.2's. The dry run and the real one both, because the deleting path
       // is the one that reads git (`rev-list --count`, on the verb allowlist)
       // and the one somebody would most want to be sure never pushed.
@@ -608,6 +611,8 @@ describe("C. behaviour — every command, watched by a git that writes down its 
       "proposal",
       // E17's (D-151): status and down run above.
       "browser",
+      // D-154's: list and show run above.
+      "task",
     ]);
     const exempt = new Map([
       ["--version", "an alias of version"],

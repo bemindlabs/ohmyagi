@@ -45,9 +45,19 @@ export interface BrowserRecord {
   readonly owner: { readonly pid: number; readonly start: number | null } | null;
   readonly startedAt: string;
   readonly ttlSeconds: number;
+  /**
+   * D-156: how long a held sensitive action waits in the container for the owner's answer; absent or 0 for a
+   * browser nobody can answer for (`ohmyagi browser up`), where held stays refused.
+   */
+  readonly approvalWaitSeconds?: number;
+  /**
+   * D-156 (review of PR #24, round 3): the Ed25519 public key the container checks releases with (base64 SPKI
+   * DER). Public: it can only verify. The private key is the runner's, in its memory, and nowhere else.
+   */
+  readonly releasePublicKey?: string;
 }
 
-/** A record as it may be printed: everything but the token. */
+/** A record as it may be printed: everything but the token. (The release key is never in a record.) */
 export function shown(record: BrowserRecord): Omit<BrowserRecord, "token"> {
   const { token, ...rest } = record;
   void token;
@@ -67,6 +77,7 @@ export interface DockerIo {
  * not here: the image is built on this machine and stays on it.
  */
 export const DOCKER_VERBS: readonly string[] = ["run", "kill", "ps", "build", "image"];
+
 
 /** Why om-agi will not run this docker argv, or `undefined`. */
 export function dockerRefusal(args: readonly string[]): string | undefined {

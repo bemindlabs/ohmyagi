@@ -317,7 +317,8 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // 136 since S13.1: one `case` label and one import, for `deploy`.
   // 142 since S15.8: two `case` labels and two imports, for `key` and `usage`.
   // 145 since E17 (D-151): one `case` label and one import, for `browser`.
-  ["bin/om-agi.ts", { lines: 145, why: "entry point — dispatch and process.exit" }],
+  // 148 since D-154: the `task` case.
+  ["bin/om-agi.ts", { lines: 148, why: "entry point — dispatch and process.exit" }],
   // One `export const USAGE = \`…\`` around 240 lines of help text. A test could
   // import it and the floor would read 100% off a single declaration while the
   // text said anything at all; the size is the only honest number here.
@@ -355,7 +356,15 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // 787 since E17's browser on top of D-153: 758 + the browser entries and the PR #19 review's words (`up`'s token
   // and brake, `mcp-config`'s operate `--level`, mode 600, held sensitive actions).
   // 789 since the PR #19 re-review: `up`'s `--operate 1|2`, the most its guard serves.
-  ["bin/usage.ts", { lines: 789, why: "help text — one declaration, 789 lines of prose" }],
+  // 791 since D-162: `web` off a terminal prints neither the key nor a --qr code.
+  // 794 since the D-153 follow-up: `--refile` also files again an approval no turn will run — no action named, or
+  // a record changed after the yes.
+  // 826 since D-154: the six `task` entries (new, list, show, stop, resume, run) and `stop` asking every task to stop.
+  // 840 since D-156: `task approve` and `task deny`, and that at operate 2 a sensitive action pauses the task.
+  // 846 since the review of PR #24: approvals answered only at a terminal or on the page, D-159/D-160, and a
+  // task's step having the browser and no shell.
+  // 851 with main's #28 and #29 (D-162, the pre-D-153 approvals) under the task entries.
+  ["bin/usage.ts", { lines: 851, why: "help text — one declaration, 851 lines of prose" }],
   // The commands. Each is `cmdX(rest)` returning an exit code, and each reads
   // `process.env`, `homedir()` or `cwd` on its way. Calling them in-process
   // would mean swapping `HOME` inside the test runner; the tests spawn instead.
@@ -415,7 +424,16 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // 424 since D-144 §2: the state lists the spent approvals that may be filed again (`refileable`, from the store).
   // 429 since D-152: `run` with a deadline for `/api/memory-ask` — the deadline itself (SIGTERM, then SIGKILL to the
   // child's group) is src/web/deadline.ts, on the floor; the route's use is tested in test/web/web.test.ts.
-  ["bin/commands/web.ts", { lines: 434, why: "command — serves until Ctrl-C; its parts are tested in src/web (the --qr print: src/web/qr.ts; the key change: startWeb + replaceKey; the push wiring and 30 s watch, per page key: src/web/push.ts, checked live against a loopback relay 2026-09-27)" }],
+  // 446 since D-162: the link printed off a terminal has no key (src/web/banner.ts, on the floor), and --qr draws
+  // no code there; test/cli/web.test.ts runs it through a pipe and through a pty.
+  // 442 since the D-153 follow-up: the approval lists (`approved`, `refileable`, `needsReapproval`) are built
+  // by `approvalLists` in src/web/view.ts, on the floor, tested in test/web/web.test.ts against a real store.
+  // 437 since D-154: the state lists the newest tasks, and a task's newest screenshot (src/task/screen.ts, on the floor).
+  // 438 since D-156: the held actions tasks are paused on, in the state (src/task/screen.ts).
+  // 445 since the review of PR #24: the page answers an approval in this process (src/task/answer.ts), not by
+  // running `task approve`, which answers only at a terminal.
+  // 453 with main's #28 and #29 (the printed link moved to src/web/banner.ts; approvalLists) and the tasks.
+  ["bin/commands/web.ts", { lines: 453, why: "command — serves until Ctrl-C; its parts are tested in src/web (the --qr print: src/web/qr.ts; the printed link, D-162: src/web/banner.ts and test/cli/web.test.ts; the key change: startWeb + replaceKey; the push wiring and 30 s watch, per page key: src/web/push.ts, checked live against a loopback relay 2026-09-27; tasks and their held actions: src/task/screen.ts and src/task/answer.ts)" }],
   // 911 since D-152: `memory ask` (routing, egress, ledger, a read-only chain) — run by test/cli/memory-ask.test.ts;
   // its words and arithmetic are src/memory/ask.ts, on the floor.
   // 923 since the PR #14 review: no-tools backends only, relevance before the split; an ignored stop is ended by
@@ -433,7 +451,10 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // who first filed it.
   // 464 since D-144's review, again: a refile used up by an attempt that never wrote its proposal says so, rather
   // than naming a proposal nobody can find (`refileWritten`).
-  ["bin/commands/proposal.ts", { lines: 470, why: "command — run by spawning the CLI" }],
+  // 491 since the D-153 follow-up and the PR #29 review: `--refile` also takes an approval no turn will run, says
+  // which in its `changed` and its exit message, and asks the store's one twin rule (`askedAgain`) instead of
+  // `blockingProposal`, naming the twin when its what was asked again already.
+  ["bin/commands/proposal.ts", { lines: 491, why: "command — run by spawning the CLI" }],
   ["bin/commands/rebuild.ts", { lines: 38, why: "command — run by spawning the CLI" }],
   // 570 since S15.8: `soul card` reads the agent's key — never makes one — and prints its public half.
   // 572 since D-142: `soul verify --model` is routed per backend the way `turn` routes it.
@@ -446,7 +467,8 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // this command must not leave a person to infer.
   // 216 since E17 (D-151): step 4, `docker kill` on every browser task of this state root (src/browser/runtime.ts's
   // sweep, on the floor), the command to run by hand when docker cannot be asked, and a failed kill counted.
-  ["bin/commands/stop.ts", { lines: 216, why: "command — run by spawning the CLI" }],
+  // 227 since D-154: step 5, every unfinished task asked to stop (src/task/control.ts, on the floor).
+  ["bin/commands/stop.ts", { lines: 227, why: "command — run by spawning the CLI" }],
   // 169 since E5: the dial is consulted before anything is sent, and the run
   // record is written before the chain runs and removed in a `finally`.
   // 249 since S5.2: `--proposal` is checked after the brake and before
@@ -479,7 +501,25 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // mcp-config's `--level 1|2`, run through effectiveDial and restrain like a turn's level.
   // 189 since the PR #19 re-review: `up --operate 1|2`, shown in status, and handed to mcp-config's wiring.
   ["bin/commands/browser.ts", { lines: 189, why: "command — run by spawning the CLI; its parts are tested in src/browser, and test/cli/browser.test.ts runs it" }],
-  ["bin/commands/turn.ts", { lines: 707, why: "command — run by spawning the CLI" }],
+  // 751 since D-154: `--task <id>` — the step's timeout from the task, its browser's MCP config for claude and
+  // claude-local only (refused before anything is sent otherwise, or at operate 0), and `turn`/`task` in --json.
+  // 754 since the review of PR #24: a step of a task with a browser runs `browserOnly` (write and run held at 1,
+  // src/decide/effective.ts, on the floor), says so, and files no proposals.
+  // 765 since the second review of PR #24: a loosened turn does not start while a task's held action waits,
+  // and its run record says it is loosened (src/task/answer.ts reads that).
+  ["bin/commands/turn.ts", { lines: 765, why: "command — run by spawning the CLI" }],
+  // D-154. The store, the loop, the budget, the stop, the views are src/task/, on the floor; what is here is parsing,
+  // printing and wiring the runner to this machine — run by test/cli/task.test.ts against a stub model.
+  // 375 since D-156: `approve` and `deny` (src/task/approvals.ts, on the floor), the runner's watch and the
+  // container's approval wait at operate 2, and `show` listing what a task asked.
+  // 376 since D-160: `show` says a credential is not allowed yet, in the words every channel uses.
+  // 381 since the review of PR #24: `approve|deny` only at a terminal (src/task/answer.ts on the floor), the
+  // container at min(task, dial), a confirm shown with its click, a value never shown.
+  // 395 since the second review of PR #24: the release key kept in the runner's memory, the step's turn ended
+  // by the runner (active time, a lowered dial), all three streams a terminal, a stopped task's container ended.
+  // 412 since the round-2 review of PR #24: the runner made not dumpable (src/task/harden.ts), no task started
+  // under a recorded turn (agentAncestor), and a yes signed only while no loosened turn of the owner runs.
+  ["bin/commands/task.ts", { lines: 413, why: "command — run by spawning the CLI; its parts are tested in src/task, and test/cli/task.test.ts runs it" }],
   ["bin/commands/worn.ts", { lines: 66, why: "command — run by spawning the CLI" }],
 ]);
 
@@ -574,7 +614,7 @@ export const PROOFS = new Map<string, Proof>([
       provedOn: "2026-09-24",
       by: "npm run demo -- --model <a local model>",
       result:
-        "15/15 criteria passed on 2026-10-05 on the tree released as 0.10.0 (run ff1ad2c7, table kept in notes/2026-10-05_demo-v0.10.0.txt), on 0.9.0 on 2026-09-28 (run b7384f44, table kept in notes/2026-09-28_demo-v0.9.0.txt), on 0.8.3 the same day (run de86a5a6, table kept in notes/2026-09-28_demo-v0.8.3.txt), on 0.8.2 on 2026-09-27 (run c7517aef, table kept in notes/2026-09-27_demo-v0.8.2.txt), on 0.8.1 the same day (run 0a4d532e, table kept in notes/2026-09-27_demo-v0.8.1.txt), on 0.8.0 the same day (run 391c781f, table kept in notes/2026-09-27_demo-v0.8.0.txt), on 0.7.2 on 2026-09-26 (run f28cd0ba, table kept in notes/2026-09-26_demo-v0.7.2.txt), on 0.7.1 the same day (run 0eaea0cf, table kept in notes/2026-09-26_demo-v0.7.1.txt), on 0.7.0 the same day (run 1c88d842, table kept in notes/2026-09-26_demo-v0.7.0.txt), on 0.6.1 the same day (run 3eaea63f, table kept in notes/2026-09-26_demo-v0.6.1.txt), on 0.6.0 the same day (run 1972948d, table kept in notes/2026-09-26_demo-v0.6.0.txt), on 0.5.1 on 2026-09-25 (run caa68c60, table kept in notes/2026-09-25_demo-v0.5.1.txt), on 0.5.0 the same day (run 5e5f6903, table kept in notes/2026-09-25_demo-v0.5.0.txt), on 0.4.2 the same day (run fbad84d0, table kept in notes/2026-09-25_demo-v0.4.2.txt), on 0.4.1 the same day (run 8a52848c, table kept in notes/2026-09-25_demo-v0.4.1.txt), on 0.4.0 the day before (run 065c6900, table kept in notes/2026-09-24_demo-v0.4.0.txt), on 0.3.0 the same day (run cbeda900, " +
+        "15/15 criteria passed on 2026-10-06 on the tree released as 0.10.1 (run a32be071, table kept in notes/2026-10-06_demo-v0.10.1.txt), on 0.10.0 on 2026-10-05 (run ff1ad2c7, table kept in notes/2026-10-05_demo-v0.10.0.txt), on 0.9.0 on 2026-09-28 (run b7384f44, table kept in notes/2026-09-28_demo-v0.9.0.txt), on 0.8.3 the same day (run de86a5a6, table kept in notes/2026-09-28_demo-v0.8.3.txt), on 0.8.2 on 2026-09-27 (run c7517aef, table kept in notes/2026-09-27_demo-v0.8.2.txt), on 0.8.1 the same day (run 0a4d532e, table kept in notes/2026-09-27_demo-v0.8.1.txt), on 0.8.0 the same day (run 391c781f, table kept in notes/2026-09-27_demo-v0.8.0.txt), on 0.7.2 on 2026-09-26 (run f28cd0ba, table kept in notes/2026-09-26_demo-v0.7.2.txt), on 0.7.1 the same day (run 0eaea0cf, table kept in notes/2026-09-26_demo-v0.7.1.txt), on 0.7.0 the same day (run 1c88d842, table kept in notes/2026-09-26_demo-v0.7.0.txt), on 0.6.1 the same day (run 3eaea63f, table kept in notes/2026-09-26_demo-v0.6.1.txt), on 0.6.0 the same day (run 1972948d, table kept in notes/2026-09-26_demo-v0.6.0.txt), on 0.5.1 on 2026-09-25 (run caa68c60, table kept in notes/2026-09-25_demo-v0.5.1.txt), on 0.5.0 the same day (run 5e5f6903, table kept in notes/2026-09-25_demo-v0.5.0.txt), on 0.4.2 the same day (run fbad84d0, table kept in notes/2026-09-25_demo-v0.4.2.txt), on 0.4.1 the same day (run 8a52848c, table kept in notes/2026-09-25_demo-v0.4.1.txt), on 0.4.0 the day before (run 065c6900, table kept in notes/2026-09-24_demo-v0.4.0.txt), on 0.3.0 the same day (run cbeda900, " +
         "table kept in notes/2026-09-24_demo-v0.3.0.txt), on 0.2.0 the same day (run fd433912, " +
         "table kept in notes/2026-09-24_demo-v0.2.0.txt), and earlier that day on the tree released as 0.1.0 (run 2ddacb38, " +
         "table kept in notes/2026-09-24_demo-v0.1.0.txt). Before that, " +
@@ -589,13 +629,15 @@ export const PROOFS = new Map<string, Proof>([
   [
     "scripts/cli-parity.ts",
     {
-      sha256: "48c737c6eb5ea422aeca5144a3eedb6075b5bd667961a1f0c46e95b426257cc4",
+      sha256: "c080330de17927545982271989993b6af3dc7947af4767f7d22e7c33e62d177d",
       provedOn: "2026-10-05",
       by: "npm run parity -- --base . --selftest",
       result:
         "exit 0 — control 1 steady, control 2 not blind to a changed character, control 3 not " +
         "blind to an added line, and control 4 refusing a side with no engine in it, over all " +
-        "18 case(s), 204 invocation(s) per side. Re-proved for `browser` (E17, D-151), which added bare " +
+        "18 case(s), 206 invocation(s) per side. Re-proved for `task` (D-154), which added bare `task` and " +
+        "`task wat` to `02-unknown` — usage errors only, since a real `new` spends turns. Before that, 18 case(s), " +
+        "204 invocation(s) per side. Re-proved for `browser` (E17, D-151), which added bare " +
         "`browser` and `browser wat` to `02-unknown` — usage errors only, since a real `up` starts a " +
         "container and `status` asks docker. Before that, 18 case(s), 202 invocation(s) per side, proved " +
         "2026-09-28. Re-proved for `key` and `usage` (S15.8), which added " +

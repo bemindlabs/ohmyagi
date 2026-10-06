@@ -121,7 +121,11 @@
  * before this existed (D-144 is unreleased, and they are few), or one whose
  * digest was stripped. Honouring it would let an edit — `what` changed, the
  * digest and `action` deleted — run as a "legacy" approval (review of PR #18,
- * measured).
+ * measured). Such an approval — like one whose record no longer matches its digest —
+ * is never listed as runnable: {@link needsReapproval} lists it apart, and it is filed again from its own record as a new proposal
+ * waiting for a new yes — once, claimed like any refile ({@link refileProblem}).
+ * Asking again is safe whichever it was: nothing runs until somebody approves the
+ * new record, whose digest is bound to its own `what`.
  *
  * **What the digest is, and is not.** It catches a record that *changed*
  * after the yes — a slip, a stale copy, an edit that did not bother to cover
@@ -420,7 +424,7 @@ export async function writeProposalAt(path: string, proposal: Proposal): Promise
 }
 
 /** Write a file and flush it to the device before anyone renames or links it into place. */
-async function writeWhole(path: string, text: string, flag: "w" | "wx"): Promise<void> {
+export async function writeWhole(path: string, text: string, flag: "w" | "wx"): Promise<void> {
   const handle = await open(path, flag, STATE_FILE_MODE);
   try {
     await handle.writeFile(text);
@@ -743,8 +747,9 @@ export function boundAction(proposal: Proposal): Bound {
       ok: false,
       reason:
         "the approval names no action — it was given before approvals were bound to their action, or its digest " +
-        "was removed — so nothing says what it was given for. Approve it again: file the same what as a new " +
-        "proposal (`ohmyagi proposal new`) and say yes to that one.",
+        "was removed — so nothing says what it was given for. Approve it again: press \"File it again for a yes\" " +
+        `on the web page, or run \`ohmyagi proposal new <dir> --subject ${proposal.subject} --refile ${proposal.id}\`, ` +
+        "and say yes to the new one.",
     };
   }
   if (approved !== proposal.actionDigest) {
@@ -753,7 +758,8 @@ export function boundAction(proposal: Proposal): Bound {
       reason:
         `the approval was given for action ${approved.slice(0, 19)}…, and the record now holds ` +
         `${proposal.actionDigest.slice(0, 19)}… — it was changed after the yes. An approval pays for what it was ` +
-        `given for and nothing else; file it again and ask for a new yes.`,
+        `given for and nothing else. Ask for a new yes: press "File it again for a yes" on the web page, or run ` +
+        `\`ohmyagi proposal new <dir> --subject ${proposal.subject} --refile ${proposal.id}\`.`,
     };
   }
   return { ok: true, action: proposal.action, digest: approved };
@@ -865,7 +871,7 @@ export async function claimRefile(stored: StoredProposal, newId: string, at: Dat
  *
  * Throws for anything but `EEXIST`, and names a filesystem without hard links as that.
  */
-async function linkClaim(claim: string, body: Readonly<Record<string, string>>): Promise<"made" | "taken"> {
+export async function linkClaim(claim: string, body: Readonly<Record<string, string>>): Promise<"made" | "taken"> {
   const claimsDir = dirname(claim);
   await mkdir(claimsDir, { recursive: true, mode: STATE_DIR_MODE });
   await sweepOrphans(claimsDir, Date.now());
@@ -922,37 +928,113 @@ async function sweepOrphans(claimsDir: string, now: number): Promise<void> {
   }
 }
 
-/** Why a proposal cannot be filed again from its own record, or `undefined` when it can. */
-export type RefileProblem =
-  /** It is not an approval a turn spent while sending nothing. */
-  | { readonly kind: "not-refileable"; readonly reason: string }
-  /** It was filed again already; this is the proposal that did it. */
-  | { readonly kind: "already"; readonly by: string };
+/** Why an approved, unspent proposal cannot run as it was given ({@link unboundReason}). */
+export type UnboundReason =
+  /** The yes names no action: given before approvals were bound to their action (v0.10.0), or its digest stripped. */
+  | "no-action"
+  /** The yes names an action the record no longer holds: changed after the yes, or a digest that is not one. */
+  | "changed";
 
 /**
- * Whether a spent approval may be filed again as a new question (D-144 §2, the owner, 2026-09-29).
+ * Why an approval cannot run as it was given, or `undefined` when it can, or is not an unspent approval at all
+ * (D-153 follow-up). The rule is {@link boundAction}'s — the one `turn --proposal` asks — so what the page offers
+ * with "Do it now" is exactly what a turn would run, and everything else approved and unspent is offered to be
+ * asked for again ({@link refileProblem}).
+ */
+export function unboundReason(proposal: Proposal): UnboundReason | undefined {
+  if (proposal.decision?.outcome !== "approved" || proposal.usedByTurn !== null) return undefined;
+  if (boundAction(proposal).ok) return undefined;
+  return proposal.decision.actionDigest === undefined ? "no-action" : "changed";
+}
+
+/** Approved, unspent, and refused by {@link boundAction}: a yes no turn will run ({@link unboundReason}). */
+export function isUnboundApproval(proposal: Proposal): boolean {
+  return unboundReason(proposal) !== undefined;
+}
+
+/** Why a proposal cannot be filed again from its own record, or `undefined` when it can. */
+export type RefileProblem =
+  /** It is not an approval a turn spent while sending nothing, nor an approval no turn will run. */
+  | { readonly kind: "not-refileable"; readonly reason: string }
+  /** It was filed again already; this is the proposal that did it. */
+  | { readonly kind: "already"; readonly by: string }
+  /** Its `what` was asked again already, by hand: this is that proposal ({@link askedAgain}). */
+  | { readonly kind: "asked-again"; readonly by: Proposal };
+
+/**
+ * Whether an approval may be filed again as a new question from its own record — once — and, when not, why.
  *
- * An approval a failed turn took stays spent. When that turn sent nothing to any backend — and only then — the
- * owner can ask for it again from its own record: a **new** proposal with the same what, why and impact,
- * waiting for a new yes. Not when a turn answered or was handed the prompt: then it ran, or may have, and a
- * second approval would run it a second time. And once only: a proposal that already names it in `supersedes`
- * is its second asking.
+ * Two kinds of approval may (the owner, 2026-09-29 and 2026-10-05):
+ *   - **spent while sending nothing** (D-144 §2). An approval a failed turn took stays spent; when that turn sent
+ *     nothing to any backend — and only then — it may be asked for again. Not when a turn answered or was handed
+ *     the prompt: then it ran, or may have, and a second approval would run it a second time.
+ *   - **one no turn will run** ({@link isUnboundApproval}, D-153 follow-up): never spent, refused by
+ *     {@link boundAction}, so the only way forward is the same question asked again.
+ *
+ * What is filed is a **new** proposal with the same what, why and impact, waiting for a new yes. Once only: the
+ * refile claim, or a proposal naming it in `supersedes`, is its second asking. And not when its `what` has been
+ * asked again already by hand ({@link askedAgain}) — one rule, which `proposal new --refile` and every list ask.
  */
 export function refileProblem(inventory: ProposalInventory, proposal: Proposal): RefileProblem | undefined {
-  if (proposal.decision?.outcome !== "approved" || proposal.usedByTurn === null) {
-    return { kind: "not-refileable", reason: "it is not an approval a turn has spent" };
+  const unbound = isUnboundApproval(proposal);
+  if (!unbound && (proposal.decision?.outcome !== "approved" || proposal.usedByTurn === null)) {
+    return {
+      kind: "not-refileable",
+      reason: "it is not an approval a turn has spent, nor an approval no turn will run",
+    };
   }
-  if (proposal.sentNothing !== true) {
+  if (!unbound && proposal.sentNothing !== true) {
     return {
       kind: "not-refileable",
       reason: `turn ${proposal.usedByTurn} ran it or may have — only an approval whose turn sent nothing is filed again`,
     };
   }
-  // The refile claim first: it exists even when a crash left no new record behind it. Then any proposal that
-  // names this one in `supersedes` — the only trace a refile made before refile claims existed has.
+  // The refile claim first: it exists even when a crash left no new record behind it. Then any proposal filed
+  // after the yes that names this one in `supersedes` — the only trace a refile made before refile claims existed
+  // has. One filed before the yes is not a refile of it: it was asked past this record with --changed, and the
+  // yes came after (review of PR #29).
   if (proposal.refiledAs !== undefined) return { kind: "already", by: proposal.refiledAs };
-  const again = inventory.proposals.find((stored) => stored.proposal.supersedes === proposal.id);
-  return again === undefined ? undefined : { kind: "already", by: again.proposal.id };
+  const yes = yesAt(proposal);
+  const again = inventory.proposals.find((stored) => stored.proposal.supersedes === proposal.id && Date.parse(stored.proposal.at) > yes);
+  if (again !== undefined) return { kind: "already", by: again.proposal.id };
+  const twin = askedAgain(inventory, proposal);
+  return twin === undefined ? undefined : { kind: "asked-again", by: twin };
+}
+
+/**
+ * The proposal that already asks again what an approval asked, if there is one: another record with the same
+ * `what` (its key) that is
+ *   - **still waiting**, whenever it was filed — filing this one again would be two copies of one question; or
+ *   - **filed after the yes**, in any state — somebody asked again by hand, and it has been or is being answered
+ *     on its own; a refusal there is the newer answer.
+ *
+ * Not a twin that was answered before the yes: the owner said yes after it, so a refusal before the yes is not
+ * the newer answer — which is also why a refusal this record supersedes with `--changed` never counts: it was
+ * filed, and answered, before this record existed, let alone its yes.
+ *
+ * Measured against the time of the **yes** (`decision.at`), not of the filing: a twin refused between the filing
+ * and the yes is older than the yes, and the yes stands. Compared as instants ({@link yesAt}), not as strings.
+ */
+export function askedAgain(inventory: ProposalInventory, proposal: Proposal): Proposal | undefined {
+  const yes = yesAt(proposal);
+  return inventory.proposals
+    .map((stored) => stored.proposal)
+    .find(
+      (other) =>
+        other.id !== proposal.id &&
+        other.key === proposal.key &&
+        (other.decision === null || Date.parse(other.at) > yes),
+    );
+}
+
+/**
+ * When the yes was given, in milliseconds — or, for a record whose decision carries no time, when it was filed.
+ * Parsed rather than compared as text: two ISO times in the same second with a different number of fractional
+ * digits (`…:05Z`, `…:05.5Z`), or with an offset, sort wrong as strings. An unparseable time is `NaN`, which is
+ * after nothing, so no twin counts against a yes nobody can date.
+ */
+function yesAt(proposal: Proposal): number {
+  return Date.parse(proposal.decision?.at || proposal.at);
 }
 
 /**
@@ -973,9 +1055,25 @@ export async function refileWritten(dir: string, as: string, waitMs = 2_000): Pr
   }
 }
 
-/** Every proposal {@link refileProblem} lets be filed again, newest first. */
+/**
+ * Every spent approval {@link refileProblem} lets be filed again, newest first (D-144 §2). Not the approvals no
+ * turn will run: they are {@link needsReapproval}, a list of their own, because they were never spent.
+ */
 export function refileable(inventory: ProposalInventory): readonly Proposal[] {
-  return inventory.proposals.map((stored) => stored.proposal).filter((proposal) => refileProblem(inventory, proposal) === undefined);
+  return inventory.proposals
+    .map((stored) => stored.proposal)
+    .filter((proposal) => !isUnboundApproval(proposal) && refileProblem(inventory, proposal) === undefined);
+}
+
+/**
+ * Every approval no turn will run ({@link isUnboundApproval}) that still has to be asked for again, newest first
+ * (D-153 follow-up). One already filed again — by the button, by `--refile`, or by hand as a twin — is not here:
+ * it has left every list.
+ */
+export function needsReapproval(inventory: ProposalInventory): readonly Proposal[] {
+  return inventory.proposals
+    .map((stored) => stored.proposal)
+    .filter((proposal) => isUnboundApproval(proposal) && refileProblem(inventory, proposal) === undefined);
 }
 
 /**

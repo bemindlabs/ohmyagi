@@ -124,6 +124,11 @@ export interface RunRecord {
   /** Field 22 of `/proc/<pid>/stat`, or `null` where there is no `/proc`. */
   readonly pidStart: number | null;
   readonly startedAt: string;
+  /**
+   * The turn may run commands (write/run ≥ 2, its read-only flag off). Review of PR #24: while such a turn of a
+   * subject runs, nothing answers that subject's held browser actions. Absent in records from before it.
+   */
+  readonly loosened?: boolean;
 }
 
 /** One process, as `/proc` describes it. */
@@ -174,6 +179,7 @@ export function describeRun(options: {
   readonly subject: SubjectId;
   readonly backends: readonly string[];
   readonly at: Date;
+  readonly loosened?: boolean;
 }): RunRecord {
   const self = procStat(process.pid);
   return {
@@ -185,6 +191,7 @@ export function describeRun(options: {
     pgid: self?.pgid ?? process.pid,
     pidStart: self?.startTicks ?? null,
     startedAt: options.at.toISOString(),
+    ...(options.loosened === undefined ? {} : { loosened: options.loosened }),
   };
 }
 
@@ -267,6 +274,7 @@ function asRecord(value: unknown): RunRecord | string {
     pgid,
     pidStart: typeof pidStart === "number" ? pidStart : null,
     startedAt: typeof raw["startedAt"] === "string" ? (raw["startedAt"] as string) : "",
+    ...(typeof raw["loosened"] === "boolean" ? { loosened: raw["loosened"] } : {}),
   };
 }
 
@@ -278,7 +286,11 @@ function asRecord(value: unknown): RunRecord | string {
  * look an identifier up.
  */
 export async function readRuns(env: RunEnv): Promise<RunInventory> {
-  const root = runsRoot(env);
+  return readRunsAt(runsRoot(env));
+}
+
+/** {@link readRuns} of a runs directory already resolved — `erase` holds the path in its plan, not an environment. */
+export async function readRunsAt(root: string): Promise<RunInventory> {
   const runs: StoredRun[] = [];
   const unreadable: UnreadableRun[] = [];
 
@@ -808,4 +820,71 @@ export async function terminateRun(
  */
 export function manualCommand(pgid: number, signal: "TERM" | "KILL" = "TERM"): string {
   return `kill -${signal} -${pgid}`;
+}
+
+/** Where the turns that could run commands leave a note when they end (review of PR #24, round 3). */
+export const ENDED_DIR = "ended";
+/** How long such a note is kept: long past any approval's wait (an hour at most). */
+export const ENDED_KEEP_MS = 24 * 60 * 60 * 1000;
+
+/** A loosened turn that has ended: when it ran. */
+export interface EndedTurn {
+  readonly turnId: string;
+  readonly subject: string;
+  readonly startedAt: string;
+  readonly endedAt: string;
+}
+
+/**
+ * Note that a loosened turn ended, and when it started — so an approval claim written while it ran can be
+ * told from one written after (`taintedAt`, src/task/answer.ts), even when nobody looked while it ran. Older
+ * notes are swept on the way. Best effort: a turn must not fail over its own bookkeeping.
+ */
+export async function noteEnded(env: RunEnv, record: RunRecord, at: Date): Promise<void> {
+  const dir = join(runsDirFor(env, record.subject), ENDED_DIR);
+  try {
+    await mkdir(dir, { recursive: true, mode: STATE_DIR_MODE });
+    const ended: EndedTurn = { turnId: record.turnId, subject: record.subject, startedAt: record.startedAt, endedAt: at.toISOString() };
+    await writeFile(join(dir, `${record.turnId}.json`), `${JSON.stringify(ended)}\n`, { mode: STATE_FILE_MODE });
+    for (const name of await readdir(dir)) {
+      const path = join(dir, name);
+      try {
+        const raw = JSON.parse(await readFile(path, "utf8")) as Partial<EndedTurn>;
+        if (at.getTime() - Date.parse(String(raw.endedAt)) > ENDED_KEEP_MS) await rm(path, { force: true });
+      } catch {
+        await rm(path, { force: true });
+      }
+    }
+  } catch {
+    // Not noted: an answer claimed during it is then judged by what still runs, as before.
+  }
+}
+
+/** Every ended loosened turn noted under the runs root, any subject. */
+export async function readEnded(env: RunEnv): Promise<readonly EndedTurn[]> {
+  const out: EndedTurn[] = [];
+  let subjects: string[];
+  try {
+    subjects = await readdir(runsRoot(env));
+  } catch {
+    return out;
+  }
+  for (const subject of subjects) {
+    const dir = join(runsRoot(env), subject, ENDED_DIR);
+    let names: string[];
+    try {
+      names = await readdir(dir);
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      try {
+        const raw = JSON.parse(await readFile(join(dir, name), "utf8")) as Partial<EndedTurn>;
+        if (typeof raw.startedAt === "string" && typeof raw.endedAt === "string") out.push({ turnId: String(raw.turnId), subject: String(raw.subject), startedAt: raw.startedAt, endedAt: raw.endedAt });
+      } catch {
+        // Not a note.
+      }
+    }
+  }
+  return out;
 }
