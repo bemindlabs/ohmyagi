@@ -96,17 +96,20 @@ describe("a turn that may act reports what it changed", () => {
     expect((JSON.parse(result.stdout) as { changed: unknown }).changed).toBeNull();
   }, 60_000);
 
-  test("D-047: level 2 grants explicitly, isolates the identity, and loads no MCP", async () => {
+  // D-163 (Q4-D2): the grant is for a turn inside the fence (the vendor's own flags are tested in
+  // test/exec/registry.test.ts). A cloud claude is held at 1 — nothing is granted — while the isolation stays.
+  test("D-047 / D-163: level 2 on a cloud vendor grants nothing (held at 1), and still isolates the identity and loads no MCP", async () => {
     const { home, soul, work, run } = await setup();
     for (const category of ["write", "run", "reach"]) {
       await run(["autonomy", "set", category, "2", soul, "--subject", "example"]);
     }
     await run(["turn", soul, "--subject", "example", "--backend", "claude", "--prompt", "x"], work);
     const argv = JSON.parse(await Bun.file(join(home, "argv.json")).text()) as string[];
-    expect(argv).toContain("acceptEdits");
+    expect(argv).not.toContain("acceptEdits");
     expect(argv).toContain("--strict-mcp-config");
     expect(argv[argv.indexOf("--setting-sources") + 1]).toBe("project,local");
-    expect(argv).not.toContain("--tools");
+    // The vendor's read-only flag stays ON: every built-in tool removed, exactly as at level 1.
+    expect(argv[argv.indexOf("--tools") + 1]).toBe("");
   }, 60_000);
 
   test("level 3 (confirmed): the change is in --json, and not printed — act, not act-then-report", async () => {

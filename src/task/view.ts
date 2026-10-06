@@ -3,7 +3,7 @@
  * --json`, `/api/tasks` and the tasks in `/api/state`, so every channel says the same thing (D-086, D-154).
  */
 
-import { shownStatus, type ShownStatus, type TaskRecord, type TaskStep } from "./store.ts";
+import { resumable, shownStatus, type ShownStatus, type TaskRecord, type TaskStep } from "./store.ts";
 
 export interface TaskSummary {
   readonly id: string;
@@ -20,7 +20,7 @@ export interface TaskSummary {
   readonly plan: readonly string[] | null;
   readonly steps: readonly TaskStep[];
   readonly result: string | null;
-  /** Whether the page may offer "Resume": the task was interrupted. */
+  /** Whether the page may offer "Resume": the task was interrupted, or parked (S18.2). */
   readonly resumable: boolean;
   /** Whether "Stop" means anything: the task has not ended. */
   readonly stoppable: boolean;
@@ -44,7 +44,7 @@ export function summarise(record: TaskRecord, stat?: (pid: number) => { readonly
     plan: record.plan,
     steps: record.steps,
     result: record.result,
-    resumable: status === "interrupted",
+    resumable: resumable(status),
     stoppable: status !== "done" && status !== "failed" && status !== "stopped" && status !== "budget",
     browser: record.browser === null ? null : { port: record.browser.port },
   };
@@ -53,7 +53,7 @@ export function summarise(record: TaskRecord, stat?: (pid: number) => { readonly
 /** One line for `task list`. */
 export function listLine(summary: TaskSummary): string {
   const goal = summary.goal.replace(/\s+/g, " ");
-  return `${summary.id}  ${summary.status.padEnd(11)}  ${summary.used.turns}/${summary.budget.turns} turns  ${goal.length > 70 ? `${goal.slice(0, 69)}…` : goal}`;
+  return `${summary.id}  ${summary.status.padEnd(15)}  ${summary.used.turns}/${summary.budget.turns} turns  ${goal.length > 70 ? `${goal.slice(0, 69)}…` : goal}`;
 }
 
 /** The lines of `task show`, without colour. */
@@ -79,6 +79,8 @@ export function showLines(summary: TaskSummary): string[] {
     if (step.summary !== "") lines.push(`      ${step.summary}`);
   }
   if (summary.result !== null) lines.push(`  result: ${summary.result}`);
-  if (summary.resumable) lines.push("  it was interrupted: `ohmyagi task resume` carries on from the step it was on");
+  if (summary.status === "interrupted") lines.push("  it was interrupted: `ohmyagi task resume` carries on from the step it was on");
+  if (summary.status === "parked") lines.push("  it was parked: `ohmyagi task resume` carries it on, `ohmyagi task stop` ends it");
+  if (summary.status === "waiting-backend") lines.push("  its runner is waiting for the backend; it carries on by itself when the backend is back");
   return lines;
 }

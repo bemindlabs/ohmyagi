@@ -26,12 +26,30 @@
  * `interrupted` — it counts as a turn spent, because its turn may have reached a backend — tells the next
  * step's turn so, and carries on from there. The browser does not survive: the old container's owner is gone,
  * so the sweep ends it, and the new runner brings up a fresh one (a clean profile, D-151).
+ *
+ * ## When the backend is not there (S18.2)
+ *
+ * Before every step the runner asks {@link RunnerDeps.backendReady}. While the answer is no — the local model asleep
+ * because media-gen has the GPU, or down — the task is `waiting-backend`: no step starts, so no turn is spent and no
+ * minute counts (the budget's minutes are the steps' own time). A step whose turn got no answer and whose backend
+ * is found not ready right after is `no-backend`, not `failed`: it counts against nothing. A wait that passes its
+ * limit ({@link DEFAULT_BACKEND_WAIT_MINUTES}, or the task's own) parks the task — `parked`, with the reason, no
+ * runner; `task resume` carries it on and `task stop` ends it. Not `failed`: nothing about the task went wrong.
+ *
+ * ## Ended from outside (S18.1)
+ *
+ * A runner in a unit of its own is sent SIGTERM when that unit is stopped. With a stop asked (`task stop`,
+ * `ohmyagi stop`, erase) that is {@link RunnerDeps.stopping}; with none — the user's manager going down for a reboot
+ * — it is {@link RunnerDeps.leaving}: the runner ends its step's turn, closes the step as interrupted and leaves the
+ * task as a crash would, for `task resume`, but with the record written.
  */
 
 import { join } from "node:path";
 import { linkClaim } from "../decide/proposals.ts";
 import { readFile } from "node:fs/promises";
 import { activeLimitMs, budgetSpent } from "./budget.ts";
+import { LEFT_EXIT_CODE } from "./unit.ts";
+import { DEFAULT_BACKEND_WAIT_MINUTES, type BackendState } from "./backend-ready.ts";
 import { planPrompt, readPlan, readStep, stepPrompt } from "./prompt.ts";
 import {
   alive,
@@ -111,6 +129,12 @@ export interface RunnerDeps {
   /** True once this runner was asked to stop (SIGTERM). */
   readonly stopping: () => boolean;
   readonly stat?: (pid: number) => { readonly startTicks: number } | null;
+  /** S18.2: is the backend this task's steps need ready? Absent: always. */
+  readonly backendReady?: (record: TaskRecord) => Promise<BackendState>;
+  /** How often a task waiting on its backend asks again. */
+  readonly backendPollMs?: number;
+  /** S18.1: this runner is being ended from outside with no stop asked; it leaves the task for `task resume`. */
+  readonly leaving?: () => boolean;
 }
 
 /** A task's record disappeared under its runner — erased (I-4). The runner stops and writes nothing more. */
@@ -175,6 +199,7 @@ export async function runTask(start: TaskRecord, deps: RunnerDeps): Promise<RunO
   };
   const at = () => deps.now().toISOString();
   const setStatus = (status: TaskStatus, reason: string | null = record.reason) => ({ ...record, status, statusAt: at(), reason });
+  const leaving = () => deps.leaving?.() === true;
 
   // This runner is the task's now. A step the last one left open is closed as interrupted.
   const open = openStep(record);
@@ -188,7 +213,8 @@ export async function runTask(start: TaskRecord, deps: RunnerDeps): Promise<RunO
     };
     deps.say(`task ${record.id}: step ${open.n} was interrupted; carrying on from there`);
   }
-  await save({ ...resumed, status: record.plan === null ? "planning" : "running", statusAt: at() });
+  // A parked task's reason was why it was parked; carried on, that is history.
+  await save({ ...resumed, status: record.plan === null ? "planning" : "running", statusAt: at(), ...(record.status === "parked" ? { reason: null } : {}) });
 
   let browserUp = false;
   try {
@@ -218,13 +244,48 @@ export async function runTask(start: TaskRecord, deps: RunnerDeps): Promise<RunO
       if (failed !== undefined) return failed;
     }
 
+    /** S18.2: wait until the backend is ready, or the task is stopped, left or parked. */
+    const backendWait = async (): Promise<RunOutcome | undefined> => {
+      if (deps.backendReady === undefined) return undefined;
+      let state = await deps.backendReady(record);
+      if (state.ready) return undefined;
+      const since = deps.now().getTime();
+      const limitMs = (record.backendWaitMinutes ?? DEFAULT_BACKEND_WAIT_MINUTES) * 60_000;
+      const working: TaskStatus = record.plan === null ? "planning" : "running";
+      await save(setStatus("waiting-backend", `waiting for its backend: ${state.reason}`));
+      deps.say(`task ${record.id}: waiting for its backend — ${state.reason}`);
+      for (;;) {
+        if (deps.stopping() || (await stopRequested(taskDir))) return await finish("stopped", "it was asked to stop");
+        if (await deps.brake()) return await finish("stopped", "the brake is on (`ohmyagi stop`)");
+        if (leaving()) return await leave(undefined);
+        const waited = deps.now().getTime() - since;
+        if (waited >= limitMs) {
+          return await finish(
+            "parked",
+            `its backend was not ready for ${Math.round(waited / 60_000)} min (${state.reason}) — \`ohmyagi task resume\` carries it on, \`ohmyagi task stop\` ends it`,
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, Math.min(deps.backendPollMs ?? 5000, Math.max(1, limitMs - waited))));
+        state = await deps.backendReady!(record);
+        if (state.ready) {
+          await save(setStatus(working, null));
+          deps.say(`task ${record.id}: its backend is ready again after ${Math.round((deps.now().getTime() - since) / 1000)} s`);
+          return undefined;
+        }
+        if (record.reason !== `waiting for its backend: ${state.reason}`) await save(setStatus("waiting-backend", `waiting for its backend: ${state.reason}`));
+      }
+    };
+
     let failedInARow = 0;
     let unreadableInARow = 0;
     for (;;) {
       if (deps.stopping() || (await stopRequested(taskDir))) return await finish("stopped", "it was asked to stop");
       if (await deps.brake()) return await finish("stopped", "the brake is on (`ohmyagi stop`)");
+      if (leaving()) return await leave(undefined);
       const spent = budgetSpent(record);
       if (spent !== undefined) return await finish("budget", spent);
+      const waited = await backendWait();
+      if (waited !== undefined) return waited;
       if (record.browser !== null) {
         const level = await levelNow();
         if (level === 0) return await finish("stopped", "the dial's browser level went to 0 while the task ran, so its browser was ended");
@@ -302,14 +363,23 @@ export async function runTask(start: TaskRecord, deps: RunnerDeps): Promise<RunO
         watched.stop = watched.stop || last.stop;
       }
 
-      const sent = !NOTHING_SENT.has(ran.code);
       const answered = ran.text.trim() !== "";
       const stopped = deps.stopping() || (await stopRequested(taskDir)) || (await deps.brake()) || watched.stop;
+      const unanswered = ran.code !== 0 && !answered;
+      // Ended from outside before its turn answered: what the step did is not known. One that answered is recorded,
+      // and the runner leaves at the top of the loop.
+      if (leaving() && !stopped && unanswered) return await leave(ran);
       const read = kind === "plan" ? readPlan(ran.text) : readStep(ran.text);
+      // S18.2: a turn with no answer while the backend is not ready is the backend's, not the step's.
+      const down = unanswered && !stopped && !NOTHING_SENT.has(ran.code) && deps.backendReady !== undefined ? await deps.backendReady(record) : undefined;
+      const noBackend = down !== undefined && !down.ready ? down.reason : undefined;
+      const sent = !NOTHING_SENT.has(ran.code) && noBackend === undefined;
       const outcome: TaskStep["outcome"] =
-        ran.code !== 0 && !answered ? (stopped ? "stopped" : "failed") : read.ok ? "ok" : "unreadable";
+        unanswered ? (stopped ? "stopped" : noBackend !== undefined ? "no-backend" : "failed") : read.ok ? "ok" : "unreadable";
       const summary =
-        outcome === "failed" || outcome === "stopped"
+        outcome === "no-backend"
+          ? `no answer — its backend was not ready (${noBackend}); this step counts against nothing`
+          : outcome === "failed" || outcome === "stopped"
           ? `${outcome === "stopped" ? "stopped" : "the turn failed"} (exit ${ran.code})${ran.error === "" ? "" : `: ${ran.error}`}`
           : kind === "plan"
             ? read.ok && "plan" in read ? `planned ${read.plan.length} step(s)` : "the plan could not be read; working towards the goal directly"
@@ -333,10 +403,10 @@ export async function runTask(start: TaskRecord, deps: RunnerDeps): Promise<RunO
         current: null,
         notes: [...record.notes, ...watched.notes],
         // A plan turn that got no answer leaves no plan, so the next turn plans again.
-        plan: kind === "plan" && outcome !== "failed" && outcome !== "stopped" ? (read.ok && "plan" in read ? read.plan : []) : record.plan,
+        plan: kind === "plan" && outcome !== "failed" && outcome !== "stopped" && outcome !== "no-backend" ? (read.ok && "plan" in read ? read.plan : []) : record.plan,
         used: {
           turns: record.used.turns + (sent ? 1 : 0),
-          activeMs: record.used.activeMs + Math.max(0, ran.ms - watched.waitedMs),
+          activeMs: record.used.activeMs + (noBackend === undefined ? Math.max(0, ran.ms - watched.waitedMs) : 0),
           tokens: record.used.tokens + (ran.tokens ?? 0),
           tokensUnknown: record.used.tokensUnknown + (sent && ran.tokens === null ? 1 : 0),
         },
@@ -348,6 +418,8 @@ export async function runTask(start: TaskRecord, deps: RunnerDeps): Promise<RunO
       }
       if (ran.code === 4 && !answered) return await finish("failed", `the turn was refused before anything was sent: ${ran.error}`);
       if (ran.code === 2) return await finish("failed", `the turn could not be started: ${ran.error}`);
+      // The runner waits for the backend at the top of the loop; nothing about this step counts.
+      if (outcome === "no-backend") continue;
       if (outcome === "failed") {
         failedInARow += 1;
         if (failedInARow >= MAX_FAILED_IN_A_ROW) return await finish("failed", `${failedInARow} steps in a row got no answer: ${ran.error}`);
@@ -378,6 +450,39 @@ export async function runTask(start: TaskRecord, deps: RunnerDeps): Promise<RunO
     }
   } finally {
     if (browserUp && deps.browserDown !== undefined) await deps.browserDown(record).catch(() => undefined);
+  }
+
+  /**
+   * S18.1: ended from outside with no stop asked. The step that ran (`ran`, its turn already ended) is closed as
+   * interrupted — a turn spent, as a crash's is — and the record is left with no runner, which every reader shows as
+   * `interrupted`: `task resume` carries it on.
+   */
+  async function leave(ran: StepTurn | undefined): Promise<RunOutcome> {
+    if (browserUp && deps.browserDown !== undefined) {
+      await deps.browserDown(record).catch(() => undefined);
+      browserUp = false;
+    }
+    const open = openStep(record);
+    const steps =
+      open === undefined
+        ? record.steps
+        : [
+            ...record.steps.slice(0, -1),
+            { ...open, finishedAt: at(), outcome: "interrupted" as const, turnId: ran?.turnId ?? null, backend: ran?.backend ?? null, exit: ran?.code ?? null, tokens: ran?.tokens ?? null, ms: ran?.ms ?? null, summary: "interrupted — its runner was ended from outside (its unit stopped) during this step, so what it did is not known" },
+          ];
+    await save({
+      ...record,
+      steps,
+      used: open === undefined ? record.used : { ...record.used, turns: record.used.turns + 1, tokens: record.used.tokens + (ran?.tokens ?? 0) },
+      notes: open === undefined ? record.notes : [...record.notes, `Step ${open.n} was interrupted before it reported. Check what state things are in before repeating anything it may have done.`],
+      // Back to the status a runner works in: with no runner behind it, it is shown as interrupted.
+      status: record.status === "waiting-backend" || record.status === "waiting" ? (record.plan === null ? "planning" : "running") : record.status,
+      runner: null,
+      current: null,
+      browser: null,
+    });
+    deps.say(`task ${record.id}: its runner was ended from outside; left as it was — \`ohmyagi task resume\` carries it on`);
+    return { ok: false, reason: `task ${record.id} was left for \`task resume\`: its runner was ended from outside`, code: LEFT_EXIT_CODE };
   }
 
   async function finish(status: TaskStatus, reason: string): Promise<RunOutcome> {

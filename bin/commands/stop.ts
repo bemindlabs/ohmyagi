@@ -15,7 +15,8 @@
  * 4. **`docker kill` every browser task** of this state root (D-151), recorded
  *    or not — a container is identified by its labels, never by a guess.
  * 5. **Ask every task to stop** (D-154): its runner starts no next step, also
- *    after the brake is released.
+ *    after the brake is released — and, S18.1, stop its unit when it runs in
+ *    one of its own (`om-agi-task-<id>`), so the runner closes the task now.
  *
  * Each step reports separately and a failure in one does not skip the next,
  * because the person running this does not get to choose which failure they are
@@ -45,6 +46,7 @@ import {
 } from "../../src/decide/index.ts";
 import { sweepBrowsers } from "../../src/browser/runtime.ts";
 import { askEveryTaskToStop } from "../../src/task/control.ts";
+import { endTaskUnit, runShort, taskUnitName } from "../../src/task/unit.ts";
 import { subjectId } from "../../src/types.ts";
 import { decideDial, dialEnv, whoIsSetting, writeDial } from "../dial.ts";
 import { ERR, OUT, parseArgs, usageError } from "../shared.ts";
@@ -277,7 +279,11 @@ export async function cmdStop(argv: readonly string[]): Promise<number> {
   try {
     const asked = await askEveryTaskToStop(env, new Date(), "ohmyagi stop");
     if (asked.length === 0) OUT.line("  none running.");
-    for (const task of asked) OUT.line(`  ${task.id} (subject ${task.subject}, ${task.status}): asked to stop`);
+    for (const task of asked) {
+      // Queued, not waited on (`--no-block`): this command may be running inside that very task's step.
+      const unit = await endTaskUnit(task.id, runShort, env.env);
+      OUT.line(`  ${task.id} (subject ${task.subject}, ${task.status}): asked to stop${unit === "asked" ? `; its unit ${taskUnitName(task.id)} is being stopped` : ""}`);
+    }
   } catch (error) {
     failures += 1;
     OUT.line(`  COULD NOT ASK: ${String(error)} — \`ohmyagi task stop <task>\` each one`);

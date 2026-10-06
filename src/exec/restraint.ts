@@ -103,6 +103,32 @@ export function restrain(effective: EffectiveDial): Restraint {
 }
 
 /**
+ * What a turn on a backend that is not kernel-fenced is held to, until a fence for cloud vendors exists
+ * (D-163, Q4-D2 option A, owner's choice 2026-10-06). Write and run are held at 1: propose only.
+ */
+export const UNFENCED_CAP_LEVEL: Level = 1;
+
+/**
+ * Hold a restraint at {@link UNFENCED_CAP_LEVEL} for write and run — **a reduction and nothing else**.
+ *
+ * A restraint that is not loosened is returned as it came (same object): at act 1 or 0 the vendor's read-only
+ * flag is already on and there is nothing to lower, so this can never raise a level. A loosened one comes back
+ * with `act` 1, `loosened` false, `unfenced` false — which is exactly what write=1, run=1 produces — so every
+ * consumer (the read-only flag, the tool grant, the local fence's writable set) reads the lowered turn the way
+ * it reads any level-1 turn. `operate` is the browser's and is not touched. The only other way to make a
+ * Restraint is {@link restrain}; this is the second place `as Restraint` may stand, and it lowers.
+ */
+export function capRestraint(restraint: Restraint): Restraint {
+  if (!restraint.loosened) return restraint;
+  return Object.freeze({
+    act: Math.min(restraint.act, UNFENCED_CAP_LEVEL) as Level,
+    loosened: false,
+    unfenced: false,
+    operate: restraint.operate,
+  }) as Restraint;
+}
+
+/**
  * The restraint a **measurement** runs under, which the dial may not raise.
  *
  * `soul verify` spends real turns asking a backend questions only one soul can

@@ -15,6 +15,7 @@
  * | `stop` | a request to stop | `task stop`, `ohmyagi stop` |
  * | `prompt-<n>.txt` | the prompt of the step running now (600, removed after the step) | the runner |
  * | `runner.log` | what a detached runner would have printed | the runner |
+ * | `runner-env-<random>` | the environment a runner started in a unit of its own is to run with, as an `EnvironmentFile=` (600; S18.1, `unit.ts`) | `task new\|resume --detach`; systemd reads it as it starts the runner and the starter removes it at once (leftovers over a minute old are swept on the next start) |
  * | `approvals/` | the sensitive browser actions this task asked about (D-156, `approvals.ts`) | the runner, `task approve`/`deny` |
  *
  * One writer per file at a time is the whole concurrency rule. `task.json` is replaced whole (a temporary name,
@@ -44,13 +45,20 @@ export const LOG_FILE = "runner.log";
 export type TaskEnv = PersonalEnv;
 
 /**
- * Where a task is. `planning`, `running` and `waiting` (paused on an owner's answer, D-156) are a runner's to set
- * while it lives; the other four are final and never left.
+ * Where a task is. `planning`, `running`, `waiting` (paused on an owner's answer, D-156) and `waiting-backend`
+ * (the backend its steps need is not ready — the local model asleep or down, S18.2) are a runner's to set while it
+ * lives. `parked` (S18.2, D-164) is set by a runner as it leaves: the task is set aside, not ended, with no runner
+ * behind it — `task resume` carries it on, `task stop` ends it. The other four are final and never left.
  */
-export type TaskStatus = "planning" | "running" | "waiting" | "done" | "failed" | "stopped" | "budget";
+export type TaskStatus = "planning" | "running" | "waiting" | "waiting-backend" | "parked" | "done" | "failed" | "stopped" | "budget";
 
 /** What a reader is told: the record's status, or `interrupted` when no runner is behind a status that needs one. */
 export type ShownStatus = TaskStatus | "interrupted";
+
+/** Statuses a person may carry on with `task resume`. */
+export function resumable(status: ShownStatus): boolean {
+  return status === "interrupted" || status === "parked";
+}
 
 export const FINAL_STATUSES: readonly TaskStatus[] = ["done", "failed", "stopped", "budget"];
 
@@ -77,7 +85,12 @@ export interface TaskStep {
   readonly turnId: string | null;
   readonly backend: string | null;
   readonly exit: number | null;
-  readonly outcome: "ok" | "unreadable" | "failed" | "interrupted" | "stopped" | null;
+  /**
+   * `no-backend` (S18.2): the turn got no answer and the backend was found not ready right after — the local model
+   * asleep or down. It is not a failed step: it does not count against the turns, the minutes or the two failures in
+   * a row, and the runner waits for the backend before the next one.
+   */
+  readonly outcome: "ok" | "unreadable" | "failed" | "no-backend" | "interrupted" | "stopped" | null;
   /** The model's own one or two sentences about the step, or why there are none. */
   readonly summary: string;
   readonly done: boolean;
@@ -119,7 +132,7 @@ export interface TaskRecord {
   readonly approvalSeconds: number;
   readonly status: TaskStatus;
   readonly statusAt: string;
-  /** Why a final status was reached, in words. */
+  /** Why a final status was reached, in words — or why it waits on its backend, or was parked (S18.2). */
   readonly reason: string | null;
   readonly plan: readonly string[] | null;
   readonly steps: readonly TaskStep[];
@@ -143,6 +156,8 @@ export interface TaskRecord {
   readonly notes: readonly string[];
   /** How many runners have claimed this task (`runner.ts`): the next one claims `generation + 1`. */
   readonly generation: number;
+  /** S18.2: how long it waits for its backend before it is parked. Absent: `DEFAULT_BACKEND_WAIT_MINUTES` (30). */
+  readonly backendWaitMinutes?: number;
 }
 
 const TASK_ID = /^t-[0-9a-f]{8}$/;
@@ -321,7 +336,7 @@ export function shownStatus(
   stat: (pid: number) => { readonly startTicks: number } | null = procStat,
   now: number = Date.now(),
 ): ShownStatus {
-  if (isFinal(record.status)) return record.status;
+  if (isFinal(record.status) || record.status === "parked") return record.status;
   if (alive(record.runner, stat)) return record.status;
   // A task just made with --detach, whose runner has not claimed it yet, is starting — not interrupted.
   const young = now - Date.parse(record.createdAt) < STARTING_MS;

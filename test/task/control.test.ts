@@ -82,6 +82,61 @@ describe("stopping a task", () => {
     expect(out.ok && out.result.outcome).toBe("asked");
   });
 
+  test("S18.1: a runner in a unit of its own — its unit is stopped once the task is closed, and before giving up on a runner that has not closed it", async () => {
+    const box = await tempHome(scratch);
+    await createTask(box.tasks, aTask({ id: "t-0000abce", status: "running", runner: { pid: 7, start: 1, since: "x" } }));
+    const units: string[] = [];
+    const endUnit = async (task: string) => {
+      units.push(task);
+    };
+    let alive = true;
+    const stat = () => (alive ? { startTicks: 1 } : null);
+    // A runner that does not close it in time: its unit is stopped (SIGTERM with the stop asked) and the runner
+    // ends; the task is then closed here.
+    const out = await stopTask({ home: box.home, env: box.env }, box.tasks, SUBJECT, "t-0000abce", {
+      now: () => new Date(),
+      by: "t",
+      stat,
+      waitMs: 50,
+      unitWaitMs: 2000,
+      endUnit: async (task) => {
+        await endUnit(task);
+        alive = false;
+      },
+    });
+    expect(out.ok && out.result.outcome).toBe("stopped");
+    // Once to end the runner, once more after the task was closed here (a no-op for a unit already gone).
+    expect(units).toEqual(["t-0000abce", "t-0000abce"]);
+    const read = await readTask(box.tasks, SUBJECT, "t-0000abce");
+    expect(read.ok && read.record.status).toBe("stopped");
+
+    // A runner that closes it as asked: the unit is stopped after.
+    units.length = 0;
+    await createTask(box.tasks, aTask({ id: "t-0000abcf", status: "running", runner: { pid: 7, start: 1, since: "x" } }));
+    alive = true;
+    const closing = stopTask({ home: box.home, env: box.env }, box.tasks, SUBJECT, "t-0000abcf", { now: () => new Date(), by: "t", stat, waitMs: 5000, endUnit });
+    const read2 = await readTask(box.tasks, SUBJECT, "t-0000abcf");
+    if (read2.ok) await writeTask(box.tasks, { ...read2.record, status: "stopped", runner: null });
+    expect((await closing).ok).toBe(true);
+    expect(units).toEqual(["t-0000abcf"]);
+
+    // A unit that will not stop leaves the task asked, after the unit's own wait.
+    units.length = 0;
+    await createTask(box.tasks, aTask({ id: "t-0000abd0", status: "running", runner: { pid: 7, start: 1, since: "x" } }));
+    const stuck = await stopTask({ home: box.home, env: box.env }, box.tasks, SUBJECT, "t-0000abd0", { now: () => new Date(), by: "t", stat, waitMs: 20, unitWaitMs: 20, endUnit });
+    expect(stuck.ok && stuck.result.outcome).toBe("asked");
+    expect(units).toEqual(["t-0000abd0"]);
+  });
+
+  test("S18.2: a parked task (no runner) is closed by a stop", async () => {
+    const box = await tempHome(scratch);
+    await createTask(box.tasks, aTask({ status: "parked", reason: "its backend was not ready for 30 min" }));
+    const out = await stopTask({ home: box.home, env: box.env }, box.tasks, SUBJECT, "t-0000abcd", { now: () => new Date(), by: "t", stat: () => null });
+    expect(out.ok && out.result.outcome).toBe("stopped");
+    const read = await readTask(box.tasks, SUBJECT, "t-0000abcd");
+    expect(read.ok && [read.record.status, read.record.reason]).toEqual(["stopped", "it was asked to stop"]);
+  });
+
   test("`ohmyagi stop` asks every unfinished task of every subject", async () => {
     const box = await tempHome(scratch);
     await createTask(box.tasks, aTask({ status: "running" }));

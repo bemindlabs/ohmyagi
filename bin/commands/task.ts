@@ -50,6 +50,15 @@ import {
   tasksDir,
   thisProcess,
   wholeNumber,
+  backendReadiness,
+  endTaskUnit,
+  resumable,
+  startRunner,
+  runShort,
+  termHandler,
+  stopRequested,
+  MAX_BACKEND_WAIT_MINUTES,
+  type Started,
   type TaskRecord,
 } from "../../src/task/index.ts";
 import { spawnGuarded } from "../../src/spawn.ts";
@@ -59,7 +68,7 @@ import { parseArgs, report, usageError } from "../shared.ts";
 
 const USAGE =
   "usage: ohmyagi task new <dir> --subject <id> --goal <text> [--backend a,b] [--model <m>] [--budget-turns <n>] [--budget-minutes <n>] " +
-  "[--budget-tokens <n>] [--operate 0|1|2] [--allow <origin>…] [--step-minutes <n>] [--approve-within <minutes>] [--detach] [--json]\n" +
+  "[--budget-tokens <n>] [--operate 0|1|2] [--allow <origin>…] [--step-minutes <n>] [--approve-within <minutes>] [--backend-wait-minutes <n>] [--detach] [--json]\n" +
   "       ohmyagi task list <dir> --subject <id> [--json]\n" +
   "       ohmyagi task show <task> <dir> --subject <id> [--json]\n" +
   "       ohmyagi task stop <task> <dir> --subject <id> [--json]\n" +
@@ -77,8 +86,8 @@ const RUN_BOOLEANS: readonly string[] = ["json", "detach", "detached"];
 const APPROVE_BOOLEANS: readonly string[] = ["json"];
 const DENY_BOOLEANS: readonly string[] = ["json", "stop"];
 
-/** Exit codes: 0 done · 1 failed · 3 out of budget · 4 stopped · 5 already running or already ended. */
-const EXIT: Readonly<Record<string, number>> = { done: 0, failed: 1, budget: 3, stopped: 4 };
+/** Exit codes: 0 done · 1 failed · 3 out of budget · 4 stopped · 5 already running or already ended · 6 parked · 75 left for resume. */
+const EXIT: Readonly<Record<string, number>> = { done: 0, failed: 1, budget: 3, stopped: 4, parked: 6 };
 
 function allValues(argv: readonly string[], name: string): string[] {
   const values: string[] = [];
@@ -123,6 +132,18 @@ async function carry(record: TaskRecord, where: Place, say: (line: string) => vo
   // Round 4: this runner's own memory of every loosened turn it sees, so a turn that deletes or flips its run
   // record cannot make a claim it wrote look clean (src/task/taint-watch.ts).
   const { tainted, stop: stopWatching } = await runnerTaint(env, record.operate === 2);
+  // S18.1: SIGTERM is how systemd stops this runner's unit (`task stop`, `ohmyagi stop`, a reboot). The step's turn
+  // is ended the way `ohmyagi stop` ends any turn; then, with a stop asked, the task closes as stopped — with none
+  // (the user's manager going down), it is left for `task resume`. Either way the record is written before exit.
+  const term = termHandler({
+    stopAsked: async () => (await stopRequested(taskDir)) || (await isStopped(env)),
+    endTurn: async () => {
+      const now = await readTask(where.tasks, where.subject, record.id);
+      if (now.ok && now.record.current !== null) await endStepTurn(env, now.record.current, {});
+    },
+    exit: (code) => process.exit(code),
+  });
+  process.on("SIGTERM", term.onTerm);
   const outcome = await runTask(record, {
     tasks: where.tasks,
     now: () => new Date(),
@@ -164,8 +185,14 @@ async function carry(record: TaskRecord, where: Place, say: (line: string) => vo
       await endStepTurn(env, process_, {});
     },
     self: thisProcess(),
-    stopping: () => false,
-  }).finally(stopWatching);
+    stopping: term.stopping,
+    leaving: term.leaving,
+    backendReady: backendReadiness(process.env),
+  }).finally(() => {
+    process.off("SIGTERM", term.onTerm);
+    term.dispose();
+    stopWatching();
+  });
   if (!outcome.ok) {
     say(`ohmyagi task: ${outcome.reason}`);
     return outcome.code;
@@ -173,14 +200,38 @@ async function carry(record: TaskRecord, where: Place, say: (line: string) => vo
   return EXIT[outcome.record.status] ?? 1;
 }
 
-/** Start `task run` for this task as a process of its own that outlives this one. */
-function detach(record: TaskRecord, where: Place): number {
-  const child = spawnGuarded(
-    [...engineCommand().argv, "task", "run", record.id, where.dir, "--subject", where.subject, "--detached"],
-    { cwd: record.cwd, detached: true },
-  );
-  child.unref();
-  return child.pid;
+/**
+ * Start `task run` for this task so that it outlives this process — and, S18.1, whatever started this one: a unit
+ * of its own when a user systemd manager answers (`src/task/unit.ts`), else a detached child as before, said once.
+ */
+async function detach(record: TaskRecord, where: Place): Promise<Started> {
+  const runner = [...engineCommand().argv, "task", "run", record.id, where.dir, "--subject", where.subject, "--detached"];
+  const started = await startRunner({
+    id: record.id,
+    taskDir: taskDirIn(where.tasks, record.id),
+    cwd: record.cwd,
+    runner,
+    env: process.env,
+    run: runShort,
+    plain: () => {
+      const child = spawnGuarded(runner, { cwd: record.cwd, detached: true });
+      child.unref();
+      return child.pid;
+    },
+  });
+  if (started.how === "process") {
+    console.error(`ohmyagi task: no unit of its own (${started.why}) — the runner is a background process of whatever started it, and ends if that is stopped`);
+  }
+  return started;
+}
+
+const where_ = (started: Started): string =>
+  started.how === "unit" ? `unit ${started.unit}${started.pid === null ? "" : `, pid ${started.pid}`}` : started.how === "already" ? `unit ${started.unit}` : `pid ${started.pid}`;
+
+/** Said when the task's unit was alive already: nothing was started, and the exit code is 5 like any "already running". */
+function alreadyRunning(id: string, started: Extract<Started, { how: "already" }>): number {
+  console.error(`ohmyagi task: ${id} is running already (unit ${started.unit}) — nothing was started.`);
+  return 5;
 }
 
 /**
@@ -212,7 +263,8 @@ async function cmdNew(argv: readonly string[]): Promise<number> {
   const tokens = wholeNumber(options.get("budget-tokens"), "--budget-tokens", 1, 1_000_000_000);
   const step = wholeNumber(options.get("step-minutes"), "--step-minutes", 1, 120);
   const approve = wholeNumber(options.get("approve-within"), "--approve-within", 1, MAX_APPROVAL_SECONDS / 60);
-  for (const parsed of [turns, minutes, tokens, step, approve]) if (!parsed.ok) return usageError(parsed.reason);
+  const backendWait = wholeNumber(options.get("backend-wait-minutes"), "--backend-wait-minutes", 1, MAX_BACKEND_WAIT_MINUTES);
+  for (const parsed of [turns, minutes, tokens, step, approve, backendWait]) if (!parsed.ok) return usageError(parsed.reason);
   const operateRaw = options.get("operate") ?? "0";
   if (!["0", "1", "2"].includes(operateRaw)) return usageError("--operate is 0 (no browser), 1 (look) or 2 (act on --allow)");
   const operate = Number(operateRaw) as 0 | 1 | 2;
@@ -270,15 +322,18 @@ async function cmdNew(argv: readonly string[]): Promise<number> {
     browser: null,
     notes: [],
     generation: 0,
+    ...(backendWait.ok && backendWait.value !== undefined ? { backendWaitMinutes: backendWait.value } : {}),
   };
   await createTask(where.tasks, record);
 
   if (options.has("detach")) {
-    const pid = detach(record, where);
-    if (options.has("json")) console.log(JSON.stringify({ ok: true, id: record.id, detached: true, pid }));
-    else {
+    const started = await detach(record, where);
+    if (started.how === "already") return alreadyRunning(record.id, started);
+    if (options.has("json")) {
+      console.log(JSON.stringify({ ok: true, id: record.id, detached: true, pid: "pid" in started ? started.pid : null, unit: started.how === "unit" ? started.unit : null }));
+    } else {
       console.log(record.id);
-      console.error(`ohmyagi task: ${record.id} is running in the background (pid ${pid}) — \`ohmyagi task show ${record.id} ${where.dir} --subject ${where.subject}\``);
+      console.error(`ohmyagi task: ${record.id} is running in the background (${where_(started)}) — \`ohmyagi task show ${record.id} ${where.dir} --subject ${where.subject}\``);
     }
     return 0;
   }
@@ -306,13 +361,15 @@ async function cmdRun(argv: readonly string[], resuming: boolean): Promise<numbe
   if (nested !== undefined) return nested;
   const read = await readTask(where.tasks, where.subject, positional[0]!);
   if (!read.ok) return usageError(read.reason);
-  if (resuming && shownStatus(read.record) !== "interrupted") {
-    console.error(`ohmyagi task: ${read.record.id} is ${shownStatus(read.record)}, not interrupted — nothing to resume.`);
+  if (resuming && !resumable(shownStatus(read.record))) {
+    console.error(`ohmyagi task: ${read.record.id} is ${shownStatus(read.record)}, not interrupted or parked — nothing to resume.`);
     return 5;
   }
   if (resuming && options.has("detach")) {
+    const started = await detach(read.record, where);
+    if (started.how === "already") return alreadyRunning(read.record.id, started);
     console.log(read.record.id);
-    console.error(`ohmyagi task: ${read.record.id} resumes in the background (pid ${detach(read.record, where)})`);
+    console.error(`ohmyagi task: ${read.record.id} resumes in the background (${where_(started)})`);
     return 0;
   }
   // A detached runner has no one reading its output: every line goes to the task's own log (600).
@@ -414,6 +471,7 @@ async function cmdStop(argv: readonly string[]): Promise<number> {
     endBrowser: async (task) => {
       await browserDown(dialEnv(), task);
     },
+    endUnit: (task) => endTaskUnit(task, runShort, process.env),
   });
   if (!stopped.ok) {
     console.error(`ohmyagi task: ${stopped.reason}`);

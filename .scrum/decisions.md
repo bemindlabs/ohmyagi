@@ -1472,6 +1472,7 @@ audit log กลางจะเป็นที่ที่เก้าที่ 
 1. trigger อยู่ใน `triggers.md` ข้าง `autonomy.md` — อยู่ใน git เพราะ *agent ตัวนี้ทำอะไรเองตามเวลา* เป็นส่วนหนึ่งของตัวตน เหมือน dial
 2. **turn ที่ trigger ปลุกถูกกดไว้ที่ระดับ 1** ผ่าน `OM_AGI_AUTONOMY_MAX` (ลดได้อย่างเดียว) — S5.2 AC1: การลงมือที่ไม่ได้ถูกสั่งตรง ๆ ต้องออกมาเป็น proposal · ผลคือ trigger ได้แค่ *เสนอ* ส่วนการลงมือจริงยังต้องให้เจ้าของอนุมัติ แล้วใช้ `turn --proposal`
 3. **ไม่มี daemon** — `triggers tick` ทำครั้งเดียวแล้วจบ · ให้ OS เป็นคนตั้งเวลา (`triggers schedule` พิมพ์ systemd timer / cron ให้ ไม่ติดตั้งเอง) ตาม non-goal ที่ว่าไม่เขียน scheduler เอง
+   - **ยังถือ (2026-10-06, D-164 AO-1):** supervisor ของ always-on เป็น oneshot tick ที่ systemd timer ปลุกทุก 1 นาที ไม่ใช่ daemon · warden ของ D-163 เป็น service ค้างแต่เป็นเส้นแบ่งความปลอดภัย ไม่ใช่ scheduler
 4. turn ที่ trigger ปลุกคือ `om-agi turn` ตัวเดียวกันที่รันเป็น process ลูก ⇒ ได้ ledger · เบรก · run record · egress filter · recall มาครบ ไม่มีทางเลี่ยงใหม่เกิดขึ้น
 
 ---
@@ -2936,6 +2937,7 @@ release แรกบน public ติดป้าย **`v0.3.0-alpha` · pre-rel
 **สถานะ:** เจ้าของเคาะ (2026-10-05 — เลือก "ต้องมีคนกดทำต่อ" จาก 2 ทาง: ต้องมีคนกด (บุษบาแนะนำ) · ทำต่อเองตอน `ohmyagi web` เริ่ม) · ต่อจาก D-154 และ D-054 (ไม่มี daemon)
 
 - task ที่ runner ตาย (รีบูต, process ถูก kill) แสดงเป็น `interrupted` บนเว็บ/แอป/CLI พร้อมปุ่มทำต่อ · `task resume` เท่านั้นที่พาไปต่อ · ไม่มีอะไรรันเองตอนเจ้าของไม่รู้ตัว โดยเฉพาะงานที่มีเบราว์เซอร์
+- **แก้โดย D-164 AO-2 (2026-10-06, เจ้าของเคาะ):** task **ที่ไม่มีเบราว์เซอร์** resume เองได้โดย supervisor tick — ครั้งเดียวต่อ task ต่อ 24 ชม. · ถูกขัดไม่เกิน 6 ชม. · งบยังเหลือ · แจ้งเตือนทุกครั้ง · task ที่มีเบราว์เซอร์ยังต้องมีคนกดตามข้อนี้
 
 ## D-159 — คลิกที่อนุมัติแล้วครอบคลุมกล่องยืนยันที่มันเปิดทันที
 
@@ -2970,3 +2972,137 @@ release แรกบน public ติดป้าย **`v0.3.0-alpha` · pre-rel
 - **ทำแล้ว:** ถาม `isatty(1)` (ตามกติกาใน `bin/shared.ts` ไม่อ่าน `process.stdout`) · **ต่อ terminal** แสดงลิงก์เต็มเหมือนเดิม · **ไม่ใช่ terminal** (service, pipe, ไฟล์): มี `--key-file` → พิมพ์ URL ไม่มีกุญแจ + path ของไฟล์ (ไม่มีส่วนใดของกุญแจเลย) · ไม่มี `--key-file` → mask เหลือ 4 ตัวหน้า 4 ตัวท้าย (`#t=abcd…wxyz`) · `--qr` ไม่วาดรหัส (รหัสคือลิงก์ทั้งเส้น) — จับคู่จากหน้าเว็บหรือรัน `--qr` ที่ terminal แทน · โค้ดอยู่ที่ `src/web/banner.ts`
 - **ตรวจแล้วว่าไม่รั่ว:** stderr ของ web พูดแค่ path ของ key file · `/api/pair` และ `/api/pair/rotate` ส่งลิงก์กลับให้หน้าเว็บที่ถือกุญแจอยู่แล้วเท่านั้น ไม่ log · `a2a serve` ไม่มีกุญแจใน URL · `a2a allow` พิมพ์ token ได้เฉพาะเมื่อ stdin และ stdout เป็น terminal (S8.4) · ไม่มีไฟล์ log ไหนเขียนกุญแจ
 - **ที่เจ้าของต้องทำเอง:** journal เดิมยังมีกุญแจที่พิมพ์ไปแล้ว · หลังติดตั้งเวอร์ชันที่มีการแก้นี้ ให้ลบไฟล์กุญแจแล้ว restart หนึ่งครั้งเพื่อหมุนกุญแจ (ครั้งนั้นจะไม่พิมพ์กุญแจแล้ว)
+
+---
+
+## D-163 — Q4 = B: แยก system user `ohmyagi-tasks` รัน **warden** ที่ถือกุญแจ ใบอนุมัติ และเบราว์เซอร์ของ task
+
+**สถานะ:** เจ้าของเคาะ (2026-10-06 — *"Q4 = B: separate system user for task runner/store"* แล้วเคาะ D1–D11 ตรงกับคำแนะนำของแบบร่างทุกข้อ) · ต่อจาก D-042 (uid เดียวกัน = ระดับ 3 ต้องยืนยันที่ terminal), D-118 (fence), D-153, D-156, D-160 · ที่มา: แบบร่าง Q4-B (อ่านที่ `1f98a29`, v0.10.1) · ไม่มีอะไรบนเครื่องเปลี่ยนตอนเคาะ
+
+**ปัญหา:** ตอนนี้ทุกอย่างรันเป็น `bmt` — runner ของ task, ใบอนุมัติ (`approvals/`, `decided/`, `tainted/`), กุญแจ ed25519 ที่ปล่อย action ที่ถูกกัน และ container เบราว์เซอร์บน docker แบบ rootful · process ใดก็ตามที่เป็น `bmt` (รวม turn ที่ถูกผ่อนให้ลงมือ) จึง (a) ตอบ "ใช่" แทนเจ้าของได้ (b) ปลอม release ได้ (c) ขับ container ข้ามด่านที่กันไว้ได้ (d) อ่านหน่วยความจำของ runner ได้ · และ `bmt` อยู่ในกลุ่ม `docker` = เท่ากับ root
+
+### Threat model (สรุป)
+
+| ข้อเท็จจริงบนเครื่อง (ตรวจแบบอ่านอย่างเดียว 2026-10-06) | ผล |
+|---|---|
+| `bmt` อยู่ในกลุ่ม `docker`(984), `root`(0), `sudo`, `adm` | `docker` = root · `adm` อ่าน journal ได้ · gid 0 เขียนไฟล์บางตัวได้ |
+| om-agi ใช้ docker แบบ rootful (44 container, image `om-agi-browser:*` 17 ตัว) | container เบราว์เซอร์อยู่บน daemon ที่ทุก process ของ `bmt` คุมได้ |
+| `portainer` mount `/var/run/docker.sock` และฟังบน tailnet :10700 | ใครมี login ของมัน = root |
+| Tailscale `OperatorUser = bmt` · node ไม่มี tag | process ของ `bmt` ชี้ `tailscale serve` ไปที่ backend ของตัวเองได้ · identity header แยกมือถือเจ้าของกับเครื่องนี้เรียกตัวเองไม่ออก |
+| `/opt/Synergy/synergy-service` เป็น `root:root 0777` | อาจเป็นทาง root สำหรับทุก user (ยังไม่ยืนยัน) |
+| `/etc/sudoers.d/010_bmt-nopasswd` มีอยู่ แต่ `sudo -n -l` ถามรหัส | ดูเหมือนไม่มี NOPASSWD ที่ใช้งานอยู่ · ticket ของ sudo ที่ cache ไว้ turn ใน terminal เดียวกันหยิบใช้ได้ |
+| fence D-118 ครอบเฉพาะ CLI **ในเครื่อง** | turn `claude` (cloud) ที่ถูกผ่อนได้ shell ของ `bmt` เต็ม ๆ พร้อม docker |
+
+ข้อสรุป 3 ข้อของแบบร่าง: **(1)** B อย่างเดียวไม่พอ — ช่องของเจ้าของ (หน้าเว็บและ TTY) ก็รันเป็น `bmt` ⇒ ต้องมี **กุญแจของอุปกรณ์บนมือถือ** ที่ลงชื่อทุกการกด Approve บนหน้าที่ warden เสิร์ฟเองจาก origin ของมัน · **(2)** B ถูกตีแตกตราบใดที่ process ที่ไม่น่าไว้ใจของ `bmt` ถึง docker socket ได้ (root อ่านหน่วยความจำ แทนกุญแจที่ลงทะเบียน แทน binary ได้) · **(3)** turn ของแต่ละขั้นรันเป็น user ใหม่ไม่ได้ (ต้องใช้ credential ของ vendor, ledger, agent dir ของ `bmt`) ⇒ แยกเป็น warden
+
+| ประตู | ปิดด้วย |
+|---|---|
+| (a) ตอบใบอนุมัติ | approve ต้องมีลายเซ็น ECDSA P-256 จาก **อุปกรณ์ที่ลงทะเบียน** ครอบ subject · task · approval id · digest · คำตอบ · nonce ของ warden · ไม่มีทางไหนของ `bmt` approve ได้ · **deny กับ stop ยังเปิดให้ `bmt`** เพราะพังแล้วปลอดภัย |
+| (b) ปลอม release | กุญแจอยู่ในหน่วยความจำของ warden เท่านั้น · `release/` `bmt` เขียนไม่ได้ · image สร้างจาก context ของ root ที่ตรวจ `BROWSER_CONTEXT_SHA256` · container ปฏิเสธลายเซ็นที่ไม่ถูกอยู่แล้ว |
+| (c) ขับ container ข้ามด่าน | container อยู่บน **daemon ของ warden** ที่ `bmt` ถึง socket ไม่ได้ · ขับผ่าน guard ด้วย token ก็ยังผ่าน hold ของ `record.cjs` |
+| (d) อ่านหน่วยความจำ runner | คนละ uid ⇒ ptrace, `/proc/pid/mem`, `environ` ไม่ได้ · `LimitCORE=0`, `NoNewPrivileges`, `notDumpable()` |
+
+### ทางที่ไม่ได้เลือก (Q4)
+
+- **A — คง uid เดียว + ทำด่านในโปรเซส:** ไม่มีงานติดตั้ง / ไม่ปิด (a)–(d) จริง ทุกอย่างที่ `bmt` ทำได้ process ของ `bmt` ก็ทำได้ · D-042 ยังเป็นรู
+- **B ตรงตัวอักษร — runner ทั้งตัวเป็น user ใหม่:** ตรงคำถาม / ต้อง `sudo -u bmt` เพื่อเริ่ม turn และ ACL เข้า state ของ `bmt` ⇒ เลือกแบบ warden แทน (D3)
+
+### D1–D11 (เจ้าของเคาะทั้งหมดตามคำแนะนำ)
+
+| # | เรื่อง | เลือก | ทางอื่น (pro / con) |
+|---|---|---|---|
+| D1 | พิสูจน์ "ใช่" อย่างไร | **กุญแจของอุปกรณ์บนมือถือ** — P-256 แบบ non-extractable (WebCrypto) สร้างโดยหน้าของ warden · ลงทะเบียนครั้งเดียวผ่าน `sudo -u ohmyagi-tasks /opt/om-agi/bin/ohmyagi warden device approve` แล้ว **พิมพ์** รหัส 10 ตัวที่มือถือแสดง · หลังจากนั้นกดเหมือนเดิม ไม่มีขั้นเพิ่ม | passkey ต่อคำตอบ: แข็งที่สุด / ต้องสแกนหน้าทุกครั้ง · รหัส sudo: ไม่ต้องมีมือถือ / เพิ่มขั้นทุกครั้ง TTY เท่านั้น · Tailscale identity: ฟรี / ปลอมได้จากเครื่องนี้ |
+| D2 | process ไหนของ `bmt` ที่ B ต้องกัน | **E — fence ทุก turn ที่ถูกผ่อน** (D-118 ใช้กับทุก backend รวม `claude` cloud) · seccomp ปิด AF_UNIX (docker, systemd user bus, tailscaled) อยู่แล้ว · policy เพิ่ม TCP 443 + DNS 127.0.0.53 · **`bmt` ยังอยู่ในกลุ่ม docker** | C: turn เป็น uid แยก — allow-list จริง / งานใหญ่ (credential ต่อ uid, ACL) · D: เอา `bmt` ออกจาก docker — กันได้ทุก process / ทุก timer, cron, fleet agent ที่ใช้ docker ต้องเปลี่ยน (ยกไปเคาะแยกถ้าต้องการ) |
+| D3 | รูปร่างของ runner | **แยก warden** — `ohmyagi-tasks` ถือกุญแจ · ใบอนุมัติ · เบราว์เซอร์ · หน้าอนุมัติ · loop กับ turn ยังเป็น `bmt` | runner ทั้งตัวเป็น user ใหม่ (ดูข้างบน) |
+| D4 | daemon ของเบราว์เซอร์ | **rootless docker ของ `ohmyagi-tasks`** — uid ของเบราว์เซอร์ map เป็น subuid หลุดออกมาก็เป็น nobody | rootful ตัวที่สอง: uid เหมือนเดิม / iptables ชนกัน daemon เป็น root · rootful ร่วม + proxy: ไร้ผลตราบที่ `bmt` อยู่ใน docker |
+| D5 | อนุมัติจาก TTY | **มือถือเท่านั้น** CLI พิมพ์ลิงก์/QR · `sudo` เป็นทางสำรอง · **deny/stop ทำได้เสมอ ไม่ต้องพิสูจน์** | sudo ทุกคำตอบ: ใช้ได้ไม่มีมือถือ / ใส่รหัสทุกครั้ง |
+| D6 | Tailscale operator | **เอา `bmt` ออก** (`sudo tailscale set --operator=`) — origin ของหน้าอนุมัติปลอมไม่ได้ | คงไว้: ไม่ต้องเปลี่ยน / ปลอม origin ได้ · con ที่รับ: แก้ `tailscale serve` ต้อง sudo (ตรวจสคริปต์ของ fleet) |
+| D7 | ticket ของ sudo | **`timestamp_timeout=0` เฉพาะ `/opt/om-agi/bin/ohmyagi`** (`/etc/sudoers.d/020-om-agi-warden`) | ทั้ง `bmt`: ปิดทาง root-by-ticket ทั่วไป / ถามรหัสทุก sudo (พิจารณาทีหลัง) |
+| D8 | taint และ "ห้ามตอบขณะ turn ที่ถูกผ่อนรันอยู่" | **เลิกใช้สำหรับคำตอบที่อุปกรณ์ลงชื่อ** — ลายเซ็นปิดประตูแล้ว เก็บไว้ก็แค่ขวางเจ้าของ | คงไว้: ป้องกันซ้อน / ขวางเจ้าของโดยไม่ได้อะไรเพิ่ม |
+| D9 | สุขอนามัยของเครื่อง | **แก้เลย:** Synergy 0777 · portainer บน tailnet + socket · ไฟล์ sudoers · สมาชิก gid 0 — B สมมติว่า `bmt` ไม่ใช่ root | ทีหลัง: ไม่มีงานตอนนี้ / B ไม่มีความหมายจนกว่าจะแก้ |
+| D10 | ย้าย task ที่มีอยู่ | **หยุดทุก task ก่อนอัปเกรด warden** (`task stop` ทุกตัว แล้ว `ohmyagi stop`) · ใบอนุมัติที่ค้าง = ไม่ · resume เองตาม D-158 ได้เบราว์เซอร์ใหม่จาก warden | ส่งต่อแบบไม่หยุด: ไม่สะดุด / ซับซ้อน |
+| D11 | `task.json` อยู่ที่ไหน | **คงเป็นของ `bmt`** — ไม่ใช่ทรัพย์สินของการอนุมัติ · ไม่ต้อง ACL | ย้ายไป warden: ตรง B / runner ต้องมี API เขียน |
+
+### Q4-D2 — เจ้าของเคาะ **option A** (2026-10-06): ลดระดับ turn ที่ไม่มี fence ชั่วคราว
+
+เจ้าของเคาะ option A สำหรับ Q4-D2 · **ชั้นนโยบายเท่านั้น** — `src/exec/fence.ts` กับ seccomp/Landlock ไม่ถูกแก้ · แถว D2 ข้างบนไม่ถูกแก้และไม่ถูกเลื่อนเลข: fence ที่ถูกต้องสำหรับ cloud vendor ยังเป็นงานถัดไป และเมื่อมีแล้ว ข้อจำกัดนี้ถูกถอด
+
+- **ข้อจำกัด:** turn บน backend ที่ **ไม่ได้อยู่ใน kernel fence** (ทุก vendor CLI บน cloud: claude, codex, kimi, grok, gemini, copilot และ backend ใหม่ใด ๆ ที่ยังพิสูจน์ fence ไม่ได้) จะถูกลด write และ run เหลือ **1** (propose เท่านั้น) แม้ dial จะตั้ง 2 ขึ้นไป — **ลดอย่างเดียว ไม่เคยเพิ่ม** · turn ยังรัน ไม่ล้ม · แจ้งทั้งบน stderr, `notes` และ `capped` ใน `--json` · `claude-local` (รันใน fence D-118) ใช้ dial เต็ม
+- **ใครเป็นผู้ตัดสินว่า fenced:** ไม่ใช่รายชื่อ — `ExecBackend.appliesFence(request)` ที่ถามจาก exec path ของ backend เอง (`CliExec` = request มี fence ที่ `run` จะส่งให้ kernel · `LocalCliExec` = จาก `prepare()` จริง) · ไม่ implement = ไม่ fenced (fail closed) · จุดเดียวที่ใช้: `CappedExec` ใน `bin/commands/turn.ts` (`src/exec/cap.ts`) — ทุกทางเข้า (CLI, `/api/turn`, task, chat, trigger, proposal) เริ่ม `ohmyagi turn`
+- **กฎที่สอง (เจ้าของเคาะ "refuse" ไม่ใช่ "ลดเป็น read-only"):** turn ที่ลงมือเขียนได้ (dial ผ่อนแล้ว) ที่ workdir **คือ, ครอบ หรืออยู่ใน** repo ของ agent, root ของ state/data ของ om-agi, `~/.secrets` หรือ `~/.ssh` ถูกปฏิเสธก่อนส่งอะไรออกไป บอกให้ระบุ workdir อื่น · เทียบบน real path (ตาม symlink และ `..` แบบ kernel) ไม่ใช่ string prefix · ใช้กับ backend ที่ fenced ด้วย
+- **ที่ยังเหลือ:** `bmt` process ที่ไม่ใช่ turn ยังถึง docker ได้ตามเดิม (ดู "ความเสี่ยงที่ยังเหลือ") · ใบอนุมัติ (proposal) ที่เคาะแล้วบน cloud ก็รันที่ 1 ด้วยจนกว่าจะมี fence · `ohmyagi doctor --agent <dir> --subject <id>` บอกว่า backend ไหนถูกลดเมื่อ dial สูงกว่า 1
+- **นับ "held" ที่ขยับ:** `bin/commands/turn.ts` 765 → 777 บรรทัด, `bin/commands/doctor.ts` 91 → 106 (ใน `scripts/check-coverage.ts`) · ตรรกะอยู่ใน `src/exec/cap.ts` และ `src/exec/workdir.ts` ซึ่งอยู่ใต้เกณฑ์ 85% ตามปกติ
+
+### รูปร่างที่ตกลง
+
+- **warden** = `ohmyagi warden serve` เป็น system unit `ohmyagi-warden.service` (`User=ohmyagi-tasks`, `ProtectSystem=strict`, `ProtectHome=yes`, `NoNewPrivileges`, `LimitCORE=0`, `CapabilityBoundingSet=` ว่าง) · binary ที่ `/opt/om-agi/bin/ohmyagi` เป็นของ root ตรวจ SHA256SUMS ตอนติดตั้ง · warden ไม่รันโค้ดจาก path ที่ `bmt` เขียนได้
+- **control socket** `/run/ohmyagi-tasks/warden.sock` (0600 + ACL ให้ `bmt`) — `browser.up/down/status`, `held.watch`, `approvals.list`, `approval.deny`, `screen.latest`, `subject.erase`, `stop.all` · **ไม่มี verb approve**
+- **หน้าอนุมัติ** `/run/ohmyagi-tasks/approve.sock` → `tailscale serve --https=30702` (ใน block 30700–30799 ของ D-005) · CSP เข้ม `frame-ancestors 'none'`
+- state ที่ `/var/lib/ohmyagi-tasks/<subject>/…` (approvals, recordings, browser records, device registry) · `erase` ไปถึงผ่าน `subject.erase` — warden ติดต่อไม่ได้ = erase ล้ม ไม่ใช่ผ่าน
+- `POST /api/tasks/…/approve` บนหน้าเว็บของ `bmt` ตอบ **410 + `approveUrl`** · deny ยังใช้ได้
+- **เรื่อง daemon:** warden เป็น service ที่รันค้างแบบเดียวกับ `ohmyagi web` — มันคือ *เส้นแบ่งความปลอดภัย* ไม่ใช่ scheduler · "ไม่มี daemon / scheduler ของตัวเอง" ของ D-054 และ backlog §7 ยังถือสำหรับการตั้งเวลา (D-164 AO-1) · บันทึกไว้ตรง ๆ ว่านี่คือ process ค้างตัวแรกที่ om-agi ติดตั้งในระดับ system
+
+**พิสูจน์ (D-149):** `bun run e2e:q4` — warden จริง · task ที่ operate 2 · หน้า fixture ที่ delete ถูกกัน · สคริปต์โจมตีรัน **ผ่านทางเดียวกับ turn ที่ถูกผ่อน** (`CliExec` + fence, vendor binary แทนด้วย `attack.sh`) ปิด taint watch เพื่อทดสอบเส้นแบ่งอย่างเดียว · A1–A10 (ใช้กุญแจเว็บ approve · ยิง :30702 ไม่ลงชื่อ/ลงชื่อด้วยกุญแจตัวเอง · ลงทะเบียนกุญแจตัวเองแล้ว `sudo -n` · เขียน `/var/lib/ohmyagi-tasks` · เขียน release ปลอม · `docker ps` ทั้งสอง daemon · อ่าน `/proc/<warden>/mem` · `tailscale serve` · `systemd-run --user`/`crontab` · ขับ guard แล้วกด Delete) ต้องไม่ปล่อย action สักครั้ง · แล้ว turn `claude` จริงที่ write/run 2 ถูกขอให้ approve ต้องไม่มีอะไรถูกปล่อย · สุดท้ายอุปกรณ์ทดสอบลงชื่อ "ใช่" → ลบครั้งเดียวพอดี
+
+### ความเสี่ยงที่ยังเหลือ (พูดตรง ๆ)
+
+- **process ของ `bmt` ที่ไม่ใช่ turn ยังเป็น root ได้** ผ่าน docker หรือ portainer (fleet agent, cron, session Claude Code) จนกว่าจะเคาะ D2 แบบ D แยก — B กันเฉพาะ turn ที่ถูกผ่อน
+- **token ของ guard** ให้ process ใดของ `bmt` ก็ท่องเว็บเรื่องที่ไม่อ่อนไหวใน task ที่รันอยู่ได้ (เรื่องอ่อนไหวยังถูกกัน)
+- **process ของ `bmt` deny หรือ stop task ได้** — แค่ denial of service โดยตั้งใจ
+- **ใช้หน้าอนุมัติจากเบราว์เซอร์บนเครื่องนี้ = กุญแจอยู่ใน profile ของ `bmt`** ซึ่ง process ของ `bmt` ใช้ได้ ⇒ ลงทะเบียนเฉพาะมือถือหรืออุปกรณ์อื่น
+- **script ของหน้าเว็บเอง** ยังดักหรือใช้สิ่งที่ model พิมพ์ลงช่องธรรมดาได้ (ไม่เปลี่ยนจาก 0.10.1)
+- rootless docker ยังเป็น spike (~1 วัน): iptables ใน userns, กฎ gateway ของ entrypoint ใต้ rootlesskit, cgroup delegation สำหรับ `--memory/--cpus/--pids-limit`, `host.docker.internal`, อ่าน `/out` ที่เป็น subuid
+
+**ที่เจ้าของต้องทำเอง (sudo, ตามลำดับในแบบร่าง §3.2):** ตรวจ `/etc/sudoers.d/010_bmt-nopasswd` · `chmod 0755` Synergy · `useradd --system ohmyagi-tasks` + subuid/subgid + linger + delegate · ติดตั้ง rootless docker ให้ user นั้น · `/opt/om-agi` เป็นของ root · sudoers `020-om-agi-warden` · enable `ohmyagi-warden.service` · `tailscale serve --https=30702` · `tailscale set --operator=` · ลงทะเบียนมือถือ · งานใน backlog: **E19** (S19.1–S19.8)
+
+---
+
+## D-164 — Always-on: tonkla-agi (om-bmt) ทำงานได้ 24/7 · AO-1..AO-11
+
+**สถานะ:** เจ้าของเคาะ (2026-10-06 — AO-1..AO-11 ทุกข้อ · ตรงกับคำแนะนำของแผน ยกเว้น AO-5 ที่เลือก C) · ต่อจาก D-054, D-154, D-158, D-022, D-048, D-130 · ที่มา: แผน always-on (อ่านที่ `1f98a29`, v0.10.1) · งานใน backlog: **E18** (S18.1–S18.16, P0–P7)
+
+**ปัญหาที่พบในแผน (ของจริงบนเครื่อง):** restart `ohmyagi-web-om` ฆ่า task ที่เว็บเริ่ม (runner อยู่ใน cgroup ของ unit, `KillMode=mixed`) · ใบอนุมัติของ task ไม่ push (`WaitingWatch` ดูแค่ proposal) หมด 10 นาทีแล้วกลายเป็น "ไม่" เงียบ ๆ · media-gen สั่ง vLLM `/sleep` ระหว่างทำวิดีโอ ⇒ ขั้นของ claude-local ล้ม 2 ครั้งติดแล้ว task ล้ม · ไม่มี queue/เพดานจำนวน · trigger เริ่มได้แค่ turn ระดับ 1 · ไม่มีเงินต่อ task · recording เก็บไม่มีกำหนด
+
+| # | คำถาม | เลือก | ทางอื่น (pro / con) |
+|---|---|---|---|
+| AO-1 | supervisor สร้างแบบไหน | **A — oneshot tick ทุก 1 นาที + unit ต่อ task** (`om-agi-supervise.timer` `OnBootSec=1min` → `ohmyagi tasks tick`; runner เริ่มด้วย `systemd-run --user --unit om-agi-task-<id> --collect`, `Restart=no` — tick เป็นคนตัดสินเรื่อง resume) | B: daemon `ohmyagi supervise` ค้าง — เร็วระดับวินาที / คือ daemon ที่ backlog §7 ห้าม และค้างได้ · A รับ latency ≤60 วิ ซึ่งไม่มีผลกับงานที่ไม่มีคนเฝ้า |
+| AO-2 | resume เอง? | **B — resume เองเฉพาะ task ที่ไม่มีเบราว์เซอร์** · ครั้งเดียวต่อ task ต่อ 24 ชม. · ถูกขัดไม่เกิน 6 ชม. · งบยังเหลือ · แจ้งเตือนทุกครั้ง · task ที่มีเบราว์เซอร์ยังต้องกดเอง | A: กดเองทุกครั้ง — ปลอดภัยสุด / ทุกรีบูตหรืออัปเกรดงาน 24/7 ค้างจนเจ้าของกด · C: เองทุกอย่าง — เบราว์เซอร์ใหม่เริ่มเองตอนเจ้าของหลับ ซึ่งคือสิ่งที่ D-158 กันไว้ (ทบทวน C หลัง soak + Q4-B) |
+| AO-3 | task ที่ไม่มีคนเฝ้าทำอะไรได้ | **B — ตารางเพดาน:** read ≤2 · write/run ≤2 ใน fence (Landlock, local chain) เฉพาะ `cwd` ของ task (repo ของ agent ไม่ใช่ cwd ของ task) · reach/operate ≤1 **ก่อน Q4-B** · หลัง Q4-B: reach ≤2 และ operate 2 เฉพาะ origin ใน allowlist ต่อ task · **ระดับ 3 และคำสั่งของเจ้าของ: ไม่มีวัน** (`autonomy set`, `erase`, `key *`, `deploy apply`, `proposal decide`, `chat allow`, `a2a allow`, `update`, `git push`, รับงานตลาด D-104, แก้ `triggers.md`/`autonomy.md`) · ขั้นของ task เริ่มหรืออนุมัติ task ไม่ได้ · บังคับแบบ `OM_AGI_AUTONOMY_MAX` (ลดได้อย่างเดียว) ต่อหมวด | A: ระดับ 1 ทุกหมวด — ได้แต่ proposal คุณค่าน้อย · C: ตาม dial — reach/operate 2 ขณะที่รู uid เดียวยังเปิดคือความเสี่ยงที่ Q4 มีไว้ปิด |
+| AO-4 | ช่องไหนเริ่มงานได้ตรง | **B — CLI/เว็บ/แอป + รายการ `kind="task"` ใน `triggers.md` (อยู่ใน git ผ่านรีวิว) + `/task` ใน Telegram ของเจ้าของ (ที่เพดาน AO-3)** · A2A → proposal (D-154) | A: นอกจาก CLI/เว็บ/แอปเป็น proposal หมด — กดเพิ่มทุกครั้ง เจ้าของไม่ชอบ · C: ทุกช่องตรง — ใครถือ token A2A ก็สั่ง agent ได้ · con ที่รับของ B: บัญชี Telegram ถูกขโมยจะคิวงานได้ (จำกัดด้วยเพดาน งบ allowlist ของ owner id และ `/stop`) |
+| AO-5 | งบตั้งต้น | **C — ไม่มีเพดานรายวัน** · งบต่อ task (turn · นาที · token · USD ใหม่) **ยังอยู่** · kill switch (`ohmyagi stop` + `tasks pause`) **ยังอยู่** · wall-clock deadline ต่อ task **ยังอยู่** | A (แผนแนะนำ): แน่น — cloud $2/วัน, 20 cloud turn, 8 ชม. — loop หลุดเสียไม่เกิน $2/วัน / หยุดบ่อย · B: กลาง $10/วัน · **con ที่เจ้าของรับ:** ไม่มีด่านรายวันกัน loop ข้าม task · ที่ยังกันอยู่คือ AO-11 (ไม่มีคนเฝ้า = $0 เป็นค่าตั้งต้น cloud ต้องตั้ง `--budget-usd` เอง), งบต่อ task, deadline, digest ทุกเช้า |
+| AO-6 | นับเงินที่ไหน | **A — runner บวก `cost` ของ turn แต่ละขั้นเข้า task** (`turn --json` คืน `cost.usd_micros`) · ไม่อ่าน ledger กลับ (D-022 ไม่ถูกแตะ) · turn ที่ไม่มีราคา (`model-unknown`/`not_charged`) นับเป็น **unknown** ไม่ใช่ 0 และแสดงให้เห็น | B: อ่าน ledger — ที่เดียวจริง / ต้องเคาะ D-022 ใหม่และผูกการตัดสินกับ ledger |
+| AO-7 | อนุมัติตอนเจ้าของไม่อยู่ | **A — push ทันที (ไม่เว้น 5 นาที) รอ 10 นาที แล้ว park** · Continue = runner ใหม่ เบราว์เซอร์ใหม่ ถามซ้ำ · Drop = stopped · park เกิน deadline = ปิด "never answered" · credential ยังปฏิเสธเสมอ (D-160) | B: รอ 60 นาทีทุกครั้ง — ถือเบราว์เซอร์และ runner ไว้ชั่วโมงหนึ่งมักเปล่า · C: ตอบจากปุ่ม Telegram — รายละเอียดออกผ่าน Telegram (D-048, D-130) และตัวตนอ่อนกว่ากุญแจเว็บ/D-163 |
+| AO-8 | ช่วงเงียบ | **A — 23:00–07:00 ICT** push เฉพาะเรื่องวิกฤต (เบรก · ดิสก์ · supervisor เงียบ) · ใบอนุมัติ park ทันที · digest 07:30 · ปรับเวลาได้ | B: push ตลอด — กวนตอนกลางคืน · C: digest อย่างเดียว — task ค้างไม่มีใครรู้หนึ่งวัน |
+| AO-9 | เก็บ recording เบราว์เซอร์ | **A — 14 วัน** (trace + screenshot) · egress log **90 วัน** | B: จนกว่า erase (วันนี้) — โตไม่หยุดเมื่อรัน 24/7 · C: 3 วัน — สั้นเกินรีวิวรายสัปดาห์ |
+| AO-10 | bot Telegram ของ tonkla-agi | **A — เจ้าของสร้าง bot ใหม่กับ BotFather** token ที่ `~/.secrets/tokens/` mode 600 · **งานของเจ้าของ** | B: ใช้ bot ของบุษบาร่วม — ชนกับ `busaba-telegram-cli` (409, ข้อความหาย, วัดแล้วใน E9) |
+| AO-11 | backend ตอนไม่มีคนเฝ้า | **A — claude-local เท่านั้น** · cloud เฉพาะ task ที่ตั้ง `--backend` ชัด **และ** `--budget-usd` > 0 · **ไม่มี fallback อัตโนมัติ** · task เบราว์เซอร์ = claude หรือ claude-local (D-157) · claude-local ล่ม = รอใน `queued` ไม่ล้ม | B: local แล้ว cloud เมื่อพัง — รอดตอน vLLM ล่ม / จ่ายเงินและส่งข้อมูลออกโดยไม่ถาม |
+
+**ความสัมพันธ์กับ decision เดิม:**
+
+- **D-054 "ไม่มี daemon" — ถือไว้ด้วย AO-1:** supervisor เป็น oneshot tick ที่ systemd ตั้งเวลา จบแล้วตาย ค้างไม่ได้ · ไม่มี scheduler ของ om-agi เอง (warden ของ D-163 เป็นเส้นแบ่งความปลอดภัย ไม่ใช่ scheduler)
+- **D-158 — แก้โดย AO-2:** resume เองได้เฉพาะ task **ที่ไม่มีเบราว์เซอร์** ภายในเงื่อนไข: ครั้งเดียวต่อ task ต่อ 24 ชม. · ถูกขัดไม่เกิน 6 ชม. · งบยังเหลือ · แจ้งเตือนทุกครั้ง · ถูกขัดซ้ำใน 24 ชม. = ค้าง `interrupted` + แจ้ง · task ที่มีเบราว์เซอร์ยังต้องมีคนกดตาม D-158 เดิม
+- **D-022:** ไม่ถูกแตะ (AO-6) · **D-048 / D-130:** push และ Telegram ไม่มีเนื้อหาของ task · Telegram ไม่รับคำตอบอนุมัติ
+- **D-154:** A2A ยังได้แค่เสนอ · trigger ได้เริ่ม task ตรงเฉพาะรายการ `kind="task"` ใน git (AO-4)
+- **E18 เพิ่ม:** สถานะ `queued` และ `parked` · `tasks tick|status|pause|resume-all|schedule` · `--queue`, `--budget-usd`, `deadlineHours` (ค่าเริ่ม 24 ชม. นับเวลา park) · `maxRunning` 2 / `maxBrowser` 1 / trigger 1 · guard: vLLM ตื่น (om-agi **ไม่เรียก** `/sleep` `/wake_up` เอง), VRAM ≥4 GB, ดิสก์ ≥20 GB · digest รายวันที่ **ไม่ใช้ model turn** · alert ไม่มีเนื้อหา
+- **ผลของ AO-5 ต่อแผน:** S18.6 เหลือแค่ pause/resume-all (ไม่มีเพดานรายวัน, ไม่มี reset เที่ยงคืน) · strip และ digest แสดงยอดใช้ แต่ไม่มี "เทียบเพดาน" · alert "daily cap hit" ไม่มี
+
+**ลำดับ:** P0–P3 (S18.1–S18.8, ~15 แต้ม) เริ่มได้เลยขนานกับ E19 · P5 และ operate 2 ของ P6 รอ E19 (D-163) · P4 Telegram รอ bot ของเจ้าของ (AO-10) · soak 72 ชม. บน subject `om-soak` ไม่ใช่ om-bmt
+
+---
+
+## D-165 — docker image สาธารณะของ agent ทั่วไป ออกพร้อม release
+
+**สถานะ:** เจ้าของเคาะ (2026-10-06 — *"Public docker image (generic agent) at release: ADD as E13 story, after always-on P0–P3"*) · story **S13.9** ใน E13 · ทำหลัง E18 P0–P3 · ต่อจาก D-021 (engine เปิดได้), D-058 (repo สาธารณะ `bemindlabs/ohmyagi`)
+
+- **ขอบเขต:** `ghcr.io/bemindlabs/ohmyagi:<ver>` (+ `latest` ของ release ล่าสุด) · multi-arch (linux/amd64 + linux/arm64) · ลงชื่อด้วย **cosign** + แนบ **SBOM** · build ใน release workflow เดียวกับ binary
+- **ไม่อบอะไรของใครลงไป:** ไม่มี soul ไม่มี memory ไม่มีกุญแจ — agent ทั่วไปที่ `init` ครั้งแรกใน volume `/data` (state + agent repo อยู่ที่นั่นทั้งหมด ลบ volume = ลบหมด)
+- **model ผ่าน env:** Ollama / OpenAI-compatible / LiteLLM (`base URL` + key ถ้ามี) — ไม่มีโมเดลใน image
+- **task เบราว์เซอร์ปิดไว้ก่อนใน image** (docker-in-docker หรือ socket ของ host = รูที่ D-163 เพิ่งปิด)
+- **pro:** คนที่อยากลองไม่ต้องติดตั้ง binary · เป็นฐานของ E13 deploy · ยืนยันได้ว่าได้ image ที่เราสร้างจริง (cosign + SBOM)
+- **con ที่รับ:** ต้องดูแล image ทุก release · vendor CLI ส่วนใหญ่ใช้ไม่ได้ถ้าไม่ใส่ไว้ (ดูข้อเปิด) · image สาธารณะ = ผิวที่ต้อง scan ช่องโหว่
+- **ทางที่ไม่ได้เลือก:** ทำเป็น epic ใหม่ (แยกจาก deploy ทั้งที่ใช้ร่วมกัน) · ทำก่อน always-on (ดึงแรงจากงานที่เจ้าของใช้เองทุกวัน)
+
+**ยังเปิด (เคาะทีละข้อตอนเริ่ม S13.9):**
+1. **vendor CLI ใน image** — ใส่ claude/grok/kimi/codex (ใหญ่ ใบอนุญาตต่างกัน credential ต้อง mount) หรือ image มีแค่ local chain ผ่าน OpenAI-compatible
+2. **เบราว์เซอร์ใน image** — เปิดทีหลังแบบไหน (sidecar container, rootless ในตัว) หรือไม่เปิดเลย
+3. **GHCR อย่างเดียว หรือ Docker Hub ด้วย** — GHCR อยู่ที่เดียวกับ repo และ release / Docker Hub คนหาเจอง่ายกว่าแต่มี rate limit และบัญชีเพิ่ม

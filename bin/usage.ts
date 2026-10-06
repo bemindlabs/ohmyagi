@@ -459,7 +459,7 @@ Usage:
                                         operate's: 1 approves look tools only, 2
                                         also click and type; code-running tools
                                         never, and sensitive actions are held.
-  ohmyagi task new <dir> --subject <id> --goal <text> [--backend a,b] [--model <m>] [--budget-turns <n>] [--budget-minutes <n>] [--budget-tokens <n>] [--operate 0|1|2] [--allow <origin>…] [--step-minutes <n>] [--approve-within <minutes>] [--detach] [--json]
+  ohmyagi task new <dir> --subject <id> --goal <text> [--backend a,b] [--model <m>] [--budget-turns <n>] [--budget-minutes <n>] [--budget-tokens <n>] [--operate 0|1|2] [--allow <origin>…] [--step-minutes <n>] [--approve-within <minutes>] [--backend-wait-minutes <n>] [--detach] [--json]
                                         A goal carried over several turns
                                         (D-154): a plan, then one step per turn,
                                         each an ordinary turn (ledger, dial,
@@ -477,23 +477,41 @@ Usage:
                                         steps stay in the personal directory.
                                         Foreground prints each step on stderr
                                         and the result on stdout; --detach runs
-                                        it in the background. Exit 0 done,
-                                        1 failed, 3 out of budget, 4 stopped or
-                                        refused, 5 already running.
+                                        it in the background, in a systemd user
+                                        unit of its own (om-agi-task-<id>) when
+                                        there is one, so restarting whatever
+                                        started it (ohmyagi web) does not end
+                                        it (S18.1; OM_AGI_NO_SYSTEMD=1: never).
+                                        A task on local CLIs alone waits while
+                                        the local model is asleep or down
+                                        ("waiting-backend": no turn, no minute
+                                        counts) and is parked after
+                                        --backend-wait-minutes (default 30;
+                                        S18.2). Exit 0 done, 1 failed, 3 out of
+                                        budget, 4 stopped or refused, 5 already
+                                        running, 6 parked, 75 left for resume
+                                        (its unit was stopped with no stop
+                                        asked). For a task to outlive the login
+                                        and start after a reboot, the owner
+                                        enables lingering once: loginctl
+                                        enable-linger <user>.
   ohmyagi task list <dir> --subject <id> [--json]
                                         Every task of this agent, newest first.
   ohmyagi task show <task> <dir> --subject <id> [--json]
                                         Its goal, status, budget used, plan and
                                         every step with the id of its turn.
-                                        "interrupted" means its runner died.
+                                        "interrupted" means its runner died;
+                                        "parked", that it was set aside (its
+                                        backend was not ready in time).
   ohmyagi task stop <task> <dir> --subject <id> [--json]
                                         Stop it: no next step starts, the step
                                         running now is ended like ohmyagi stop
                                         ends a turn, its browser is killed.
   ohmyagi task resume <task> <dir> --subject <id> [--detach] [--json]
-                                        Carry an interrupted task on from the
-                                        step it was on (that step counts as a
-                                        turn spent; its browser starts fresh).
+                                        Carry an interrupted or parked task on
+                                        from the step it was on (an interrupted
+                                        step counts as a turn spent; its
+                                        browser starts fresh).
   ohmyagi task approve <task> <approval> <dir> --subject <id> [--json]
                                         D-156: let one sensitive browser action
                                         a task's container is holding (paying,

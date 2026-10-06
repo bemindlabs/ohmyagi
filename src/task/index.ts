@@ -12,3 +12,6 @@ export * from "./approvals.ts";
 export * from "./answer.ts";
 export * from "./harden.ts";
 export * from "./taint-watch.ts";
+export * from "./unit.ts";
+export * from "./backend-ready.ts";
+export * from "./term.ts";

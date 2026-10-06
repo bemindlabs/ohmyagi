@@ -1,5 +1,82 @@
 # Changelog
 
+## 0.10.2 — 2026-10-06
+
+Two things. A task now survives a restart of the web service: each task runner lives in its own systemd unit,
+waits while its backend is not ready, and parks instead of failing (E18 P0). And a **temporary cap**: until a
+proper fence for cloud vendors exists, every turn on a backend with no kernel fence is held at write 1 / run 1.
+The cap exists because the owner's uid is in the `docker` group, which is root-equivalent, so an unfenced turn
+that may write or run could reach the docker socket. **An operator installing this release must point a service
+unit's `WorkingDirectory` at a scratch directory** (the usual `ohmyagi-web-*.service` and
+`om-agi-triggers-*.service` have the agent's directory there, and a turn that may write is refused in it); see
+the cap's section below.
+
+### Added — tasks survive restarts (E18 P0: S18.1, S18.2, D-164)
+- **A detached task runs in a systemd user unit of its own (S18.1, AO-1).** `task new|resume --detach` — from the
+  CLI and from the web page's `/api/tasks` — starts the runner with `systemd-run --user --unit om-agi-task-<id>
+  --collect` (`KillMode=mixed`, `TimeoutStopSec=60`, `Restart=no`, `Type=exec`) whenever a user manager answers.
+  Before, a task the page started was a child in the web's cgroup, and every restart of `ohmyagi web` (whose unit
+  has `KillMode=mixed`) SIGKILLed it mid-step. Without a user manager (`OM_AGI_NO_SYSTEMD=1`, a container, macOS, a
+  `systemd-run` that fails) the runner is the old detached child, and stderr says so once.
+- **The runner's environment travels in a 600 file, never in argv or unit properties.** The starter's environment
+  (which may hold a backend's key) is written to `runner-env-<random>` in the task's own directory and handed to the
+  unit as `EnvironmentFile=`; `systemd-run --setenv` would have put every value in `systemctl show`. systemd reads it
+  as it starts the runner and the file is removed as soon as `systemd-run` returns.
+- **A stopped unit stops its task.** The runner handles SIGTERM: it ends its step's turn the way `ohmyagi stop` ends
+  a turn, then closes the task as `stopped` when a stop was asked — or, with none (the user's manager going down),
+  closes the step as interrupted and leaves the task for `task resume`. `task stop` and `ohmyagi stop` stop the
+  task's unit as well as its run record (`--no-block`, so a stop from inside the task's own step does not wait on
+  itself).
+- **A task waits for its backend (S18.2).** Before every step the runner asks whether the backend is ready — for a
+  task whose chain is local CLIs alone (`claude-local`, `grok-local`): LiteLLM's `/health/liveliness`, then vLLM's
+  `/is_sleeping` (`OM_AGI_VLLM_URL`, default `http://127.0.0.1:10410`; `none` skips it). While it is not — media-gen
+  has put vLLM to sleep for a video job, or it is down — the task is `waiting-backend`: no step starts, no turn and
+  no minute is spent. A step whose turn got no answer while the backend was found not ready is `no-backend`, which
+  counts against nothing (not the turns, not the minutes, not the two failures in a row that end a task).
+- **`parked` (S18.2 AC2).** A wait longer than `--backend-wait-minutes` (default 30) parks the task with the reason
+  and no runner: not `failed`, since nothing about the task went wrong. `task resume` (and Resume on the page) carries
+  a parked task on; `task stop` ends it. Exit code 6.
+- **After the review of PR #31.** The sleep/wake floor reads code, not just the start of a line (a `//` in
+  `http://…` no longer hides the rest of it) and also forbids a write to anything that mentions vLLM, with mutation
+  tests. The SIGTERM decision (stop asked: `stopped`; none: left for resume) is in `src/task/term.ts` and tested,
+  with a hard exit on a second SIGTERM or after 65 s; a runner left for resume exits 75, and the unit counts the
+  runner's own exit codes as outcomes (`SuccessExitStatus`). A second start while the unit is alive says "running
+  already" (exit 5) instead of spawning a runner outside systemd. Every `systemctl`/`systemd-run` call has a 10 s
+  deadline. The backend probes use `redirect: "error"`, read at most 64 KB, and an `is_sleeping` that is not exactly
+  true or false is not ready. Stale `runner-env-*` files are swept; the env file is chmod 600 explicitly. A task that
+  should outlive the login needs `loginctl enable-linger <user>` once.
+- **om-agi never puts vLLM to sleep and never wakes it** — media-gen owns both. Both probes are GETs with no key and
+  no body; a floor test reads every file under `src/`, `bin/`, `scripts/` and `docker/` for either route.
+
+### Changed — a turn with no kernel fence is held at write 1 / run 1 (D-163, Q4-D2 option A, owner's choice 2026-10-06)
+**This is a temporary cap.** Until a proper fence for cloud vendors exists, a turn on a backend that is not run
+through the D-118 kernel fence — every cloud vendor CLI (claude, codex, kimi, grok, gemini, copilot) and any new
+backend that cannot prove its fence — does not run with write or run at 2 or above. Its effective write and run
+are held at 1 (propose only), whatever the dial says; the cap lowers and never raises. `claude-local` and
+`grok-local`, which run inside the fence, keep the dial.
+- **Why.** The owner's uid is in the `docker` group, which is root-equivalent. A loosened turn with no fence can
+  reach `/var/run/docker.sock`, the systemd user bus and tailscaled.
+- **The turn still runs.** It is told it is at level 1, may file proposals, and says what was capped and why on
+  stderr, in `notes` and in `capped` of `--json` (so the web page and the app show it). An approved proposal run
+  on a cloud backend is held the same way.
+- **Which backends are fenced** is asked of the backend's own exec path (`appliesFence`), per request — not a list
+  of names. A backend that does not say is capped.
+- **A turn that may write is refused** where its working directory is, contains, or lies inside the agent's repo,
+  om-agi's state or data root, `~/.secrets` or `~/.ssh` (real paths: symlinks and `..` followed). Refused, not
+  downgraded: name another workdir. This applies to fenced backends too.
+- **A task step that was held is told so.** It is read-only for the step and must say in its `summary` what it
+  could not do, instead of reporting it done.
+- **More places a writing turn is refused in:** `~/.claude`, `~/.gnupg`, `~/.config/gh` and `~/.docker`, besides
+  the agent's repo, om-agi's roots, `~/.secrets` and `~/.ssh`.
+- **When installing this release, check your service units.** A unit whose `WorkingDirectory` is the agent's
+  directory (the usual `ohmyagi-web-*.service` and `om-agi-triggers-*.service`) is refused for any turn that may
+  write. Point `WorkingDirectory` at a scratch directory and restart the unit. `ohmyagi doctor` warns about each
+  such unit it finds (read-only; it edits nothing).
+- **`ohmyagi doctor --agent <dir> --subject <id>`** prints one line naming the backends that are capped when the
+  dial is above 1.
+- **What lifts it:** a fence for cloud vendors (D-163 D2, option E), which makes those backends answer
+  `appliesFence` truthfully. Nothing else does; no setting, flag or environment variable raises it.
+
 ## 0.10.1 — 2026-10-06
 
 Tasks: a goal the agent carries over ordinary turns, with a budget, a stop and a manual resume, and — when it

@@ -71,8 +71,8 @@ async function home() {
   return { dir, env, tasks };
 }
 
-async function run(env: Record<string, string>, args: readonly string[]) {
-  const child = Bun.spawn([BUN, "run", BIN, ...args], { cwd: env["HOME"]!, env, stdout: "pipe", stderr: "pipe" });
+async function run(env: Record<string, string>, args: readonly string[], cwd: string = env["HOME"]!) {
+  const child = Bun.spawn([BUN, "run", BIN, ...args], { cwd, env, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr] = [await new Response(child.stdout).text(), await new Response(child.stderr).text()];
   await child.exited;
   return { code: child.exitCode ?? -1, stdout, stderr };
@@ -436,7 +436,9 @@ describe("ohmyagi task approve | deny (D-156)", () => {
     await mkdir(agent);
     for (const file of await readdir(SOUL)) await writeFile(join(agent, file), await readFile(join(SOUL, file)));
     for (const [cat, level] of [["write", "2"], ["run", "2"], ["reach", "2"]]) expect((await run(h.env, ["autonomy", "set", cat!, level!, agent, "--subject", "example"])).code).toBe(0);
-    const loosened = await run(h.env, ["turn", agent, "--subject", "example", "--prompt", "hi", "--backend", "ollama"]);
+    // From a scratch directory of its own: a turn that may write is refused in a directory that holds the agent (D-163).
+    const elsewhere = await mkdtemp(join(tmpdir(), "om-agi-task-cwd-"));
+    const loosened = await run(h.env, ["turn", agent, "--subject", "example", "--prompt", "hi", "--backend", "ollama"], elsewhere);
     expect(loosened.code).toBe(4);
     expect(loosened.stderr).toContain(`is waiting on your answer to a held action (${three})`);
     const { rm: remove } = await import("node:fs/promises");
@@ -449,10 +451,11 @@ describe("ohmyagi task approve | deny (D-156)", () => {
     await remove(join(h.tasks, "t-0000abcd", "approvals", `${three}.json`), { force: true });
     const { readEnded } = await import("../../src/decide/runs.ts");
     const before = Date.now();
-    const ran = await run(h.env, ["turn", agent, "--subject", "example", "--prompt", "hi", "--backend", "ollama"]);
+    const ran = await run(h.env, ["turn", agent, "--subject", "example", "--prompt", "hi", "--backend", "ollama"], elsewhere);
     const notes = await readEnded({ home: h.env["HOME"]!, env: h.env });
     expect(notes, ran.stderr).toHaveLength(1);
     expect(Date.parse(notes[0]!.startedAt)).toBeGreaterThanOrEqual(before - 1000);
     expect(Date.parse(notes[0]!.endedAt)).toBeGreaterThanOrEqual(Date.parse(notes[0]!.startedAt));
+    await rm(elsewhere, { recursive: true, force: true });
   }, 60_000);
 });

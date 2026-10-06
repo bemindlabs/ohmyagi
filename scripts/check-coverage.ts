@@ -364,7 +364,10 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // 846 since the review of PR #24: approvals answered only at a terminal or on the page, D-159/D-160, and a
   // task's step having the browser and no shell.
   // 851 with main's #28 and #29 (D-162, the pre-D-153 approvals) under the task entries.
-  ["bin/usage.ts", { lines: 851, why: "help text — one declaration, 851 lines of prose" }],
+  // 864 since E18 P0 (S18.1, S18.2): `--detach` in a unit of its own, `--backend-wait-minutes`, waiting-backend
+  // and parked, exit 6, and resume taking a parked task.
+  // 869 since the review of PR #31: exit 75 (left for resume) and `loginctl enable-linger`.
+  ["bin/usage.ts", { lines: 869, why: "help text — one declaration, 869 lines of prose" }],
   // The commands. Each is `cmdX(rest)` returning an exit code, and each reads
   // `process.env`, `homedir()` or `cwd` on its way. Calling them in-process
   // would mean swapping `HOME` inside the test runner; the tests spawn instead.
@@ -374,7 +377,8 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // the line.
   ["bin/commands/autonomy.ts", { lines: 313, why: "command — run by spawning the CLI" }],
   ["bin/commands/backends.ts", { lines: 58, why: "command — run by spawning the CLI (test/cli/backends.test.ts runs it end to end)" }],
-  ["bin/commands/doctor.ts", { lines: 91, why: "command — run by spawning the CLI (the LiteLLM key and own addresses it reads: readLiteLLMKey, checkLocalAction)" }],
+  // 113 since D-163 (Q4-D2): a line saying which backends are capped and the unit hints (src/exec/cap.ts and workdir.ts, on the floor, build them).
+  ["bin/commands/doctor.ts", { lines: 113, why: "command — run by spawning the CLI (the LiteLLM key and own addresses it reads: readLiteLLMKey, checkLocalAction)" }],
   // 266 since odd3: `printErasePlan` takes the stream it writes to, and
   // `cmdErase` picks stderr under `--json` so stdout is the document alone.
   ["bin/commands/erase.ts", { lines: 266, why: "command — run by spawning the CLI" }],
@@ -468,7 +472,10 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // 216 since E17 (D-151): step 4, `docker kill` on every browser task of this state root (src/browser/runtime.ts's
   // sweep, on the floor), the command to run by hand when docker cannot be asked, and a failed kill counted.
   // 227 since D-154: step 5, every unfinished task asked to stop (src/task/control.ts, on the floor).
-  ["bin/commands/stop.ts", { lines: 227, why: "command — run by spawning the CLI" }],
+  // 235 since S18.1: step 5 also stops each asked task's unit (`endTaskUnit`, src/task/unit.ts, on the floor),
+  // queued with --no-block, and says so.
+  // 231 since the review of PR #31: the short-command runner (deadline) moved to src/task/unit.ts, on the floor.
+  ["bin/commands/stop.ts", { lines: 231, why: "command — run by spawning the CLI" }],
   // 169 since E5: the dial is consulted before anything is sent, and the run
   // record is written before the chain runs and removed in a `finally`.
   // 249 since S5.2: `--proposal` is checked after the brake and before
@@ -507,7 +514,9 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // src/decide/effective.ts, on the floor), says so, and files no proposals.
   // 765 since the second review of PR #24: a loosened turn does not start while a task's held action waits,
   // and its run record says it is loosened (src/task/answer.ts reads that).
-  ["bin/commands/turn.ts", { lines: 765, why: "command — run by spawning the CLI" }],
+  // 777 since D-163 (Q4-D2): the workdir refusal and the `CappedExec` wrap — the rules themselves are
+  // src/exec/cap.ts and src/exec/workdir.ts, on the floor; what is here is calling them.
+  ["bin/commands/turn.ts", { lines: 777, why: "command — run by spawning the CLI" }],
   // D-154. The store, the loop, the budget, the stop, the views are src/task/, on the floor; what is here is parsing,
   // printing and wiring the runner to this machine — run by test/cli/task.test.ts against a stub model.
   // 375 since D-156: `approve` and `deny` (src/task/approvals.ts, on the floor), the runner's watch and the
@@ -519,7 +528,14 @@ export const SPAWN_ONLY = new Map<string, HeldAtSize>([
   // by the runner (active time, a lowered dial), all three streams a terminal, a stopped task's container ended.
   // 412 since the round-2 review of PR #24: the runner made not dumpable (src/task/harden.ts), no task started
   // under a recorded turn (agentAncestor), and a yes signed only while no loosened turn of the owner runs.
-  ["bin/commands/task.ts", { lines: 413, why: "command — run by spawning the CLI; its parts are tested in src/task, and test/cli/task.test.ts runs it" }],
+  // 458 since E18 P0: `--detach` through `startRunner` (a unit of its own, else the old child, said once —
+  // src/task/unit.ts on the floor), the runner's SIGTERM handler (stop asked → stopped; none → left for resume),
+  // `backendReadiness` wired in (src/task/backend-ready.ts on the floor), `--backend-wait-minutes`, `task stop`
+  // ending the unit, and resume taking a parked task. Run for real by test/e2e/always-on.e2e.ts.
+  // 462 since the review of PR #31: the SIGTERM decision is `termHandler` (src/task/term.ts, on the floor, both
+  // branches tested) and only wired here; "already running" for a second start; the short-command deadline is
+  // `runShort` (src/task/unit.ts). Run for real by test/e2e/always-on.e2e.ts (cases 3 and 6).
+  ["bin/commands/task.ts", { lines: 462, why: "command — run by spawning the CLI; its parts are tested in src/task, and test/cli/task.test.ts runs it" }],
   ["bin/commands/worn.ts", { lines: 66, why: "command — run by spawning the CLI" }],
 ]);
 
@@ -614,7 +630,7 @@ export const PROOFS = new Map<string, Proof>([
       provedOn: "2026-09-24",
       by: "npm run demo -- --model <a local model>",
       result:
-        "15/15 criteria passed on 2026-10-06 on the tree released as 0.10.1 (run a32be071, table kept in notes/2026-10-06_demo-v0.10.1.txt), on 0.10.0 on 2026-10-05 (run ff1ad2c7, table kept in notes/2026-10-05_demo-v0.10.0.txt), on 0.9.0 on 2026-09-28 (run b7384f44, table kept in notes/2026-09-28_demo-v0.9.0.txt), on 0.8.3 the same day (run de86a5a6, table kept in notes/2026-09-28_demo-v0.8.3.txt), on 0.8.2 on 2026-09-27 (run c7517aef, table kept in notes/2026-09-27_demo-v0.8.2.txt), on 0.8.1 the same day (run 0a4d532e, table kept in notes/2026-09-27_demo-v0.8.1.txt), on 0.8.0 the same day (run 391c781f, table kept in notes/2026-09-27_demo-v0.8.0.txt), on 0.7.2 on 2026-09-26 (run f28cd0ba, table kept in notes/2026-09-26_demo-v0.7.2.txt), on 0.7.1 the same day (run 0eaea0cf, table kept in notes/2026-09-26_demo-v0.7.1.txt), on 0.7.0 the same day (run 1c88d842, table kept in notes/2026-09-26_demo-v0.7.0.txt), on 0.6.1 the same day (run 3eaea63f, table kept in notes/2026-09-26_demo-v0.6.1.txt), on 0.6.0 the same day (run 1972948d, table kept in notes/2026-09-26_demo-v0.6.0.txt), on 0.5.1 on 2026-09-25 (run caa68c60, table kept in notes/2026-09-25_demo-v0.5.1.txt), on 0.5.0 the same day (run 5e5f6903, table kept in notes/2026-09-25_demo-v0.5.0.txt), on 0.4.2 the same day (run fbad84d0, table kept in notes/2026-09-25_demo-v0.4.2.txt), on 0.4.1 the same day (run 8a52848c, table kept in notes/2026-09-25_demo-v0.4.1.txt), on 0.4.0 the day before (run 065c6900, table kept in notes/2026-09-24_demo-v0.4.0.txt), on 0.3.0 the same day (run cbeda900, " +
+        "15/15 criteria passed on 2026-10-06 on the tree released as 0.10.2 (run b2581387, table kept in notes/2026-10-06_demo-v0.10.2.txt), on 0.10.1 the same day (run a32be071, table kept in notes/2026-10-06_demo-v0.10.1.txt), on 0.10.0 on 2026-10-05 (run ff1ad2c7, table kept in notes/2026-10-05_demo-v0.10.0.txt), on 0.9.0 on 2026-09-28 (run b7384f44, table kept in notes/2026-09-28_demo-v0.9.0.txt), on 0.8.3 the same day (run de86a5a6, table kept in notes/2026-09-28_demo-v0.8.3.txt), on 0.8.2 on 2026-09-27 (run c7517aef, table kept in notes/2026-09-27_demo-v0.8.2.txt), on 0.8.1 the same day (run 0a4d532e, table kept in notes/2026-09-27_demo-v0.8.1.txt), on 0.8.0 the same day (run 391c781f, table kept in notes/2026-09-27_demo-v0.8.0.txt), on 0.7.2 on 2026-09-26 (run f28cd0ba, table kept in notes/2026-09-26_demo-v0.7.2.txt), on 0.7.1 the same day (run 0eaea0cf, table kept in notes/2026-09-26_demo-v0.7.1.txt), on 0.7.0 the same day (run 1c88d842, table kept in notes/2026-09-26_demo-v0.7.0.txt), on 0.6.1 the same day (run 3eaea63f, table kept in notes/2026-09-26_demo-v0.6.1.txt), on 0.6.0 the same day (run 1972948d, table kept in notes/2026-09-26_demo-v0.6.0.txt), on 0.5.1 on 2026-09-25 (run caa68c60, table kept in notes/2026-09-25_demo-v0.5.1.txt), on 0.5.0 the same day (run 5e5f6903, table kept in notes/2026-09-25_demo-v0.5.0.txt), on 0.4.2 the same day (run fbad84d0, table kept in notes/2026-09-25_demo-v0.4.2.txt), on 0.4.1 the same day (run 8a52848c, table kept in notes/2026-09-25_demo-v0.4.1.txt), on 0.4.0 the day before (run 065c6900, table kept in notes/2026-09-24_demo-v0.4.0.txt), on 0.3.0 the same day (run cbeda900, " +
         "table kept in notes/2026-09-24_demo-v0.3.0.txt), on 0.2.0 the same day (run fd433912, " +
         "table kept in notes/2026-09-24_demo-v0.2.0.txt), and earlier that day on the tree released as 0.1.0 (run 2ddacb38, " +
         "table kept in notes/2026-09-24_demo-v0.1.0.txt). Before that, " +

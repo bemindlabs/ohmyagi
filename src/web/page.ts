@@ -2054,7 +2054,7 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
   pickSummary(); loadModels();
   // ── Tasks (D-154) ── the same API the app uses: /api/tasks, one task, its newest screenshot, stop and resume.
   let taskOpen = null;
-  const TASK_WORDS = { planning: "Planning", running: "Working on it", waiting: "Waiting for you", done: "Done", failed: "Failed", stopped: "Stopped", budget: "Out of budget", interrupted: "Interrupted" };
+  const TASK_WORDS = { planning: "Planning", running: "Working on it", waiting: "Waiting for you", "waiting-backend": "Waiting for its backend", parked: "Parked", done: "Done", failed: "Failed", stopped: "Stopped", budget: "Out of budget", interrupted: "Interrupted" };
   const taskWord = (t) => (TASK_WORDS[t.status] || t.status) + " · " + t.used.turns + "/" + t.budget.turns + " turns";
   async function loadTasks() {
     let r; try { r = await api("/api/tasks"); } catch { return; }
@@ -2067,7 +2067,7 @@ const CHANGE_LIMITS = ${JSON.stringify([...REPORT_LIMITS])};
       // D-158: resuming is yours to do — an interrupted task says so where it is listed, with the button.
       if (t.resumable) {
         c.style.borderColor = "var(--warn)";
-        c.append(el("p", "meta", "Its runner stopped mid-way (a crash or a restart). Nothing resumes it on its own."));
+        c.append(el("p", "meta", t.status === "parked" ? "It was set aside (see why above). Resume carries it on; Stop ends it." : "Its runner stopped mid-way (a crash or a restart). Nothing resumes it on its own."));
         const b = el("button", "primary", "Resume");
         b.onclick = async (e) => { e.stopPropagation(); b.disabled = true; const r = await api("/api/tasks/" + t.id + "/resume", {}); toast(r.ok ? "Resumed in the background." : (r.message || "That did not work.")); loadTasks(); };
         c.append(b);

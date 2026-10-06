@@ -10,6 +10,10 @@
  *    CLI runs in a process group of its own, so ending only the `turn` process would leave it running;
  * 3. the runner then closes the task as `stopped`, ends its browser and exits. A task whose runner is gone
  *    already is closed here instead — nothing else is writing its record.
+ * 4. S18.1: a runner in a unit of its own (`unit.ts`) — its unit is stopped too: once the task is closed (the unit
+ *    then ends with the runner), and before giving up on a runner that has not closed it in time — SIGTERM to it
+ *    with the stop asked, which it answers by closing the task, and SIGKILL to what is left after
+ *    `UNIT_STOP_SECONDS`.
  */
 
 import { readdir } from "node:fs/promises";
@@ -17,6 +21,7 @@ import { join } from "node:path";
 import { readRuns, readRunsAt, terminateRun, type RunEnv, type TerminationReport } from "../decide/runs.ts";
 import { dataRoot } from "../state.ts";
 import { isSubjectId, type SubjectId } from "../types.ts";
+import { UNIT_STOP_SECONDS } from "./unit.ts";
 import { alive, isFinal, listTasks, readTask, requestStop, taskDirIn, tasksDir, writeTask, type TaskEnv, type TaskRecord } from "./store.ts";
 
 export interface StopDeps {
@@ -31,6 +36,10 @@ export interface StopDeps {
   readonly endBrowser?: (task: string) => Promise<void>;
   /** How long to wait for the runner to close the task after its step ended. */
   readonly waitMs?: number;
+  /** S18.1: stop the task's unit, when it has one (`endTaskUnit`). */
+  readonly endUnit?: (task: string) => Promise<unknown>;
+  /** How long to wait for a stopped unit's runner. */
+  readonly unitWaitMs?: number;
 }
 
 export interface StopResult {
@@ -88,11 +97,15 @@ export async function stopTask(env: TaskEnv & RunEnv, tasks: string, subject: Su
   const turn = await endStepTurn(env, read.record.current, deps);
 
   // The runner closes it; give it a moment. A runner that is gone cannot, so it is closed here.
-  const until = Date.now() + (deps.waitMs ?? 15_000);
+  let until = Date.now() + (deps.waitMs ?? 15_000);
+  let unitStopped = false;
   for (;;) {
     const now = await readTask(tasks, subject, id);
     if (!now.ok) return { ok: false, reason: now.reason };
-    if (isFinal(now.record.status)) return { ok: true, result: { id, outcome: "stopped", status: now.record.status, turn } };
+    if (isFinal(now.record.status)) {
+      if (deps.endUnit !== undefined) await deps.endUnit(id).catch(() => undefined);
+      return { ok: true, result: { id, outcome: "stopped", status: now.record.status, turn } };
+    }
     if (!alive(now.record.runner, deps.stat)) {
       const closed: TaskRecord = {
         ...now.record,
@@ -106,9 +119,20 @@ export async function stopTask(env: TaskEnv & RunEnv, tasks: string, subject: Su
       await writeTask(tasks, closed);
       // Its runner would have ended the container; it is gone, so this does.
       if (deps.endBrowser !== undefined) await deps.endBrowser(id).catch(() => undefined);
+      if (deps.endUnit !== undefined) await deps.endUnit(id).catch(() => undefined);
       return { ok: true, result: { id, outcome: "stopped", status: "stopped", turn } };
     }
-    if (Date.now() > until) return { ok: true, result: { id, outcome: "asked", status: now.record.status, turn } };
+    if (Date.now() > until) {
+      // The runner has not closed it: its unit is stopped, which SIGTERMs it with the stop asked — then waited on
+      // for as long as systemd gives it before SIGKILL, after which the loop above closes the task itself.
+      if (deps.endUnit !== undefined && !unitStopped) {
+        unitStopped = true;
+        await deps.endUnit(id).catch(() => undefined);
+        until = Date.now() + (deps.unitWaitMs ?? (UNIT_STOP_SECONDS + 5) * 1000);
+        continue;
+      }
+      return { ok: true, result: { id, outcome: "asked", status: now.record.status, turn } };
+    }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 }

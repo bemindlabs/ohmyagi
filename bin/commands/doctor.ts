@@ -13,8 +13,11 @@ import {
   runProbe,
   type DoctorEnv,
 } from "../../src/doctor.ts";
-import { VENDORS } from "../../src/exec/index.ts";
-import { LITELLM_BASE_URL, liteLLMKeyFile, readLiteLLMKey } from "../../src/exec/local-cli.ts";
+import { VENDORS, backend as buildBackend, restrain } from "../../src/exec/index.ts";
+import { unitWorkdirHints } from "../../src/exec/workdir.ts";
+import { capLine as capText, capSurvey } from "../../src/exec/cap.ts";
+import { decideDial, dialEnv } from "../dial.ts";
+import { LITELLM_BASE_URL, LOCAL_BACKENDS, liteLLMKeyFile, readLiteLLMKey } from "../../src/exec/local-cli.ts";
 import { networkInterfaces } from "node:os";
 import { isKnownBackend } from "../../src/soul/index.ts";
 import { subjectId } from "../../src/types.ts";
@@ -114,8 +117,30 @@ export async function cmdDoctor(argv: readonly string[]): Promise<number> {
   };
 
   const report = await runDoctor(env);
-  if (options.has("json")) console.log(JSON.stringify(report, null, 2));
-  else for (const line of renderDoctor(report)) console.log(line);
+  // D-163 (Q4-D2): with the dial above 1, which of these backends are held at write/run 1. Needs the agent,
+  // because the dial is the agent's own file; a short line, and nothing when nothing is capped.
+  const capped =
+    agent !== undefined && subject !== undefined
+      ? capSurvey(
+          [...backends, ...LOCAL_BACKENDS.filter((id) => !backends.includes(id))].filter((id) => id !== "ollama"),
+          restrain((await decideDial(agent, dialEnv(), subject)).effective),
+          buildBackend,
+          subject,
+        )
+      : undefined;
+  const capLine = capped === undefined ? undefined : capText(capped);
+  // D-163: a service unit whose WorkingDirectory a loosened turn would be refused in. Read-only.
+  const unitHints = await unitWorkdirHints(home, process.env, agent);
+  const extra = {
+    ...(capLine === undefined || capped === undefined ? {} : { cap: { capped: capped.capped, fenced: capped.fenced } }),
+    ...(unitHints.length === 0 ? {} : { units: unitHints }),
+  };
+  if (options.has("json")) console.log(JSON.stringify({ ...report, ...extra }, null, 2));
+  else {
+    for (const line of renderDoctor(report)) console.log(line);
+    if (capLine !== undefined) console.log(capLine);
+    for (const hint of unitHints) console.log(hint);
+  }
 
   return doctorExit(report);
 }

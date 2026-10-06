@@ -411,6 +411,15 @@ export class CliExec implements ExecBackend {
   }
 
   /**
+   * True exactly when `run` will start this request through the kernel fence: `request.fence` is what makes
+   * `run` ask the kernel and wrap the argv (and refuse the turn when it cannot). A request with none runs on
+   * the vendor's own flags — the cloud case — and is not fenced.
+   */
+  appliesFence(request: TurnRequest): boolean {
+    return request.fence !== undefined;
+  }
+
+  /**
    * Is the binary on PATH?
    *
    * Deliberately does not run the CLI: a readiness check that spends quota

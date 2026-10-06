@@ -153,6 +153,11 @@ export interface TurnResult {
   readonly evidence: Evidence;
   /** How the identity actually reached this turn. */
   readonly identityStrength: IdentityStrength;
+  /**
+   * Set when this turn was held below the dial because its backend is not kernel-fenced (D-163, Q4-D2):
+   * the plain sentence saying what was capped and why. Absent on every other turn.
+   */
+  readonly capped?: string;
 }
 
 /** Whether a backend can be used right now, and why not when it cannot. */
@@ -177,6 +182,15 @@ export interface ExecBackend {
   readonly kind: BackendKind;
   /** The strongest channel this backend offers for identity. */
   readonly identityStrength: IdentityStrength;
+
+  /**
+   * Whether **this backend's own exec path** puts this request behind the D-118 kernel fence.
+   *
+   * Optional, and absent means no: a backend that does not say is not fenced, so a turn on it is held at write
+   * and run 1 (D-163, Q4-D2). Fail closed — a new backend is capped until it can prove, per request, that its
+   * `run` applies the fence. See `src/exec/cap.ts`.
+   */
+  appliesFence?(request: TurnRequest): boolean;
 
   /** Cheap readiness check. Must not run a turn or spend quota. */
   available(): Promise<Availability>;

@@ -56,6 +56,8 @@ import { asLocal, LOCAL_CLI_SEES_PERSONAL } from "../../src/exec/local.ts";
 import { fenceSupport } from "../../src/exec/fence.ts";
 import { chooseRoute, parseRoutePreference, type Route } from "../../src/exec/route.ts";
 import { isLocalCliId } from "../../src/exec/local-cli.ts";
+import { CappedExec, HELD_AT_ONE_TASK } from "../../src/exec/cap.ts";
+import { protectedPlaces, workdirRefusal } from "../../src/exec/workdir.ts";
 import {
   splitForCloud,
   DEFAULT_RECALL_CHARS,
@@ -78,7 +80,7 @@ import { DIAL_REFUSED, decideDial, dialEnv, dialLine, heldNote } from "../dial.t
 import { triageIfEnabled } from "../triage.ts";
 import { dimErr, ledgerEnv, parseArgs, report, usageError } from "../shared.ts";
 import { homedir } from "node:os";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { isatty } from "node:tty";
 import {
   appendRecord,
@@ -556,6 +558,17 @@ async function turnOnce(argv: readonly string[], took: Took): Promise<number> {
   // Review of PR #24, finding 1: a step of a task with a browser has the browser and nothing else.
   const effective = task !== undefined && task.operate >= 1 ? browserOnly(verdict.effective) : verdict.effective;
   const restraint = restrain(effective);
+  // D-163 (Q4-D2, second rule): a turn that may write is not started in the agent's repo, om-agi's state,
+  // ~/.secrets or ~/.ssh, nor in a directory that holds or lies inside one of them. Refused, not downgraded —
+  // and for a fenced backend too, because the fence makes the working directory writable.
+  if (restraint.loosened) {
+    const dialHome = dialEnv();
+    const refusedDir = workdirRefusal(process.cwd(), protectedPlaces(resolve(dir), dialHome.home, dialHome.env));
+    if (refusedDir !== undefined) {
+      console.error(`ohmyagi: nothing was sent — ${refusedDir}`);
+      return DIAL_REFUSED;
+    }
+  }
   // Review of PR #24, finding 2: a turn that can run commands does not start while one of this agent's tasks is
   // paused on the owner's answer — such a turn could reach the answer itself.
   if (restraint.loosened) {
@@ -723,6 +736,9 @@ async function turnOnce(argv: readonly string[], took: Took): Promise<number> {
     backendIds.map((backendId) => {
       const own = routed.models.get(backendId);
       const raw = buildBackend(backendId, own === undefined ? {} : { model: own });
+      // D-163 (Q4-D2): the one place the cap on a backend that is not kernel-fenced is applied. Innermost, so
+      // it sees the request exactly as this backend will run it (a local CLI's fence already on it).
+      const guarded = new CappedExec(raw, (line) => console.error(dimErr(`ohmyagi: ${line}`)), task === undefined ? PROPOSE_INSTRUCTION : HELD_AT_ONE_TASK, raw instanceof OllamaExec);
       const localCli = raw instanceof LocalCliExec ? raw : undefined;
       // The model this backend runs by construction (S15.9, D-142): a local CLI
       // runs LiteLLM's `local-coder`; ollama runs its own `--model` or the
@@ -732,7 +748,7 @@ async function turnOnce(argv: readonly string[], took: Took): Promise<number> {
       modelRun.set(backendId, ran);
       if (raw instanceof OllamaExec) toolless.add(backendId);
       // D-144: counted inside the announcement, so a prompt the egress screen stopped is not counted as sent.
-      const announced = new AnnouncedExec(counted(new RecordingExec(raw, { ...recording, model: ran }), took), {
+      const announced = new AnnouncedExec(counted(new RecordingExec(guarded, { ...recording, model: ran }), took), {
         origin: raw,
         write: (line) => console.error(dimErr(line)),
         // S8.3 (D-048): prompt and system — the soul and whatever recall
@@ -854,9 +870,11 @@ async function turnOnce(argv: readonly string[], took: Took): Promise<number> {
     notes.push(`${result.backend} has no tools — it answered in words and could not act. Nothing it says it did was done (D-149).`);
   }
   for (const note of notes) console.error(`ohmyagi: ${note}`);
+  // D-163: already printed when the turn was capped; kept in `notes` so the page and the app show it too.
+  if (result.capped !== undefined) notes.push(result.capped);
   // `--no-proposals`: a measurement (`ohmyagi eval`) must not leave work in the owner's list —
   // what the agent would have asked is still printed, just not filed.
-  const filed = effective.act === 1 && answered && task === undefined && !options.has("no-proposals") ? await fileAgentAsks(id, turnId, result.text, loaded.soul.person.inherits_from) : [];
+  const filed = (effective.act === 1 || result.capped !== undefined) && answered && task === undefined && !options.has("no-proposals") ? await fileAgentAsks(id, turnId, result.text, loaded.soul.person.inherits_from) : [];
 
   // The answering backend's model, told the way its ledger line tells it (D-142).
   const aboutModel = modelOfTurn(result.evidence.model, null, modelRun.get(result.backend) ?? null);

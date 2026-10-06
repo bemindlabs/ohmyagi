@@ -81,6 +81,10 @@ E5 ──────┴──> E10 Web console (ทุกปุ่มคือ�
                                                     ├── E14 App (Expo·EAS·IAP) ◀─────┘   ซื้อ/managed รอ E16b + E13
                                                     └── E13 Deploy (VPS·GCP·AWS) ──> E15 Agent hiring (หลัง E16a)
 E5 + E12 ──> E17 Act · tasks · computer use (D-149: browser → task → desktop ทีหลัง)
+                 │
+                 ├──> E18 Always-on (D-164) P0–P3 ──> E13 S13.9 docker image สาธารณะ (D-165)
+                 │         P5–P7 ◀── 🔒 รอ ──┐
+                 └──> E19 Warden · ohmyagi-tasks (D-163, Q4 = B) ──┘
 ```
 
 **เส้นวิกฤต:** `E0 → E1 → E2 → E5` = จุดที่ agent ยืนเองได้และลงมือเองได้ (นิยามของ D-015)
@@ -88,6 +92,7 @@ E5 + E12 ──> E17 Act · tasks · computer use (D-149: browser → task → d
 **ประตูบังคับ 2:** `S8.3` (egress guard) ต้องเสร็จ **ก่อน**เปิด A2A (E8) หรือ chat connector (E9) — D-017 / D-018 / I-6
 **ประตูบังคับ 3 (D-097):** `SP-5` ต้องตอบก่อนเลือกกลไกของ E12 — วัดของจริง ไม่เลือกจากความเชื่อ · ✅ ตอบแล้ว 2026-09-26 (D-116)
 **ประตูบังคับ 4 (D-118):** backend ในเครื่องที่มีมือ รันได้เฉพาะใน fence ระดับ OS (Landlock) — สร้าง fence ไม่ได้ = ไม่รัน
+**ประตูบังคับ 5 (D-163, D-164):** task ที่ไม่มีคนเฝ้าได้ reach 2 / operate 2 เฉพาะหลัง `E19` (warden) — ก่อนนั้นเพดานอยู่ที่ 1 (AO-3) · E19 S19.2 ขยาย ประตู 4 ไปทุก turn ที่ถูกผ่อน รวม cloud
 
 ### Positioning (D-019)
 **Grok Bot ของ xAI (ส.ค. 2026) ทำสิ่งเดียวกันเกือบทุกข้อ** — memory · autonomy · runtime ของตัวเอง
@@ -757,9 +762,11 @@ E5 + E12 ──> E17 Act · tasks · computer use (D-149: browser → task → d
 | S13.7 | BYOK — backend แบบ API key ของลูกค้า (ไม่ใช้ subscription login ของคนเดียวให้หลายคน) · onboarding ใส่ key · key อยู่บน disk เข้ารหัส (D-109) | 2 | **สูงสุด** |
 | S13.8 | ปลดล็อก disk อัตโนมัติจากเครื่องที่เจ้าของคุมผ่าน tailnet (Tang/Clevis) · ไม่มีใครตอบ = รอ + แจ้ง (D-111) | 2 | สูง |
 | S13.6 | model ที่บ้านผ่าน tailnet — agent บน VPS เรียก LiteLLM/vLLM ที่บ้าน · ล่มแล้วตกไปตาม chain | 1 | สูง |
+| S13.9 | docker image สาธารณะของ agent ทั่วไป ออกพร้อม release (D-165) — `ghcr.io/bemindlabs/ohmyagi:<ver>` · multi-arch (amd64 + arm64) · cosign + SBOM · **ไม่มี soul/memory/กุญแจใน image** · volume `/data` · model ผ่าน env (Ollama / OpenAI-compatible / LiteLLM) · task เบราว์เซอร์ปิดไว้ก่อน · **ทำหลัง E18 P0–P3** · ยังเปิด: vendor CLI ใน image · เบราว์เซอร์ใน image · GHCR อย่างเดียวหรือ Docker Hub ด้วย | 2 | สูง |
 
 **S13.2** — AC1: เครื่องเปล่า Ubuntu → agent ตอบบน tailnet ได้ในคำสั่งเดียว · AC2: `ss -ltnp` บน remote ไม่มี port สาธารณะของ om-agi · AC3: volume ของ agent เข้ารหัส (LUKS) กุญแจไม่ถูกเก็บบน remote แบบอ่านได้ · AC4: ย้อนกลับได้ (`destroy`)
 **S13.5** — AC1: `destroy` ลบ VM/disk แล้วถามกลับ provider ว่าไม่มีแล้ว · AC2: `erase <subject>` ครอบคลุม remote และพิมพ์สิ่งที่**ไม่ได้**ค้น (เหมือน I-4 เดิม) · AC3: ledger บันทึกทุกการ deploy
+**S13.9** (D-165) — AC1: tag release แล้ว workflow ดัน image ทั้งสอง arch และ `cosign verify` ผ่านด้วย identity ของ workflow · SBOM แนบกับ image · AC2: `docker run -v data:/data -e <model env>` บนเครื่องเปล่า → agent ใหม่ตอบ turn ได้ · ลบ volume = ไม่เหลืออะไร · AC3: test ยืนยันว่า image ไม่มีไฟล์ soul/memory/กุญแจ และ task ที่ต้องใช้เบราว์เซอร์ถูกปฏิเสธพร้อมเหตุผลใน image
 
 ---
 
@@ -867,6 +874,91 @@ E5 + E12 ──> E17 Act · tasks · computer use (D-149: browser → task → d
 **S17.9** — AC1: **e2e** ระดับ 1 เสนอการคลิกแต่ไม่คลิก (server ของ test ไม่ได้รับอะไร) · AC2: **e2e** ปุ่ม "pay" หรือ "send" หยุดรอ "ใช่" แม้ที่ระดับ 3 · AC3: **e2e** ระดับ 2 คลิก origin นอก allowlist ไม่ได้ และรายงานสิ่งที่ทำแบบ D-043 · AC4: รายการเรื่องอ่อนไหวลบไม่ได้ (test floor) · AC5: approval ใช้ได้กับ step ที่อนุมัติเท่านั้น ครั้งเดียว
 **S17.10** — AC1: **e2e** ภาพหน้าจอของ task ที่รันอยู่ขึ้นบนหน้าเว็บ · AC2: **e2e** `erase` ลบบันทึกของมัน และ dry run แสดงรายการ
 **S17.11** — AC1: **e2e** โมเดลในเครื่องเปิดแอปใน container แล้วเปลี่ยนสิ่งที่ test อ่านกลับได้ · AC2: วัดความแม่นยำบนชุดคงที่ บันทึกใน `notes/` · AC3: ภาพหน้าจอไม่ออกจากเครื่องบนทาง local
+
+---
+
+### E18 — Always-on · tonkla-agi ทำงานได้ 24/7 (D-164, AO-1..AO-11)
+
+> เจ้าของเคาะ 2026-10-06 (D-164) · ที่มา: แผน always-on ที่ `1f98a29` (v0.10.1) · **supervisor = oneshot tick ทุก 1 นาที + unit ต่อ task (AO-1, ยังถือ D-054 ไม่มี daemon)**
+> **ไม่มีเพดานรายวัน (AO-5)** — งบต่อ task (turn · นาที · token · USD) · wall-clock deadline · `ohmyagi stop` และ `tasks pause` ยังอยู่ · ไม่มีคนเฝ้า = claude-local เท่านั้น ไม่มี fallback ไป cloud (AO-11)
+> **กฎของทั้ง epic (D-149):** AC ที่เขียน **e2e** รันบน claude-local จริง · soak ใช้ subject `om-soak` ไม่ใช่ om-bmt
+> **🔒 E19** = ต้องรอ warden ของ D-163 (Q4-B) · ไม่มีเครื่องหมาย = เริ่มได้เลย · P0–P3 (~15 แต้ม) ทำขนานกับ E19 ได้
+
+| เฟส | Story | รอ Q4-B (E19)? | ใช้ได้เองเพราะ |
+|---|---|---|---|
+| P0 รอด restart | S18.1, S18.2 | ไม่ | task ไม่ตายตอนอัปเกรดเว็บ · ทำวิดีโอแล้ว task ไม่ล้ม |
+| P1 คิว + tick | S18.3, S18.4 | ไม่ (ระดับ user ก่อน) | จำกัดจำนวนที่รัน · task ตามเวลา · เห็นการกู้คืน |
+| P2 งบ + kill switch | S18.5, S18.6 | ไม่ | ปลอดภัยเรื่องเงินก่อนรัน 24/7 |
+| P3 มองเห็น | S18.7, S18.8 | ไม่ | เจ้าของเห็นทุกอย่างจากมือถือ |
+| P4 รับงาน | S18.9, S18.10, S18.11 | ไม่ (Telegram รอ bot ของเจ้าของ AO-10) | งานเข้าโดยเจ้าของไม่ต้องพิมพ์ CLI |
+| P5 ย้ายไปอยู่ใต้ warden | S18.12 | **ใช่** | ปิดรู D-042 / docker สำหรับงานที่ไม่มีคนเฝ้า |
+| P6 โหมดไม่อยู่ | S18.13, S18.14 | **ใช่** เฉพาะ operate 2 / reach 2 ไม่มีคนเฝ้า · park กับช่วงเงียบไม่ต้องรอ | task เบราว์เซอร์รันข้ามคืนได้ |
+| P7 resume เอง + soak | S18.15, S18.16 | บางส่วน (ส่วนเบราว์เซอร์ของ soak) | 24/7 จริง พิสูจน์แล้ว |
+
+| # | Story | วัน | ค่า/แรง |
+|---|---|---|---|
+| S18.1 | runner ใน unit ของตัวเอง — `task new/resume --detach` เริ่มผ่าน `systemd-run --user --unit om-agi-task-<id> --collect` เมื่อมี systemd ไม่งั้นแบบเดิม · แก้ที่ runner ที่เว็บเริ่มตายตอน restart (`KillMode=mixed`) · P0 | 1 | **สูงสุด** |
+| S18.2 | backend พร้อมก่อนแต่ละขั้น — `backendReady()` · vLLM หลับหรือล่ม = ขั้นรอ (`waiting-backend`) ไม่นับเป็นขั้นล้ม · มีเพดานเวลา · om-agi **ไม่เรียก** `/sleep` `/wake_up` เอง (media-gen เป็นเจ้าของ) · P0 | 1 | **สูงสุด** |
+| S18.3 | สถานะ `queued` · `task new --queue` · `ohmyagi tasks tick` (รับเข้า · `maxRunning` 2 · `maxBrowser` 1 · trigger 1 · guard vLLM/VRAM ≥4 GB/ดิสก์ ≥20 GB/port · รายงานการกู้ · `supervisor.json`) · `tasks schedule` พิมพ์ timer แบบ `triggers schedule` · P1 | 3 | **สูงสุด** |
+| S18.4 | รายการ `kind="task"` ใน `triggers.md` (goal · งบ · backend · operate) ตรวจ schema แล้วเข้าคิวที่เพดาน AO-3 · ไม่ไล่ตามรอบที่พลาด · P1 | 1 | สูง |
+| S18.5 | เงินต่อ task — `turn --json` คืน `cost` · runner บวก `used.usdMicros`/`usdUnknown` (AO-6) · `--budget-usd` · `deadlineHours` (ค่าเริ่ม 24 ชม. นับเวลา park) · P2 | 2 | **สูงสุด** |
+| S18.6 | `tasks pause\|resume-all` (CLI · เว็บ · Telegram `/pause`) — kill switch แบบนุ่ม · **ไม่มีเพดานรายวัน (AO-5)** · P2 | 1 | สูง |
+| S18.7 | `/api/state.supervisor` + แถบ Always-on บนหน้า Home และในแอป — tick ล่าสุด · pause (เพราะอะไร) · running/queued/parked · ยอดใช้ (ไม่มีเพดาน) · สถานะ guard · CLI `tasks status` · P3 | 2 | สูง |
+| S18.8 | digest รายวันแบบ deterministic (**ไม่ใช้ model turn**) ที่ `personal/tasks/digest/<date>.md` · กฎ alert (ล้ม · ค้าง · runner ตาย · tick เงียบ 5 นาที · vLLM หลับ/ล่ม >30 นาที · ดิสก์ · container รั่ว · เบรก) · push **ใบอนุมัติของ task** ทันทีไม่เว้น · notify outbox · ช่วงเงียบ 23:00–07:00 + digest 07:30 (AO-8) · retention recording 14 วัน / egress 90 วัน (AO-9) · P3 | 2 | **สูงสุด** |
+| S18.9 | คำสั่ง Telegram ของเจ้าของ `/task` `/status` `/pause` `/stop` บน bot ของ tonkla-agi เอง (AO-10) · `/task` เริ่มตรงที่เพดาน AO-3 (AO-4) · ไม่รับคำตอบอนุมัติ · P4 | 2 | สูง |
+| S18.10 | ข้อความ A2A ที่ตั้งใจให้ทำงาน → proposal เท่านั้น (D-154, AO-4) · P4 | 1 | สูง |
+| S18.11 | proposal มี action "เริ่ม task" ได้ (morning-look ใช้) · อนุมัติครั้งเดียว = เข้าคิวครั้งเดียว (D-144) · P4 | 1 | กลาง |
+| S18.12 | 🔒 **E19:** supervisor timer และ `om-agi-task@.service` ใต้ warden ผ่าน interface I1–I8 ของแผน (unit ต่อ task ที่เจ้าของ start/stop ได้ · intake spool · อ่าน record · ทางตอบอนุมัติของ D-163 · เบรก/pause · notify outbox · ledger เดิม · docker เฉพาะ warden) · P5 | 2 | **สูงสุด** |
+| S18.13 | park — สถานะ `parked` เมื่อใบอนุมัติหมดเวลา (10 นาที, AO-7) หรืออยู่ในช่วงเงียบ · Continue/Drop บนเว็บและแอป · park เกิน deadline = ปิด "never answered" · 🔒 **E19** สำหรับ operate 2 ที่ไม่มีคนเฝ้า (park/ช่วงเงียบเองไม่ต้องรอ) · P6 | 2 | **สูงสุด** |
+| S18.14 | เพดานไม่มีคนเฝ้าต่อหมวด (AO-3) + รายการ "ไม่มีวัน" บังคับผ่าน env ของ supervisor แบบ `OM_AGI_AUTONOMY_MAX` · ขั้นของ task เริ่ม/อนุมัติ task ไม่ได้ · 🔒 **E19** สำหรับ reach 2 / operate 2 (allowlist) · P6 | 1 | **สูงสุด** |
+| S18.15 | resume เองตาม AO-2 — เฉพาะ task ที่ไม่มีเบราว์เซอร์ · 1 ครั้ง/task/24 ชม. · ถูกขัด <6 ชม. · งบเหลือ · แจ้งทุกครั้ง (แก้ D-158) · P7 | 1 | สูง |
+| S18.16 | soak 72 ชม. + ชุด chaos (รีบูต · `docker stop vllm` · media-gen `/sleep` · LiteLLM ล่ม · ดิสก์เต็ม · restart เว็บ · `kill -9` runner · tick ซ้อน · docker restart · port เต็ม · `ohmyagi stop` · `erase` กลาง task · เวลากระโดด · ตอบตรงเวลาหมด · หน้าเว็บสั่งสร้าง/อนุมัติ task) บันทึกที่ `notes/` · ส่วนเบราว์เซอร์ข้ามคืน 🔒 **E19** · P7 | 3 | **สูงสุด** |
+
+**S18.1** — AC1: **e2e** restart `ohmyagi web` กลางขั้น task ยัง `running` และจบได้ · AC2: `ohmyagi stop` ยังหยุดได้ทั้ง run record และ unit · AC3: ไม่มี systemd = แบบเดิม บอกครั้งเดียวทาง stderr
+**S18.2** — AC1: **e2e** `POST /sleep` ที่ vLLM ระหว่าง task → `waiting-backend` · `/wake_up` แล้วไปต่อ · ขั้นล้มยัง 0 · AC2: เกินเพดานเวลา = park พร้อมเหตุผล · AC3: om-agi ไม่เรียก sleep/wake เอง (unit test + grep floor)
+**S18.3** — AC1: คิว 5 task เพดาน 2 = ไม่เกิน 2 รันในทุก tick · AC2: tick สองตัวพร้อมกันรับแต่ละ task ครั้งเดียว (claim) · AC3: เบรกอยู่ = ไม่รับอะไร · AC4: จำลองรีบูต (`kill -9` ทุก runner แล้ว tick) task `interrupted` ถูกรายงานและจัดการตาม AO-2
+**S18.4** — AC1: trigger ที่ถึงเวลาเข้าคิว task เดียวพอดี · เครื่องปิดหนึ่งสัปดาห์ก็เข้าคิวหนึ่ง · AC2: รายการที่ขอเกินเพดานถูกลดพร้อมแสดงเหตุผล
+**S18.5** — AC1: **e2e** task บน claude (haiku) หยุดที่เพดาน USD · AC2: turn ไม่มีราคานับเป็น unknown และแสดง · AC3: ไม่มีทางโค้ดไหนอ่าน ledger (test floor, D-022)
+**S18.6** — AC1: pause = คิวยังอยู่ ขั้นที่รันอยู่จบก่อน ไม่รับ task ใหม่ · resume-all รับต่อ · AC2: `/pause` จาก owner id เท่านั้น · AC3: ไม่มีโค้ดเพดานรายวัน (AO-5) — ยอดรายวันแสดงอย่างเดียว
+**S18.7** — AC1: **e2e** แถบแสดงจำนวน running/queued/parked ยอดใช้ และสถานะ guard ตรงกับ `tasks status` · AC2: tick หาย (หยุด timer) แสดง "supervisor silent N min"
+**S18.8** — AC1: action ที่ถูกกัน push ภายใน 30 วิ · AC2: digest มีทุก task ที่เปลี่ยนสถานะใน 24 ชม. โดยไม่มี model turn (จำนวนบรรทัด ledger ไม่เปลี่ยน) · AC3: push/Telegram ไม่มีข้อความของ task (oracle test แบบ `channel-oracle`) · AC4: recording เก่ากว่า 14 วันถูก prune egress log เก็บ 90 วัน
+**S18.9** — AC1: **e2e** (stub Bot API ผ่าน `OM_AGI_TELEGRAM_URL`) `/task` ของเจ้าของสร้าง record เดียวกับเว็บ · AC2: id ที่ไม่อยู่ใน allowlist ไม่ได้อะไรเลย · AC3: task ที่สร้างอยู่ที่ระดับ AO-4/AO-3
+**S18.10** — AC1: **e2e** ข้อความ A2A ไม่เคยเริ่ม task · อนุมัติ proposal ครั้งเดียว = เข้าคิวครั้งเดียว (D-144)
+**S18.11** — AC1: อนุมัติจากแอปแล้ว task เข้าคิวด้วย goal และงบตรงตามที่เสนอ (ผูก digest, D-153)
+**S18.12** — AC1: **e2e** turn ที่ write/run 2 `docker exec` เข้า container ของ task ไม่ได้ (รันพิสูจน์ของ E19 ซ้ำ) · AC2: stop/pause/resume ของเจ้าของใช้ได้ผ่าน I1 · AC3: เว็บอ่านสถานะผ่าน I3 เท่านั้น
+**S18.13** — AC1: **e2e** delete ที่ไม่มีใครตอบ → task park และเบราว์เซอร์ลง · Continue ถามซ้ำบนเบราว์เซอร์ใหม่ อนุมัติแล้ว task จบ · AC2: ช่วงเงียบ park ทันที
+**S18.14** — AC1: **e2e** task ที่ supervisor เริ่ม dial 2 แต่เพดาน reach 1 → เสนอแทนการ fetch · AC2: ทุกคำสั่งในรายการ "ไม่มีวัน" ถูกปฏิเสธจากในขั้นของ task
+**S18.15** — AC1: task ที่ไม่มีเบราว์เซอร์ถูกรีบูตขัด resume ครั้งเดียวภายในเงื่อนไข · ขัดซ้ำใน 24 ชม. ค้าง `interrupted` + alert · AC2: task เบราว์เซอร์ไม่เคย resume เอง
+**S18.16** — AC: 0 runner กำพร้า 0 container รั่ว · ทุก task จบที่สถานะสุดท้าย/parked/queued ไม่มี `running` ที่ไม่มี unit · บรรทัด ledger = จำนวนขั้น · tick สำเร็จ ≥99.9% · หน่วยความจำ unit คงที่ · ดิสก์โตไม่เกินที่ AO-9 คาด · ไม่มีกุญแจใน journal (D-162) · p95 ของ vLLM สำหรับฟลีตบุษบาไม่แย่ลงเกิน 20% · chaos ทุกข้อรันอย่างน้อย 2 ครั้ง
+
+---
+
+### E19 — Warden: แยก user `ohmyagi-tasks` ถือกุญแจ ใบอนุมัติ และเบราว์เซอร์ของ task (D-163, Q4 = B)
+
+> เจ้าของเคาะ 2026-10-06 (D-163, D1–D11) · ที่มา: แบบร่าง Q4-B ที่ `1f98a29`
+> **ทำไมเป็น epic ใหม่ ไม่ใส่ใต้ E17:** E17 คือ *ความสามารถ* (ลงมือ · task · เบราว์เซอร์) และปิดเป็นชุดตาม D-149 · งานนี้คือ *เส้นแบ่งความปลอดภัยของเครื่อง* — มี system user, system unit, sudo ของเจ้าของ, สุขอนามัยของ host, fence ของทุก backend และ e2e โจมตีของตัวเอง · E18 P5–P7 รอมันทั้งก้อน ⇒ ต้องติดตามเป็นประตูเดียวที่ชี้ได้ (🔒 E19) ไม่ใช่ปนอยู่ในรายการของ E17
+> **ประตู:** E18 S18.12 · ส่วน operate 2/reach 2 ไม่มีคนเฝ้าของ S18.13/S18.14 · ส่วนเบราว์เซอร์ข้ามคืนของ S18.16
+> **ความเสี่ยงที่ยังเหลือหลัง E19 (D-163):** process ของ `bmt` ที่ไม่ใช่ turn ยังเป็น root ผ่าน docker/portainer · token ของ guard ท่องเว็บเรื่องไม่อ่อนไหวได้ · `bmt` deny/stop ได้ (DoS) · ห้ามลงทะเบียนเบราว์เซอร์บนเครื่องนี้ · script ของหน้าเว็บยังเห็นสิ่งที่ model พิมพ์
+
+| # | Story | วัน | ค่า/แรง |
+|---|---|---|---|
+| S19.1 | สุขอนามัยของ host (D9, D6, D7) — เจ้าของรัน: ตรวจ `010_bmt-nopasswd` · Synergy `0755` · portainer ออกจาก tailnet/socket · gid 0 · `tailscale set --operator=` · sudoers `020-om-agi-warden` `timestamp_timeout=0` · `doctor` เตือนเมื่อยังไม่ได้ทำ | 1 | **สูงสุด** (ประตู) |
+| S19.2 | fence ทุก turn ที่ถูกผ่อน (D2 = E) — `loosened` ⇒ `request.fence` ทุก backend รวม `claude` cloud · policy เพิ่ม TCP 443 + UDP 127.0.0.53:53 · seccomp ปิด AF_UNIX (docker, user bus, tailscaled) · ไม่ต้องรอ warden | 2 | **สูงสุด** |
+| S19.3 | rootless docker ของ `ohmyagi-tasks` (D4) — `useradd --system` · subuid/subgid · linger · cgroup delegate · ทดลองให้ครบ: iptables ใน userns · กฎ gateway ของ entrypoint ใต้ rootlesskit · `--memory/--cpus/--pids-limit` · `host.docker.internal` · อ่าน `/out` ผ่าน `nsenter -U` · เบราว์เซอร์ไม่เป็น uid 0 ใน container | 2 | สูง |
+| S19.4 | `ohmyagi warden serve` + `warden-client` (D3) — control socket `/run/ohmyagi-tasks/warden.sock` (0600 + ACL `bmt`) **ไม่มี verb approve** · ถือ release key · `approvals/` `release/` recording browser record ย้ายไป `/var/lib/ohmyagi-tasks` · `DOCKER_HOST` = rootless socket · build context จาก `/opt/om-agi/share` ตรวจ hash · `ohmyagi-warden.service` · `warden install` ตรวจ SHA256SUMS | 2 | **สูงสุด** |
+| S19.5 | กุญแจอุปกรณ์ (D1) — หน้า enroll/approve ของ warden บน `approve.sock` → `tailscale serve --https=30702` · CSP เข้ม · P-256 non-extractable · `warden device approve\|list\|revoke` ผ่าน sudo + พิมพ์รหัส 10 ตัว · `verifyAnswer()` nonce ใช้ครั้งเดียว 2 นาที | 2 | **สูงสุด** |
+| S19.6 | ทางตอบใหม่ (D5, D8, D11) — approve ต้องมี `proof{device,sig,nonce}` · `POST /api/tasks/…/approve` = 410 + `approveUrl` · deny/stop ยังเปิดผ่าน client · CLI approve พิมพ์ลิงก์/QR หรือ `sudo -u ohmyagi-tasks` · เลิก taint สำหรับคำตอบที่ลงชื่อ · push เปิด origin ของ warden · `task.json` คงเป็นของ `bmt` | 2 | **สูงสุด** |
+| S19.7 | `erase` · `stop` · `doctor` ถึง warden — ที่เก็บใหม่ "held by the warden" · warden ติดต่อไม่ได้ = erase ล้ม · `stop` เรียก `stop.all` · `doctor` เตือน: warden ไม่ใช่ uid แยก · `bmt` ยังเป็น Tailscale operator · ไม่มีอุปกรณ์ · backend ที่ถูกผ่อนแต่ไม่ fence · portainer เปิด socket | 1 | **สูงสุด** (I-4) |
+| S19.8 | ย้ายและพิสูจน์ (D10) — หยุดทุก task ก่อนอัปเกรด · ลบ container `label=dev.om-agi.browser` บน rootful · `bun run e2e:q4` โจมตี A1–A10 ผ่านทาง turn ที่ถูกผ่อน + turn `claude` จริงที่ถูกขอให้ approve · คู่มือ sudo ของเจ้าของ | 2 | **สูงสุด** |
+
+**S19.1** — AC1: `doctor` ไม่มีคำเตือนเรื่อง Synergy/portainer/operator/sudoers หลังเจ้าของทำ · AC2: `sudo -n -u ohmyagi-tasks /opt/om-agi/bin/ohmyagi …` ถามรหัสเสมอ แม้เพิ่ง sudo ไป
+**S19.2** — AC1: test ยืนยันว่า backend ที่ถูกผ่อนทุกตัวถูก fence (`test/exec/fence.test.ts`) · AC2: **e2e** turn `claude` ที่ write/run 2 `docker ps` ไม่ได้ (AF_UNIX) แต่ยังตอบงานได้ผ่าน 443
+**S19.3** — AC1: **e2e** task เบราว์เซอร์ (S17.7) ผ่านบน daemon ของ `ohmyagi-tasks` · AC2: egress เฉพาะ origin ที่อนุญาตยังถือ · AC3: ผลของ spike แต่ละข้อเขียนลง `notes/`
+**S19.4** — AC1: `test/warden/server.test.ts` ไม่มี control verb ไหน approve ได้ · protocol ไม่ตรง = ปฏิเสธ · ACL ถือ · AC2: AST test — ทาง approve ใน `decideApproval` ถึงได้จาก `src/warden/` เท่านั้น
+**S19.5** — AC1: `test/warden/devices.test.ts` ลายเซ็นถูก · digest ผิด · nonce ซ้ำ · หมดอายุ · อุปกรณ์ถูกถอน · รหัส enroll ไม่ตรง · เพดานคำขอค้าง
+**S19.6** — AC1: `test/web/web.test.ts` approve = 410 + `approveUrl` · deny ใช้ได้ · AC2: **e2e** อุปกรณ์ทดสอบลงชื่อ "ใช่" → ลบครั้งเดียวพอดี
+**S19.7** — AC1: **e2e** `erase` ลบทั้งที่เก่าของ `bmt` และที่ของ warden · dry run แสดงทั้งสอง · AC2: warden หยุดอยู่ → erase ล้มพร้อมบอกว่าอะไรไม่ได้ลบ
+**S19.8** — AC1: **e2e** A1–A10 ทุกข้อไม่ปล่อย action (410 · 401 · sudo exit 1 · EACCES · seccomp · EPERM · operator denied · refused · held) · AC2: turn `claude` จริงที่ถูกขอให้ approve ไม่ทำให้อะไรถูกปล่อย · AC3: task เก่าหลังย้าย resume (D-158) ได้เบราว์เซอร์ใหม่จาก warden
 
 ---
 
@@ -1006,6 +1098,7 @@ E5 + E12 ──> E17 Act · tasks · computer use (D-149: browser → task → d
 1b. **`E13` Deploy** — VPS Hostinger · GCP · AWS บนเครื่องที่เจ้าของคุม (D-099, D-100)
 1c. **`E14` Companion app** — React Native · ฟรี self-host / จ่าย managed ผ่าน IAP (D-101) · ลำดับ E12→E13→E14 (D-102)
 1d. **`E15` Agent hiring** — ตลาดงาน · เจ้าของอนุมัติทุกงาน · escrow จ่ายเมื่อ merge · เพดาน + รายงานลงลายมือชื่อ (D-103..D-106) · ~~ลำดับรวม E12 → E13 → E16a → E15 → E16b → E14 (D-115)~~ → **E16 ‖ E14 ตั้งแต่ 2026-09-27 (D-125)** · ~60–82 วัน-คน (D-118)
+1e. **`E18` Always-on** (D-164) — P0–P3 ทำได้เลยขนานกับ **`E19` Warden** (D-163) · P5–P7 รอ E19 · แล้ว `S13.9` docker image สาธารณะ (D-165)
 2. **proactive / สัญญาณ** — แจ้งเจ้าของผ่าน Telegram เมื่อมีข้อเสนอหรือเหตุผิดปกติ ตอบ yes/no จากแชท · trigger จาก pattern รอ `S3.3` AC6 (ทางที่ 2 ของ D-096)
 3. `S10.9` UI ไทย · `S10.10` เว็บสร้าง agent/trigger/consent (ทางที่ 3 ของ D-096)
 4. `S9.3` แชทแพลตฟอร์มที่ 2 — LINE ต้องมี webhook สาธารณะ + บัญชี OA ของเจ้าของ (ทางที่ 4 ของ D-096)
@@ -1025,13 +1118,16 @@ E5 + E12 ──> E17 Act · tasks · computer use (D-149: browser → task → d
 | E13 — บัญชี Hostinger/GCP/AWS และสิทธิ์ของ CLI | ก่อน S13.2–S13.4 |
 | E15 — payment provider แบบ marketplace/escrow · นิติบุคคล · ภาษี · ข้อตกลงและกระบวนการข้อพิพาท | ก่อน S15.6 |
 | A7 — ปล่อยให้ agent ลงมือจริง 2 สัปดาห์ | ใช้งานจริง |
+| E18 AO-10 — สร้าง bot Telegram ใหม่ของ tonkla-agi กับ BotFather · token ที่ `~/.secrets/tokens/` mode 600 | ก่อน S18.9 |
+| E19 — ขั้น sudo ของ D-163 (S19.1 สุขอนามัย host · `useradd ohmyagi-tasks` · rootless docker · `/opt/om-agi` · `tailscale set --operator=` · ลงทะเบียนมือถือ) | ก่อน S19.3–S19.8 |
+| S13.9 — เคาะ 3 ข้อที่เปิดของ D-165 (vendor CLI · เบราว์เซอร์ · GHCR/Docker Hub) | ตอนเริ่ม S13.9 |
 
 ### ไม่ทำ
 
 | ไม่ทำ | เพราะ |
 |---|---|
 | เขียน inference loop / sandbox / context compaction เองใน MVP | `bwoc-harness` ใช้ถึง 3.5.0 กว่าจะได้ · ยืมมือ CLI ได้ผลเท่ากันด้วยแรง 1/6 (D-002) |
-| daemon / scheduler ของตัวเอง | systemd มีอยู่และใช้กับทุก service บนเครื่องนี้ · S5.3 ทำตามนี้: `triggers schedule` พิมพ์ timer/cron ให้ ไม่ติดตั้งเอง (D-054) |
+| daemon / scheduler ของตัวเอง | systemd มีอยู่และใช้กับทุก service บนเครื่องนี้ · S5.3 ทำตามนี้: `triggers schedule` พิมพ์ timer/cron ให้ ไม่ติดตั้งเอง (D-054) · **ยังถือใน always-on (D-164 AO-1):** supervisor = oneshot tick จาก systemd timer · warden ของ D-163 เป็น service ค้างที่เป็น *เส้นแบ่งความปลอดภัย* ไม่ใช่ scheduler — ข้อยกเว้นที่บันทึกไว้ตรง ๆ |
 | fleet orchestration / review gate / worktree isolation / task routing | bwoc + ostraka ทำแล้ว · สิ่งเหล่านั้นคือการ *สั่งการ fleet* ไม่ใช่แกนของ om-agi (แกนคือแต่ละตัวยืนได้เอง) · **แต่ "คุยกันได้" ทำ — ดู E8** |
 | คิด protocol สื่อสารเอง | A2A 1.0.0 เป็นมาตรฐานเปิดที่ bwoc ก็ใช้ ⇒ พูด A2A ได้ interop ฟรีและไม่ผูกกับใคร (D-016) |
 | เปิด A2A / chat connector โดยค่าเริ่มต้น | I-6 — ข้อความที่ส่งออกแล้วตามลบไม่ได้ · ต้องเปิดเอง หลัง S8.3 ผ่าน |

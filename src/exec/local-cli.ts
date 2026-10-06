@@ -442,6 +442,11 @@ export class LocalCliExec implements ExecBackend {
     return this.makeCli(localSpec(this.id, this.paths, this.environment, "", this.baseUrl)).available();
   }
 
+  /** Every turn on a local CLI is fenced: asked of the real {@link prepare}, so it is what `run` will apply. */
+  appliesFence(request: TurnRequest): boolean {
+    return this.prepare(request).fence !== undefined;
+  }
+
   /** The exact request this local turn will run, including its non-optional fence. */
   prepare(request: TurnRequest): TurnRequest {
     const cwd = request.cwd ?? this.currentDirectory();

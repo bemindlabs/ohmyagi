@@ -579,6 +579,11 @@ interface Context {
 /** Why a case is not run on a backend, by design. Undefined = run it. */
 function notRunReason(id: string, name: CaseName): string | undefined {
   const toolless = id === "ollama";
+  // D-163 (Q4-D2): a backend with no kernel fence is held at write/run 1, so a case that needs a turn to act at 2
+  // cannot pass there — and the unfenced controls would only show the cap. They return with the cloud fence.
+  if (!toolless && !FENCED.has(id) && ["write-l2", "run-l2", "approve-once", "stop", "unfenced-write", "unfenced-net"].includes(name)) {
+    return "held at write/run 1: no kernel fence for this backend yet (D-163, Q4-D2) — it proposes, it does not act";
+  }
   const codexActs = id === "codex" && ["write-l2", "run-l2", "approve-once", "stop"].includes(name);
   if (codexActs) {
     return (
